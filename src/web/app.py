@@ -89,8 +89,21 @@ class AgentApp:
                             value="<p>正在加载MCP服务器信息...</p>",
                             label="MCP服务器状态"
                         )
+                        
+                        # 先同步获取初始的servers列表
+                        initial_choices = []
+                        initial_status = "<p>正在加载MCP服务器信息...</p>"
+                        try:
+                            from tools.mcp_manager import mcp_manager
+                            servers = mcp_manager.list_servers()
+                            initial_choices = [(f"{server['name']} ({server['id']})", server['id']) for server in servers if 'name' in server and 'id' in server]
+                            if servers:
+                                initial_status = "<div>✅ 已发现本地MCP服务器</div>"
+                        except Exception as e:
+                            print(f"初始化MCP服务器失败: {e}")
+                        
                         enabled_mcp_servers = gr.CheckboxGroup(
-                            choices=[],
+                            choices=initial_choices,
                             value=[],
                             label="启用的MCP服务器"
                         )
@@ -212,6 +225,13 @@ class AgentApp:
                 outputs=[mcp_servers_status, enabled_mcp_servers]
             )
             
+            # MCP服务器勾选变化事件 - 在页面加载后绑定
+            enabled_mcp_servers.change(
+                self._on_mcp_servers_change,
+                inputs=[enabled_mcp_servers],
+                outputs=[mcp_servers_status]
+            )
+            
             msg_input.submit(
                 self._chat,
                 inputs=[msg_input, chatbot],
@@ -230,11 +250,15 @@ class AgentApp:
                 outputs=[batch_results]
             )
             
-            # 添加自定义CSS
+            # 添加自定义CSS - 使用标准系统字体
             app.css = """
+            * {
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+            }
             .chat-window {
                 border-radius: 10px;
                 border: 1px solid #e0e0e0;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
             }
             .chat-window .message {
                 padding: 10px;
@@ -248,6 +272,9 @@ class AgentApp:
             .chat-window .bot {
                 background-color: #f5f5f5;
                 margin-right: 20%;
+            }
+            .gradio-container {
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
             }
             """
             
@@ -296,6 +323,8 @@ class AgentApp:
     
     async def _refresh_mcp_servers(self):
         """刷新MCP服务器状态"""
+        import gradio as gr
+        
         try:
             from tools.mcp_manager import mcp_manager
             
@@ -328,20 +357,104 @@ class AgentApp:
             
             status_html += "</div>"
             
-            # 生成可选择的服务器列表
-            choices = [(f"{server['name']} ({server['id']})", server['id']) for server in servers]
+            # 生成可选择的服务器列表 - 添加保护逻辑
+            choices = []
+            for server in servers:
+                try:
+                    # 确保每个服务器都有必要的字段
+                    if 'name' in server and 'id' in server:
+                        label = f"{server['name']} ({server['id']})"
+                        value = server['id']
+                        choices.append((label, value))
+                except Exception as e:
+                    print(f"跳过无效服务器配置: {e}")
+                    continue
             
-            return status_html, choices
+            # 使用gr.update()来更新CheckboxGroup，避免值冲突
+            return status_html, gr.update(choices=choices)
             
         except Exception as e:
             error_html = f"<div style='color: red;'>❌ 刷新MCP服务器失败: {str(e)}</div>"
-            return error_html, []
+            # 返回空的choices列表，避免Gradio错误
+            return error_html, gr.update(choices=[])
     
+    async def _on_mcp_servers_change(self, enabled_servers: List[str]):
+        """处理MCP服务器勾选变化"""
+        try:
+            from tools.mcp_manager import mcp_manager
+            
+            # 防护：如果 enabled_servers 为空或者无效，直接返回当前状态
+            if not enabled_servers:
+                status_html, _ = await self._refresh_mcp_servers()
+                return status_html
+            
+            # 获取所有服务器
+            all_servers = mcp_manager.list_servers()
+            if not all_servers:
+                status_html, _ = await self._refresh_mcp_servers()
+                return status_html
+            
+            status_messages = []
+            
+            # 建立服务器ID到服务器的映射
+            server_map = {server['id']: server for server in all_servers}
+            
+            for server in all_servers:
+                server_id = server['id']
+                is_enabled = server_id in enabled_servers
+                is_connected = server['connected']
+                
+                if is_enabled and not is_connected:
+                    # 需要启动的服务器
+                    if server['type'] == 'local_stdio':
+                        # 启动本地stdio服务器
+                        try:
+                            await mcp_manager.connect_server(server_id)
+                            status_messages.append(f"✅ 启动本地MCP服务器: {server['name']}")
+                        except Exception as e:
+                            status_messages.append(f"❌ 启动失败 {server['name']}: {str(e)}")
+                    elif server['type'] == 'remote_http':
+                        # 尝试连接远程服务器
+                        try:
+                            await mcp_manager.connect_server(server_id)
+                            status_messages.append(f"✅ 连接远程MCP服务器: {server['name']}")
+                        except Exception as e:
+                            status_messages.append(f"❌ 连接失败 {server['name']}: {str(e)}")
+                
+                elif not is_enabled and is_connected:
+                    # 需要断开的服务器
+                    try:
+                        await mcp_manager.disconnect_server(server_id)
+                        status_messages.append(f"🔌 断开MCP服务器: {server['name']}")
+                    except Exception as e:
+                        status_messages.append(f"❌ 断开失败 {server['name']}: {str(e)}")
+            
+            # 刷新状态
+            status_html, _ = await self._refresh_mcp_servers()
+            
+            # 添加操作消息
+            if status_messages:
+                messages_html = "<br/>".join(status_messages)
+                status_html = f"{status_html}<div style='margin-top: 10px; padding: 10px; background-color: #f0f8ff; border-radius: 4px;'>{messages_html}</div>"
+            
+            return status_html
+            
+        except Exception as e:
+            # 发生错误时，返回刷新后的状态
+            try:
+                status_html, _ = await self._refresh_mcp_servers()
+                error_msg = f"<div style='color: red;'>❌ 处理MCP服务器变化失败: {str(e)}</div>"
+                return f"{status_html}<br/>{error_msg}"
+            except:
+                return f"<div style='color: red;'>❌ 处理MCP服务器变化失败: {str(e)}</div>"
+
     async def _add_remote_server(self, name: str, url: str):
         """添加远程MCP服务器"""
+        import gradio as gr
+        
         try:
             if not name or not url:
-                return name, url, "<div style='color: red;'>❌ 请填写服务器名称和URL</div>", []
+                return name, url, "<div style='color: red;'>❌ 请填写服务器名称和URL</div>", gr.update()
             
             from tools.mcp_manager import mcp_manager
             
@@ -361,7 +474,7 @@ class AgentApp:
             
         except Exception as e:
             error_html = f"<div style='color: red;'>❌ 添加远程服务器失败: {str(e)}</div>"
-            return name, url, error_html, []
+            return name, url, error_html, gr.update()
     
     async def _chat(self, message: str, history: List[Dict[str, str]]):
         """处理聊天消息"""
