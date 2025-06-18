@@ -8,8 +8,12 @@ import asyncio
 import networkx as nx
 from enum import Enum
 
-from .base import BaseNode, BaseExecutor, NodeResult, AgentContext, ExecutionState
-from .types import NodeInput, NodeOutput, NodeType
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
+from core.base import BaseNode, BaseExecutor, NodeResult, AgentContext, ExecutionState
+from core.types import NodeInput, NodeOutput, NodeType
 
 
 class ConnectionType(str, Enum):

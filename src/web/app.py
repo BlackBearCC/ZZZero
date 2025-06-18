@@ -134,7 +134,8 @@ class AgentApp:
                     chatbot = gr.Chatbot(
                         height=500,
                         show_label=False,
-                        elem_classes=["chat-window"]
+                        elem_classes=["chat-window"],
+                        type="messages"
                     )
                     
                     # 输入区域
@@ -330,17 +331,17 @@ class AgentApp:
             # 生成可选择的服务器列表
             choices = [(f"{server['name']} ({server['id']})", server['id']) for server in servers]
             
-            return status_html, gr.CheckboxGroup.update(choices=choices)
+            return status_html, choices
             
         except Exception as e:
             error_html = f"<div style='color: red;'>❌ 刷新MCP服务器失败: {str(e)}</div>"
-            return error_html, gr.CheckboxGroup.update(choices=[])
+            return error_html, []
     
     async def _add_remote_server(self, name: str, url: str):
         """添加远程MCP服务器"""
         try:
             if not name or not url:
-                return name, url, "<div style='color: red;'>❌ 请填写服务器名称和URL</div>", gr.CheckboxGroup.update()
+                return name, url, "<div style='color: red;'>❌ 请填写服务器名称和URL</div>", []
             
             from tools.mcp_manager import mcp_manager
             
@@ -360,23 +361,25 @@ class AgentApp:
             
         except Exception as e:
             error_html = f"<div style='color: red;'>❌ 添加远程服务器失败: {str(e)}</div>"
-            return name, url, error_html, gr.CheckboxGroup.update()
+            return name, url, error_html, []
     
-    async def _chat(self, message: str, history: List[List[str]]):
+    async def _chat(self, message: str, history: List[Dict[str, str]]):
         """处理聊天消息"""
         if not self.current_agent:
-            history.append([message, "请先配置Agent！"])
+            history.append({"role": "user", "content": message})
+            history.append({"role": "assistant", "content": "请先配置Agent！"})
             return "", history, {}, "", [], ""
         
         # 添加用户消息
-        history.append([message, ""])
+        history.append({"role": "user", "content": message})
         
         try:
             # 运行Agent
             result = await self.current_agent.run(message)
             
-            # 更新回复
-            history[-1][1] = result.result or "抱歉，无法生成回复。"
+            # 添加助手回复
+            assistant_reply = result.result or "抱歉，无法生成回复。"
+            history.append({"role": "assistant", "content": assistant_reply})
             
             # 提取执行轨迹和指标
             trace = result.execution_trace
@@ -391,7 +394,7 @@ class AgentApp:
             return "", history, trace, metrics_text, node_status, flow_diagram
             
         except Exception as e:
-            history[-1][1] = f"错误: {str(e)}"
+            history.append({"role": "assistant", "content": f"错误: {str(e)}"})
             return "", history, {}, "", [], ""
     
     async def _batch_execute(self, batch_input: str, parallel: bool):

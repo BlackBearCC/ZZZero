@@ -2,7 +2,14 @@
 ZZZero Agent Framework Core Components
 """
 
-from .base import (
+import sys
+import os
+# 确保能找到父目录
+current_dir = os.path.dirname(__file__)
+parent_dir = os.path.dirname(current_dir)
+sys.path.insert(0, parent_dir)
+
+from core.base import (
     BaseNode,
     BaseAgent,
     BaseExecutor,
@@ -13,7 +20,7 @@ from .base import (
     ExecutionState
 )
 
-from .graph import (
+from core.graph import (
     Graph,
     GraphBuilder,
     GraphExecutor,
@@ -21,7 +28,7 @@ from .graph import (
     ExecutionTrace
 )
 
-from .types import (
+from core.types import (
     AgentType,
     NodeType,
     MessageRole,
