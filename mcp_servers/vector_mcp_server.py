@@ -5,14 +5,21 @@
 
 import asyncio
 import os
+import sys
 import json
 from typing import Any, Dict, List, Optional, Union
 from pathlib import Path
 import logging
 
-import mcp.server.stdio
-import mcp.types as types
-from mcp.server import NotificationOptions, Server
+# 添加父目录到sys.path以便导入mcp模块
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from mcp.server.stdio_server import StdioMCPServer
+from mcp_servers.mcp_types import (
+    ServerInfo, ServerCapabilities, ToolsCapability, 
+    Tool, ToolInputSchema, ToolContent,
+    JSONRPCRequest, JSONRPCResponse, MCPMethods
+)
 
 try:
     import chromadb
@@ -23,7 +30,7 @@ except ImportError:
     chromadb = None
 
 
-class VectorMCPServer:
+class VectorMCPServer(StdioMCPServer):
     """向量查询MCP服务器类"""
     
     def __init__(self, chroma_db_path: str = None, host: str = None, port: int = None):
@@ -38,10 +45,19 @@ class VectorMCPServer:
         if not CHROMADB_AVAILABLE:
             raise ImportError("ChromaDB未安装，请运行: pip install chromadb")
             
+        # 初始化基类
+        server_info = ServerInfo(
+            name="vector-query-server",
+            version="0.1.0"
+        )
+        capabilities = ServerCapabilities(
+            tools=ToolsCapability(list_changed=True)
+        )
+        super().__init__(server_info, capabilities)
+        
         self.chroma_db_path = chroma_db_path or "./chroma_db"
         self.host = host
         self.port = port
-        self.server = Server("vector-query-server")
         self.client = None
         self.collections_cache = {}
         
@@ -72,38 +88,38 @@ class VectorMCPServer:
     def _register_tools(self):
         """注册MCP工具"""
         
-        @self.server.list_tools()
-        async def handle_list_tools() -> list[types.Tool]:
+        # 注册工具列表处理器
+        async def handle_list_tools(request: JSONRPCRequest) -> JSONRPCResponse:
             """返回可用的向量查询工具列表"""
-            return [
-                types.Tool(
+            tools = [
+                Tool(
                     name="vector_list_collections",
                     description="列出所有可用的向量集合",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {}
-                    }
+                    inputSchema=ToolInputSchema(
+                        type="object",
+                        properties={}
+                    )
                 ),
-                types.Tool(
+                Tool(
                     name="vector_collection_info",
                     description="获取指定集合的详细信息",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
+                    inputSchema=ToolInputSchema(
+                        type="object",
+                        properties={
                             "collection_name": {
                                 "type": "string",
                                 "description": "集合名称"
                             }
                         },
-                        "required": ["collection_name"]
-                    }
+                        required=["collection_name"]
+                    )
                 ),
-                types.Tool(
+                Tool(
                     name="vector_query",
                     description="在指定集合中执行向量相似性搜索",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
+                    inputSchema=ToolInputSchema(
+                        type="object",
+                        properties={
                             "collection_name": {
                                 "type": "string",
                                 "description": "集合名称"
@@ -126,15 +142,15 @@ class VectorMCPServer:
                                 "description": "包含的字段列表（documents, metadatas, distances, embeddings）"
                             }
                         },
-                        "required": ["collection_name", "query_text"]
-                    }
+                        required=["collection_name", "query_text"]
+                    )
                 ),
-                types.Tool(
+                Tool(
                     name="vector_search_by_embedding",
                     description="使用向量嵌入进行相似度搜索",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
+                    inputSchema=ToolInputSchema(
+                        type="object",
+                        properties={
                             "collection_name": {
                                 "type": "string",
                                 "description": "集合名称"
@@ -158,15 +174,15 @@ class VectorMCPServer:
                                 "description": "包含的字段列表"
                             }
                         },
-                        "required": ["collection_name", "query_embeddings"]
-                    }
+                        required=["collection_name", "query_embeddings"]
+                    )
                 ),
-                types.Tool(
+                Tool(
                     name="vector_get_documents",
                     description="根据ID或条件获取文档",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
+                    inputSchema=ToolInputSchema(
+                        type="object",
+                        properties={
                             "collection_name": {
                                 "type": "string",
                                 "description": "集合名称"
@@ -190,15 +206,15 @@ class VectorMCPServer:
                                 "description": "包含的字段列表"
                             }
                         },
-                        "required": ["collection_name"]
-                    }
+                        required=["collection_name"]
+                    )
                 ),
-                types.Tool(
+                Tool(
                     name="vector_enhanced_search",
                     description="增强搜索：基于字符特质和观点扩展搜索词汇",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
+                    inputSchema=ToolInputSchema(
+                        type="object",
+                        properties={
                             "collection_name": {
                                 "type": "string",
                                 "description": "集合名称"
@@ -222,42 +238,68 @@ class VectorMCPServer:
                                 "description": "返回结果数量（默认10）"
                             }
                         },
-                        "required": ["collection_name", "base_query"]
-                    }
+                        required=["collection_name", "base_query"]
+                    )
                 )
             ]
+            
+            return JSONRPCResponse(
+                id=request.id,
+                result={"tools": [tool.dict() for tool in tools]}
+            )
         
-        @self.server.call_tool()
-        async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent]:
+        # 注册工具调用处理器
+        async def handle_call_tool(request: JSONRPCRequest) -> JSONRPCResponse:
             """处理工具调用"""
             if not self.client:
-                return [types.TextContent(
+                content = [ToolContent(
                     type="text",
                     text="ChromaDB客户端未初始化，请检查配置"
                 )]
+                return JSONRPCResponse(
+                    id=request.id,
+                    result={"content": [c.dict() for c in content]}
+                )
             
             try:
+                params = request.params or {}
+                name = params.get("name")
+                arguments = params.get("arguments", {})
+                
                 if name == "vector_list_collections":
-                    return await self._list_collections(arguments)
+                    content = await self._list_collections(arguments)
                 elif name == "vector_collection_info":
-                    return await self._get_collection_info(arguments)
+                    content = await self._get_collection_info(arguments)
                 elif name == "vector_query":
-                    return await self._query_collection(arguments)
+                    content = await self._query_collection(arguments)
                 elif name == "vector_search_by_embedding":
-                    return await self._search_by_embedding(arguments)
+                    content = await self._search_by_embedding(arguments)
                 elif name == "vector_get_documents":
-                    return await self._get_documents(arguments)
+                    content = await self._get_documents(arguments)
                 elif name == "vector_enhanced_search":
-                    return await self._enhanced_search(arguments)
+                    content = await self._enhanced_search(arguments)
                 else:
                     raise ValueError(f"未知工具: {name}")
+                
+                return JSONRPCResponse(
+                    id=request.id,
+                    result={"content": [c.dict() for c in content]}
+                )
             except Exception as e:
-                return [types.TextContent(
+                content = [ToolContent(
                     type="text",
                     text=f"执行工具 {name} 时发生错误: {str(e)}"
                 )]
+                return JSONRPCResponse(
+                    id=request.id,
+                    result={"content": [c.dict() for c in content]}
+                )
+        
+        # 注册处理器
+        self.register_handler(MCPMethods.TOOLS_LIST, handle_list_tools)
+        self.register_handler(MCPMethods.TOOLS_CALL, handle_call_tool)
     
-    async def _list_collections(self, arguments: dict) -> list[types.TextContent]:
+    async def _list_collections(self, arguments: dict) -> list[ToolContent]:
         """列出所有集合"""
         try:
             collections = self.client.list_collections()
@@ -285,17 +327,17 @@ class VectorMCPServer:
                 "collections": collection_info
             }
             
-            return [types.TextContent(
+            return [ToolContent(
                 type="text",
                 text=json.dumps(result, ensure_ascii=False, indent=2)
             )]
         except Exception as e:
-            return [types.TextContent(
+            return [ToolContent(
                 type="text",
                 text=f"列出集合时发生错误: {str(e)}"
             )]
     
-    async def _get_collection_info(self, arguments: dict) -> list[types.TextContent]:
+    async def _get_collection_info(self, arguments: dict) -> list[ToolContent]:
         """获取集合详细信息"""
         collection_name = arguments["collection_name"]
         
@@ -321,17 +363,17 @@ class VectorMCPServer:
             except:
                 info["sample_data"] = None
             
-            return [types.TextContent(
+            return [ToolContent(
                 type="text",
                 text=json.dumps(info, ensure_ascii=False, indent=2)
             )]
         except Exception as e:
-            return [types.TextContent(
+            return [ToolContent(
                 type="text",
                 text=f"获取集合信息时发生错误: {str(e)}"
             )]
     
-    async def _query_collection(self, arguments: dict) -> list[types.TextContent]:
+    async def _query_collection(self, arguments: dict) -> list[ToolContent]:
         """查询集合"""
         collection_name = arguments["collection_name"]
         query_text = arguments["query_text"]
@@ -368,17 +410,17 @@ class VectorMCPServer:
                 "results": formatted_results
             }
             
-            return [types.TextContent(
+            return [ToolContent(
                 type="text",
                 text=json.dumps(result, ensure_ascii=False, indent=2)
             )]
         except Exception as e:
-            return [types.TextContent(
+            return [ToolContent(
                 type="text",
                 text=f"查询集合时发生错误: {str(e)}"
             )]
     
-    async def _search_by_embedding(self, arguments: dict) -> list[types.TextContent]:
+    async def _search_by_embedding(self, arguments: dict) -> list[ToolContent]:
         """使用向量嵌入搜索"""
         collection_name = arguments["collection_name"]
         query_embeddings = arguments["query_embeddings"]
@@ -414,17 +456,17 @@ class VectorMCPServer:
                 "results": formatted_results
             }
             
-            return [types.TextContent(
+            return [ToolContent(
                 type="text",
                 text=json.dumps(result, ensure_ascii=False, indent=2)
             )]
         except Exception as e:
-            return [types.TextContent(
+            return [ToolContent(
                 type="text",
                 text=f"向量搜索时发生错误: {str(e)}"
             )]
     
-    async def _get_documents(self, arguments: dict) -> list[types.TextContent]:
+    async def _get_documents(self, arguments: dict) -> list[ToolContent]:
         """获取文档"""
         collection_name = arguments["collection_name"]
         ids = arguments.get("ids")
@@ -459,17 +501,17 @@ class VectorMCPServer:
                 "results": formatted_results
             }
             
-            return [types.TextContent(
+            return [ToolContent(
                 type="text",
                 text=json.dumps(result, ensure_ascii=False, indent=2)
             )]
         except Exception as e:
-            return [types.TextContent(
+            return [ToolContent(
                 type="text",
                 text=f"获取文档时发生错误: {str(e)}"
             )]
     
-    async def _enhanced_search(self, arguments: dict) -> list[types.TextContent]:
+    async def _enhanced_search(self, arguments: dict) -> list[ToolContent]:
         """增强搜索：基于角色特质和观点扩展搜索"""
         collection_name = arguments["collection_name"]
         base_query = arguments["base_query"]
@@ -540,42 +582,24 @@ class VectorMCPServer:
                 "results": sorted_results
             }
             
-            return [types.TextContent(
+            return [ToolContent(
                 type="text",
                 text=json.dumps(result, ensure_ascii=False, indent=2)
             )]
         except Exception as e:
-            return [types.TextContent(
+            return [ToolContent(
                 type="text",
                 text=f"增强搜索时发生错误: {str(e)}"
             )]
-    
-    async def run_server(self):
-        """运行MCP服务器"""
-        from mcp.server.models import InitializationOptions
-        
-        async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-            init_options = InitializationOptions(
-                server_name="vector-query-server",
-                server_version="0.1.0",
-                capabilities=self.server.get_capabilities(
-                    notification_options=NotificationOptions(
-                        prompts_changed=True,
-                        resources_changed=True,
-                        tools_changed=True,
-                    ),
-                    experimental_capabilities={},
-                ),
-            )
-            
-            await self.server.run(
-                read_stream,
-                write_stream,
-                init_options,
-            )
+
+
+async def main():
+    """主函数"""
+    print("启动向量MCP服务器...")
+    vector_server = VectorMCPServer()
+    await vector_server.run()
 
 
 if __name__ == "__main__":
     # 创建并运行向量MCP服务器
-    vector_server = VectorMCPServer()
-    asyncio.run(vector_server.run_server()) 
+    asyncio.run(main()) 

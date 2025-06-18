@@ -5,18 +5,24 @@ CSV MCP 服务器
 
 import asyncio
 import os
+import sys
 import pandas as pd
 from typing import Any, Dict, List, Optional, Union
 import json
 from pathlib import Path
 
-import mcp.server.stdio
-import mcp.types as types
-from mcp.server import NotificationOptions, Server
-from pydantic import AnyUrl
+# 添加父目录到sys.path以便导入mcp模块
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from mcp.server.stdio_server import StdioMCPServer
+from mcp_servers.mcp_types import (
+    ServerInfo, ServerCapabilities, ToolsCapability, 
+    Tool, ToolInputSchema, ToolContent,
+    JSONRPCRequest, JSONRPCResponse, MCPMethods
+)
 
 
-class CSVMCPServer:
+class CSVMCPServer(StdioMCPServer):
     """CSV MCP服务器类"""
     
     def __init__(self, csv_directory: str = None):
@@ -26,8 +32,17 @@ class CSVMCPServer:
         Args:
             csv_directory: CSV文件目录路径，默认为当前目录
         """
+        # 初始化基类
+        server_info = ServerInfo(
+            name="csv-query-server",
+            version="0.1.0"
+        )
+        capabilities = ServerCapabilities(
+            tools=ToolsCapability(list_changed=True)
+        )
+        super().__init__(server_info, capabilities)
+        
         self.csv_directory = csv_directory or os.getcwd()
-        self.server = Server("csv-query-server")
         self.csv_cache = {}  # 缓存已加载的CSV文件
         
         # 注册工具
@@ -36,29 +51,29 @@ class CSVMCPServer:
     def _register_tools(self):
         """注册MCP工具"""
         
-        @self.server.list_tools()
-        async def handle_list_tools() -> list[types.Tool]:
+        # 注册工具列表处理器
+        async def handle_list_tools(request: JSONRPCRequest) -> JSONRPCResponse:
             """返回可用的CSV工具列表"""
-            return [
-                types.Tool(
+            tools = [
+                Tool(
                     name="csv_list_files",
                     description="列出指定目录中的所有CSV文件",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
+                    inputSchema=ToolInputSchema(
+                        type="object",
+                        properties={
                             "directory": {
                                 "type": "string",
                                 "description": "要搜索的目录路径（可选，默认为配置的目录）"
                             }
                         }
-                    }
+                    )
                 ),
-                types.Tool(
+                Tool(
                     name="csv_query",
                     description="查询CSV文件数据，支持条件筛选和聚合操作",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
+                    inputSchema=ToolInputSchema(
+                        type="object",
+                        properties={
                             "file_path": {
                                 "type": "string",
                                 "description": "CSV文件路径"
@@ -77,15 +92,15 @@ class CSVMCPServer:
                                 "description": "限制返回的行数（可选）"
                             }
                         },
-                        "required": ["file_path"]
-                    }
+                        required=["file_path"]
+                    )
                 ),
-                types.Tool(
+                Tool(
                     name="csv_stats",
                     description="获取CSV文件的统计信息",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
+                    inputSchema=ToolInputSchema(
+                        type="object",
+                        properties={
                             "file_path": {
                                 "type": "string",
                                 "description": "CSV文件路径"
@@ -95,29 +110,29 @@ class CSVMCPServer:
                                 "description": "要统计的列名（可选，默认统计所有数值列）"
                             }
                         },
-                        "required": ["file_path"]
-                    }
+                        required=["file_path"]
+                    )
                 ),
-                types.Tool(
+                Tool(
                     name="csv_schema",
                     description="获取CSV文件的结构信息（列名、数据类型等）",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
+                    inputSchema=ToolInputSchema(
+                        type="object",
+                        properties={
                             "file_path": {
                                 "type": "string",
                                 "description": "CSV文件路径"
                             }
                         },
-                        "required": ["file_path"]
-                    }
+                        required=["file_path"]
+                    )
                 ),
-                types.Tool(
+                Tool(
                     name="csv_search",
                     description="在CSV文件中搜索包含特定关键词的行",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
+                    inputSchema=ToolInputSchema(
+                        type="object",
+                        properties={
                             "file_path": {
                                 "type": "string",
                                 "description": "CSV文件路径"
@@ -136,34 +151,56 @@ class CSVMCPServer:
                                 "description": "是否区分大小写（默认false）"
                             }
                         },
-                        "required": ["file_path", "keyword"]
-                    }
+                        required=["file_path", "keyword"]
+                    )
                 )
             ]
+            
+            return JSONRPCResponse(
+                id=request.id,
+                result={"tools": [tool.dict() for tool in tools]}
+            )
         
-        @self.server.call_tool()
-        async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent]:
+        # 注册工具调用处理器
+        async def handle_call_tool(request: JSONRPCRequest) -> JSONRPCResponse:
             """处理工具调用"""
             try:
+                params = request.params or {}
+                name = params.get("name")
+                arguments = params.get("arguments", {})
+                
                 if name == "csv_list_files":
-                    return await self._list_csv_files(arguments)
+                    content = await self._list_csv_files(arguments)
                 elif name == "csv_query":
-                    return await self._query_csv(arguments)
+                    content = await self._query_csv(arguments)
                 elif name == "csv_stats":
-                    return await self._get_csv_stats(arguments)
+                    content = await self._get_csv_stats(arguments)
                 elif name == "csv_schema":
-                    return await self._get_csv_schema(arguments)
+                    content = await self._get_csv_schema(arguments)
                 elif name == "csv_search":
-                    return await self._search_csv(arguments)
+                    content = await self._search_csv(arguments)
                 else:
                     raise ValueError(f"未知工具: {name}")
+                
+                return JSONRPCResponse(
+                    id=request.id,
+                    result={"content": [c.dict() for c in content]}
+                )
             except Exception as e:
-                return [types.TextContent(
+                content = [ToolContent(
                     type="text",
                     text=f"执行工具 {name} 时发生错误: {str(e)}"
                 )]
+                return JSONRPCResponse(
+                    id=request.id,
+                    result={"content": [c.dict() for c in content]}
+                )
+        
+        # 注册处理器
+        self.register_handler(MCPMethods.TOOLS_LIST, handle_list_tools)
+        self.register_handler(MCPMethods.TOOLS_CALL, handle_call_tool)
     
-    async def _list_csv_files(self, arguments: dict) -> list[types.TextContent]:
+    async def _list_csv_files(self, arguments: dict) -> list[ToolContent]:
         """列出CSV文件"""
         directory = arguments.get("directory", self.csv_directory)
         
@@ -184,17 +221,17 @@ class CSVMCPServer:
                 "files": csv_files
             }
             
-            return [types.TextContent(
+            return [ToolContent(
                 type="text",
                 text=json.dumps(result, ensure_ascii=False, indent=2)
             )]
         except Exception as e:
-            return [types.TextContent(
+            return [ToolContent(
                 type="text",
                 text=f"列出CSV文件时发生错误: {str(e)}"
             )]
     
-    async def _query_csv(self, arguments: dict) -> list[types.TextContent]:
+    async def _query_csv(self, arguments: dict) -> list[ToolContent]:
         """查询CSV数据"""
         file_path = arguments["file_path"]
         query = arguments.get("query")
@@ -225,17 +262,17 @@ class CSVMCPServer:
                 "data": df.to_dict(orient='records')
             }
             
-            return [types.TextContent(
+            return [ToolContent(
                 type="text",
                 text=json.dumps(result, ensure_ascii=False, indent=2)
             )]
         except Exception as e:
-            return [types.TextContent(
+            return [ToolContent(
                 type="text",
                 text=f"查询CSV文件时发生错误: {str(e)}"
             )]
     
-    async def _get_csv_stats(self, arguments: dict) -> list[types.TextContent]:
+    async def _get_csv_stats(self, arguments: dict) -> list[ToolContent]:
         """获取CSV统计信息"""
         file_path = arguments["file_path"]
         column = arguments.get("column")
@@ -268,17 +305,17 @@ class CSVMCPServer:
                     "statistics": stats
                 }
             
-            return [types.TextContent(
+            return [ToolContent(
                 type="text",
                 text=json.dumps(result, ensure_ascii=False, indent=2)
             )]
         except Exception as e:
-            return [types.TextContent(
+            return [ToolContent(
                 type="text",
                 text=f"获取统计信息时发生错误: {str(e)}"
             )]
     
-    async def _get_csv_schema(self, arguments: dict) -> list[types.TextContent]:
+    async def _get_csv_schema(self, arguments: dict) -> list[ToolContent]:
         """获取CSV结构信息"""
         file_path = arguments["file_path"]
         
@@ -308,17 +345,17 @@ class CSVMCPServer:
                 "schema": schema_info
             }
             
-            return [types.TextContent(
+            return [ToolContent(
                 type="text",
                 text=json.dumps(result, ensure_ascii=False, indent=2)
             )]
         except Exception as e:
-            return [types.TextContent(
+            return [ToolContent(
                 type="text",
                 text=f"获取结构信息时发生错误: {str(e)}"
             )]
     
-    async def _search_csv(self, arguments: dict) -> list[types.TextContent]:
+    async def _search_csv(self, arguments: dict) -> list[ToolContent]:
         """搜索CSV数据"""
         file_path = arguments["file_path"]
         keyword = arguments["keyword"]
@@ -350,12 +387,12 @@ class CSVMCPServer:
                 "matches": result_df.to_dict(orient='records')
             }
             
-            return [types.TextContent(
+            return [ToolContent(
                 type="text",
                 text=json.dumps(result, ensure_ascii=False, indent=2)
             )]
         except Exception as e:
-            return [types.TextContent(
+            return [ToolContent(
                 type="text",
                 text=f"搜索CSV文件时发生错误: {str(e)}"
             )]
@@ -390,33 +427,15 @@ class CSVMCPServer:
                 del self.csv_cache[oldest_key]
         
         return self.csv_cache[cache_key].copy()
-    
-    async def run_server(self):
-        """运行MCP服务器"""
-        from mcp.server.models import InitializationOptions
-        
-        async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-            init_options = InitializationOptions(
-                server_name="csv-query-server",
-                server_version="0.1.0",
-                capabilities=self.server.get_capabilities(
-                    notification_options=NotificationOptions(
-                        prompts_changed=True,
-                        resources_changed=True,
-                        tools_changed=True,
-                    ),
-                    experimental_capabilities={},
-                ),
-            )
-            
-            await self.server.run(
-                read_stream,
-                write_stream,
-                init_options,
-            )
+
+
+async def main():
+    """主函数"""
+    print("启动CSV MCP服务器...")
+    csv_server = CSVMCPServer()
+    await csv_server.run()
 
 
 if __name__ == "__main__":
     # 创建并运行CSV MCP服务器
-    csv_server = CSVMCPServer()
-    asyncio.run(csv_server.run_server()) 
+    asyncio.run(main()) 
