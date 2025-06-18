@@ -1,347 +1,389 @@
+#!/usr/bin/env python3
 """
-MCP工具管理器 - 集成MCP协议的工具
+MCP工具管理器
+将MCP服务器的工具、资源和提示集成到Agent工具系统中
 """
 import asyncio
-import sys
-from typing import Dict, List, Any, Optional
-from dataclasses import dataclass
 import logging
+from typing import Dict, List, Optional, Any, Union
+import json
 
-from .base import ToolManager, BaseTool
-from ..core.types import ToolConfig
-
-# 使用现有的MCP客户端
-sys.path.append('.')  # 添加根目录到路径
-try:
-    from mcp.client import MCPClient, MCPTool
-except ImportError:
-    # 如果导入失败，定义简单的占位类
-    @dataclass
-    class MCPTool:
-        name: str
-        description: str
-        input_schema: Dict[str, Any]
-        
-    class MCPClient:
-        def __init__(self, server_command: str, server_args: List[str] = None):
-            self.server_command = server_command
-            self.server_args = server_args or []
-            self.tools = {}
-            
-        async def connect(self):
-            pass
-            
-        async def list_tools(self):
-            return []
-            
-        async def call_tool(self, name: str, arguments: Dict[str, Any]):
-            return {"error": "MCP client not available"}
-
+from .base import ToolManager
+from ..core.base import BaseTool
+from .mcp_manager import mcp_manager, MCPServerType
 
 logger = logging.getLogger(__name__)
 
 
-class MCPToolWrapper(BaseTool):
-    """MCP工具包装器 - 将MCP工具包装为框架工具"""
+class MCPTool(BaseTool):
+    """MCP工具包装器"""
     
-    def __init__(self, mcp_tool: MCPTool, mcp_client: MCPClient):
+    def __init__(self, server_id: str, tool_name: str, tool_schema: Dict[str, Any]):
         """
-        初始化MCP工具包装器
+        初始化MCP工具
         
         Args:
-            mcp_tool: MCP工具定义
-            mcp_client: MCP客户端实例
+            server_id: MCP服务器ID
+            tool_name: 工具名称
+            tool_schema: 工具模式定义
         """
-        # 解析参数定义
-        parameters = self._parse_mcp_schema(mcp_tool.input_schema)
+        self.server_id = server_id
+        self.original_name = tool_name
+        
+        # 构造唯一的工具名称
+        unique_name = f"mcp_{server_id}_{tool_name}"
         
         super().__init__(
-            name=mcp_tool.name,
-            description=mcp_tool.description,
-            parameters=parameters
+            name=unique_name,
+            description=tool_schema.get("description", f"MCP工具: {tool_name}"),
+            parameters=tool_schema.get("inputSchema", {})
         )
-        self.mcp_tool = mcp_tool
-        self.mcp_client = mcp_client
-        
-    def _parse_mcp_schema(self, schema: Dict[str, Any]) -> Dict[str, Any]:
-        """解析MCP工具模式为框架参数格式"""
-        parameters = {}
-        
-        if "properties" in schema:
-            for param_name, param_info in schema["properties"].items():
-                parameters[param_name] = {
-                    "type": param_info.get("type", "string"),
-                    "description": param_info.get("description", ""),
-                    "required": param_name in schema.get("required", []),
-                    "default": param_info.get("default")
-                }
-                
-        return parameters
-        
+    
     async def execute(self, **kwargs) -> Any:
         """执行MCP工具"""
         try:
-            result = await self.mcp_client.call_tool(self.name, kwargs)
+            # 调用MCP服务器的工具
+            result = await mcp_manager.call_tool(
+                self.server_id, 
+                self.original_name, 
+                kwargs
+            )
             
-            # 处理MCP响应
-            if isinstance(result, dict):
-                if result.get("success", True):
-                    return result.get("result", result)
-                else:
-                    raise Exception(result.get("error", "Unknown error"))
+            # 解析结果
+            if hasattr(result, 'content') and result.content:
+                content = result.content[0] if result.content else None
+                if content:
+                    if hasattr(content, 'text'):
+                        return content.text
+                    elif hasattr(content, 'data'):
+                        return content.data
             
-            return result
+            return str(result)
             
         except Exception as e:
-            logger.error(f"MCP工具 {self.name} 执行失败: {e}")
-            raise
+            logger.error(f"MCP工具执行失败 {self.name}: {e}")
+            raise Exception(f"MCP工具执行失败: {e}")
+
+
+class MCPResourceTool(BaseTool):
+    """MCP资源访问工具"""
+    
+    def __init__(self, server_id: str, resource_name: str, resource_info: Dict[str, Any]):
+        """
+        初始化MCP资源工具
+        
+        Args:
+            server_id: MCP服务器ID
+            resource_name: 资源名称
+            resource_info: 资源信息
+        """
+        self.server_id = server_id
+        self.resource_uri = resource_info.get("uri", resource_name)
+        
+        # 构造唯一的工具名称
+        unique_name = f"mcp_resource_{server_id}_{resource_name}"
+        
+        super().__init__(
+            name=unique_name,
+            description=f"获取MCP资源: {resource_info.get('description', resource_name)}",
+            parameters={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        )
+    
+    async def execute(self, **kwargs) -> Any:
+        """获取MCP资源"""
+        try:
+            result = await mcp_manager.get_resource(self.server_id, self.resource_uri)
+            
+            # 解析资源内容
+            if hasattr(result, 'contents') and result.contents:
+                content = result.contents[0] if result.contents else None
+                if content:
+                    if hasattr(content, 'text'):
+                        return content.text
+                    elif hasattr(content, 'blob'):
+                        return f"二进制资源 (大小: {len(content.blob)} bytes)"
+            
+            return str(result)
+            
+        except Exception as e:
+            logger.error(f"MCP资源获取失败 {self.name}: {e}")
+            raise Exception(f"MCP资源获取失败: {e}")
+
+
+class MCPPromptTool(BaseTool):
+    """MCP提示工具"""
+    
+    def __init__(self, server_id: str, prompt_name: str, prompt_info: Dict[str, Any]):
+        """
+        初始化MCP提示工具
+        
+        Args:
+            server_id: MCP服务器ID
+            prompt_name: 提示名称
+            prompt_info: 提示信息
+        """
+        self.server_id = server_id
+        self.original_name = prompt_name
+        
+        # 构造唯一的工具名称
+        unique_name = f"mcp_prompt_{server_id}_{prompt_name}"
+        
+        # 构建参数模式
+        parameters = {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+        
+        # 从提示参数构建工具参数
+        if "arguments" in prompt_info:
+            for arg in prompt_info["arguments"]:
+                arg_name = arg.get("name", "")
+                parameters["properties"][arg_name] = {
+                    "type": "string",
+                    "description": arg.get("description", "")
+                }
+                if arg.get("required", False):
+                    parameters["required"].append(arg_name)
+        
+        super().__init__(
+            name=unique_name,
+            description=f"使用MCP提示: {prompt_info.get('description', prompt_name)}",
+            parameters=parameters
+        )
+    
+    async def execute(self, **kwargs) -> Any:
+        """执行MCP提示"""
+        try:
+            result = await mcp_manager.get_prompt(self.server_id, self.original_name, kwargs)
+            
+            # 解析提示结果
+            if hasattr(result, 'messages') and result.messages:
+                # 将消息转换为文本
+                messages = []
+                for msg in result.messages:
+                    if hasattr(msg, 'content'):
+                        if hasattr(msg.content, 'text'):
+                            messages.append(f"{msg.role}: {msg.content.text}")
+                        else:
+                            messages.append(f"{msg.role}: {str(msg.content)}")
+                
+                return "\n".join(messages)
+            
+            return str(result)
+            
+        except Exception as e:
+            logger.error(f"MCP提示执行失败 {self.name}: {e}")
+            raise Exception(f"MCP提示执行失败: {e}")
 
 
 class MCPToolManager(ToolManager):
-    """MCP工具管理器"""
+    """增强的工具管理器，集成MCP服务"""
     
-    def __init__(self, mcp_server_url: Optional[str] = None):
+    def __init__(self, enabled_servers: Optional[List[str]] = None):
         """
         初始化MCP工具管理器
         
         Args:
-            mcp_server_url: MCP服务器URL（可选）
+            enabled_servers: 启用的MCP服务器列表
         """
         super().__init__()
-        self.mcp_server_url = mcp_server_url
-        self.mcp_clients: Dict[str, MCPClient] = {}
-        self._initialized = False
-        
-        # 注册内置工具
-        self._register_builtin_tools()
-        
-    def _register_builtin_tools(self):
-        """注册内置工具"""
-        # Web搜索工具
-        self.register_tool(WebSearchTool())
-        
-        # 计算器工具
-        self.register_tool(CalculatorTool())
-        
-        # 文件读取工具
-        self.register_tool(FileReaderTool())
+        self.enabled_servers = enabled_servers or []
+        self.mcp_tools: Dict[str, BaseTool] = {}
         
     async def initialize(self):
         """初始化工具管理器"""
-        if self._initialized:
-            return
-            
-        # 如果有MCP服务器URL，尝试连接
-        if self.mcp_server_url:
-            try:
-                await self._connect_mcp_server(self.mcp_server_url)
-            except Exception as e:
-                logger.warning(f"连接MCP服务器失败: {e}")
-                
-        # 尝试加载本地MCP服务
-        await self._load_local_mcp_services()
+        # 连接并加载MCP服务器
+        await self._load_mcp_servers()
         
-        self._initialized = True
-        
-    async def _connect_mcp_server(self, server_url: str):
-        """连接到MCP服务器"""
-        # TODO: 实现HTTP/WebSocket连接到远程MCP服务器
-        logger.info(f"连接到MCP服务器: {server_url}")
-        
-    async def _load_local_mcp_services(self):
-        """加载本地MCP服务"""
-        # 检查是否有本地MCP服务定义
-        try:
-            import json
-            with open("mcp/mcp_config.json", "r", encoding="utf-8") as f:
-                config = json.load(f)
-                
-            for service_name, service_config in config.get("services", {}).items():
-                await self._load_mcp_service(service_name, service_config)
-                
-        except FileNotFoundError:
-            logger.info("未找到mcp_config.json，跳过本地MCP服务加载")
-        except Exception as e:
-            logger.warning(f"加载本地MCP服务失败: {e}")
-            
-    async def _load_mcp_service(self, name: str, config: Dict[str, Any]):
-        """加载单个MCP服务"""
-        try:
-            command = config.get("command", sys.executable)
-            args = config.get("args", [])
-            
-            # 创建MCP客户端
-            client = MCPClient(command, args)
-            await client.connect()
-            
-            # 获取工具列表
-            tools = await client.list_tools()
-            
-            # 注册每个工具
-            for mcp_tool in tools:
-                wrapper = MCPToolWrapper(mcp_tool, client)
-                self.register_tool(wrapper)
-                logger.info(f"从MCP服务 {name} 加载工具: {mcp_tool.name}")
-                
-            self.mcp_clients[name] = client
-            
-        except Exception as e:
-            logger.error(f"加载MCP服务 {name} 失败: {e}")
-            
+        logger.info(f"MCP工具管理器初始化完成，加载了 {len(self.mcp_tools)} 个MCP工具")
+    
     async def cleanup(self):
         """清理资源"""
-        # 关闭所有MCP客户端
-        for client in self.mcp_clients.values():
-            try:
-                await client.close()
-            except:
-                pass
-                
-        self.mcp_clients.clear()
-        self._initialized = False
-
-
-# 内置工具实现
-
-class WebSearchTool(BaseTool):
-    """Web搜索工具（模拟）"""
+        await mcp_manager.cleanup()
     
-    def __init__(self):
-        super().__init__(
-            name="web_search",
-            description="搜索网络获取信息",
-            parameters={
-                "query": {
-                    "type": "string",
-                    "description": "搜索查询",
-                    "required": True
-                },
-                "max_results": {
-                    "type": "integer",
-                    "description": "最大结果数",
-                    "required": False,
-                    "default": 5
-                }
-            }
-        )
-        
-    async def execute(self, query: str, max_results: int = 5) -> Any:
-        """执行搜索（模拟）"""
-        # 实际实现中，这里应该调用真实的搜索API
-        await asyncio.sleep(0.5)  # 模拟网络延迟
-        
-        return {
-            "results": [
-                {
-                    "title": f"搜索结果 {i+1}: {query}",
-                    "snippet": f"这是关于'{query}'的搜索结果片段 {i+1}...",
-                    "url": f"https://example.com/result{i+1}"
-                }
-                for i in range(min(max_results, 3))
-            ],
-            "total": 100,
-            "query": query
-        }
-
-
-class CalculatorTool(BaseTool):
-    """计算器工具"""
+    async def enable_tool(self, tool_name: str):
+        """启用工具"""
+        super().enable_tool(tool_name)
     
-    def __init__(self):
-        super().__init__(
-            name="calculator",
-            description="执行数学计算",
-            parameters={
-                "expression": {
-                    "type": "string",
-                    "description": "数学表达式",
-                    "required": True
-                }
-            }
-        )
+    async def _load_mcp_servers(self):
+        """加载MCP服务器"""
+        # 如果没有指定启用的服务器，则启用所有可用的
+        if not self.enabled_servers:
+            self.enabled_servers = list(mcp_manager.servers.keys())
         
-    async def execute(self, expression: str) -> Any:
-        """执行计算"""
+        # 连接启用的服务器
+        for server_id in self.enabled_servers:
+            await self._connect_and_load_server(server_id)
+    
+    async def _connect_and_load_server(self, server_id: str):
+        """连接并加载单个MCP服务器"""
         try:
-            # 安全的数学表达式评估
-            allowed_names = {
-                "abs": abs,
-                "round": round,
-                "min": min,
-                "max": max,
-                "sum": sum,
-                "pow": pow,
-                "sqrt": __import__("math").sqrt,
-                "sin": __import__("math").sin,
-                "cos": __import__("math").cos,
-                "tan": __import__("math").tan,
-                "pi": __import__("math").pi,
-                "e": __import__("math").e
-            }
+            # 启用服务器（会自动连接）
+            success = await mcp_manager.enable_server(server_id)
+            if not success:
+                logger.warning(f"无法连接MCP服务器: {server_id}")
+                return
             
-            # 评估表达式
-            result = eval(expression, {"__builtins__": {}}, allowed_names)
+            # 获取服务器信息
+            servers_info = mcp_manager.list_servers()
+            server_info = next((s for s in servers_info if s['id'] == server_id), None)
+            if not server_info:
+                logger.warning(f"找不到服务器信息: {server_id}")
+                return
             
-            return {
-                "expression": expression,
-                "result": result,
-                "type": type(result).__name__
-            }
+            # 加载工具
+            await self._load_server_tools(server_id, server_info)
+            
+            # 加载资源（作为工具）
+            await self._load_server_resources(server_id, server_info)
+            
+            # 加载提示（作为工具）
+            await self._load_server_prompts(server_id, server_info)
+            
+            logger.info(f"成功加载MCP服务器: {server_info['name']}")
             
         except Exception as e:
-            return {
-                "expression": expression,
-                "error": str(e),
-                "type": "error"
-            }
-
-
-class FileReaderTool(BaseTool):
-    """文件读取工具"""
+            logger.error(f"加载MCP服务器失败 {server_id}: {e}")
     
-    def __init__(self):
-        super().__init__(
-            name="file_reader",
-            description="读取文件内容",
-            parameters={
-                "file_path": {
-                    "type": "string",
-                    "description": "文件路径",
-                    "required": True
-                },
-                "encoding": {
-                    "type": "string",
-                    "description": "文件编码",
-                    "required": False,
-                    "default": "utf-8"
-                }
-            }
-        )
+    async def _load_server_tools(self, server_id: str, server_info: Dict[str, Any]):
+        """加载服务器工具"""
+        if server_id not in mcp_manager.sessions:
+            return
         
-    async def execute(self, file_path: str, encoding: str = "utf-8") -> Any:
-        """读取文件"""
         try:
-            # 安全检查：只允许读取特定目录下的文件
-            import os
-            safe_path = os.path.abspath(file_path)
-            allowed_dirs = [os.path.abspath("."), os.path.abspath("data")]
+            session = mcp_manager.sessions[server_id]
+            tools_result = await session.list_tools()
             
-            if not any(safe_path.startswith(d) for d in allowed_dirs):
-                raise PermissionError("不允许访问该文件路径")
+            if tools_result and tools_result.tools:
+                for tool in tools_result.tools:
+                    mcp_tool = MCPTool(server_id, tool.name, {
+                        "description": tool.description,
+                        "inputSchema": tool.inputSchema
+                    })
+                    
+                    self.mcp_tools[mcp_tool.name] = mcp_tool
+                    self.tools[mcp_tool.name] = mcp_tool
+                    
+                logger.info(f"加载了 {len(tools_result.tools)} 个工具从 {server_id}")
                 
-            with open(safe_path, "r", encoding=encoding) as f:
-                content = f.read()
-                
-            return {
-                "file_path": file_path,
-                "content": content,
-                "size": len(content),
-                "lines": content.count('\n') + 1
-            }
-            
         except Exception as e:
-            return {
-                "file_path": file_path,
-                "error": str(e),
-                "type": "error"
-            } 
+            logger.warning(f"加载服务器工具失败 {server_id}: {e}")
+    
+    async def _load_server_resources(self, server_id: str, server_info: Dict[str, Any]):
+        """加载服务器资源"""
+        if server_id not in mcp_manager.sessions:
+            return
+        
+        try:
+            session = mcp_manager.sessions[server_id]
+            resources_result = await session.list_resources()
+            
+            if resources_result and resources_result.resources:
+                for resource in resources_result.resources:
+                    resource_tool = MCPResourceTool(server_id, resource.name, {
+                        "uri": resource.uri,
+                        "description": resource.description,
+                        "mimeType": getattr(resource, 'mimeType', None)
+                    })
+                    
+                    self.mcp_tools[resource_tool.name] = resource_tool
+                    self.tools[resource_tool.name] = resource_tool
+                    
+                logger.info(f"加载了 {len(resources_result.resources)} 个资源从 {server_id}")
+                
+        except Exception as e:
+            logger.warning(f"加载服务器资源失败 {server_id}: {e}")
+    
+    async def _load_server_prompts(self, server_id: str, server_info: Dict[str, Any]):
+        """加载服务器提示"""
+        if server_id not in mcp_manager.sessions:
+            return
+        
+        try:
+            session = mcp_manager.sessions[server_id]
+            prompts_result = await session.list_prompts()
+            
+            if prompts_result and prompts_result.prompts:
+                for prompt in prompts_result.prompts:
+                    prompt_tool = MCPPromptTool(server_id, prompt.name, {
+                        "description": prompt.description,
+                        "arguments": prompt.arguments
+                    })
+                    
+                    self.mcp_tools[prompt_tool.name] = prompt_tool
+                    self.tools[prompt_tool.name] = prompt_tool
+                    
+                logger.info(f"加载了 {len(prompts_result.prompts)} 个提示从 {server_id}")
+                
+        except Exception as e:
+            logger.warning(f"加载服务器提示失败 {server_id}: {e}")
+    
+    def enable_mcp_server(self, server_id: str):
+        """启用MCP服务器"""
+        if server_id not in self.enabled_servers:
+            self.enabled_servers.append(server_id)
+    
+    def disable_mcp_server(self, server_id: str):
+        """禁用MCP服务器"""
+        if server_id in self.enabled_servers:
+            self.enabled_servers.remove(server_id)
+            
+            # 移除该服务器的所有工具
+            tools_to_remove = [
+                name for name, tool in self.mcp_tools.items()
+                if hasattr(tool, 'server_id') and tool.server_id == server_id
+            ]
+            
+            for tool_name in tools_to_remove:
+                del self.mcp_tools[tool_name]
+                if tool_name in self.tools:
+                    del self.tools[tool_name]
+    
+    def get_mcp_servers_status(self) -> List[Dict[str, Any]]:
+        """获取MCP服务器状态"""
+        return mcp_manager.list_servers()
+    
+    async def refresh_mcp_servers(self):
+        """刷新MCP服务器"""
+        # 清除现有MCP工具
+        for tool_name in list(self.mcp_tools.keys()):
+            if tool_name in self.tools:
+                del self.tools[tool_name]
+        self.mcp_tools.clear()
+        
+        # 重新加载
+        await self._load_mcp_servers()
+    
+    def get_tools_description(self) -> str:
+        """获取工具描述"""
+        base_desc = super().get_tools_description()
+        
+        # 添加MCP工具说明
+        if self.mcp_tools:
+            mcp_desc = "\n\n=== MCP服务工具 ==="
+            
+            # 按服务器分组
+            servers = {}
+            for tool_name, tool in self.mcp_tools.items():
+                if hasattr(tool, 'server_id'):
+                    server_id = tool.server_id
+                    if server_id not in servers:
+                        servers[server_id] = []
+                    servers[server_id].append(tool)
+            
+            for server_id, tools in servers.items():
+                server_info = next((s for s in mcp_manager.list_servers() if s['id'] == server_id), None)
+                server_name = server_info['name'] if server_info else server_id
+                
+                mcp_desc += f"\n\n{server_name}:"
+                for tool in tools:
+                    mcp_desc += f"\n- {tool.name}: {tool.description}"
+            
+            base_desc += mcp_desc
+        
+        return base_desc 

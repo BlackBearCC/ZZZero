@@ -78,8 +78,35 @@ class AgentApp:
                             label="最大迭代次数"
                         )
                     
+                    # MCP服务器选择
+                    with gr.Accordion("🔌 MCP服务器", open=True):
+                        mcp_servers_status = gr.HTML(
+                            value="<p>正在加载MCP服务器信息...</p>",
+                            label="MCP服务器状态"
+                        )
+                        enabled_mcp_servers = gr.CheckboxGroup(
+                            choices=[],
+                            value=[],
+                            label="启用的MCP服务器"
+                        )
+                        # 远程服务器添加
+                        with gr.Row():
+                            remote_server_name = gr.Textbox(
+                                placeholder="服务器名称",
+                                scale=2,
+                                label="远程服务器名称"
+                            )
+                            remote_server_url = gr.Textbox(
+                                placeholder="http://localhost:3000",
+                                scale=3,
+                                label="远程服务器URL"
+                            )
+                            add_remote_btn = gr.Button("添加远程服务器", scale=1)
+                        
+                        refresh_mcp_btn = gr.Button("刷新MCP服务器", variant="secondary")
+                    
                     # 工具选择
-                    with gr.Accordion("🔧 工具配置", open=True):
+                    with gr.Accordion("🔧 传统工具配置", open=False):
                         available_tools = gr.CheckboxGroup(
                             choices=[
                                 "web_search",
@@ -88,13 +115,8 @@ class AgentApp:
                                 "code_executor",
                                 "database_query"
                             ],
-                            value=["web_search", "calculator"],
-                            label="启用的工具"
-                        )
-                        mcp_server = gr.Textbox(
-                            value="",
-                            label="MCP服务器地址（可选）",
-                            placeholder="http://localhost:3000"
+                            value=[],
+                            label="启用的传统工具"
                         )
                     
                     # 应用配置按钮
@@ -161,9 +183,27 @@ class AgentApp:
                 self._apply_config,
                 inputs=[
                     llm_provider, model_name, api_key, temperature,
-                    agent_type, max_iterations, available_tools, mcp_server
+                    agent_type, max_iterations, available_tools, enabled_mcp_servers
                 ],
                 outputs=[config_status]
+            )
+            
+            # MCP服务器相关事件
+            refresh_mcp_btn.click(
+                self._refresh_mcp_servers,
+                outputs=[mcp_servers_status, enabled_mcp_servers]
+            )
+            
+            add_remote_btn.click(
+                self._add_remote_server,
+                inputs=[remote_server_name, remote_server_url],
+                outputs=[remote_server_name, remote_server_url, mcp_servers_status, enabled_mcp_servers]
+            )
+            
+            # 页面加载时自动刷新MCP服务器状态
+            app.load(
+                self._refresh_mcp_servers,
+                outputs=[mcp_servers_status, enabled_mcp_servers]
             )
             
             msg_input.submit(
@@ -209,7 +249,7 @@ class AgentApp:
     
     async def _apply_config(self,
                            llm_provider, model_name, api_key, temperature,
-                           agent_type, max_iterations, available_tools, mcp_server):
+                           agent_type, max_iterations, available_tools, enabled_mcp_servers):
         """应用配置"""
         try:
             # 创建LLM配置
@@ -224,11 +264,11 @@ class AgentApp:
             self.llm = LLMFactory.create(llm_config)
             await self.llm.initialize()
             
-            # 创建工具管理器
-            self.tool_manager = MCPToolManager(mcp_server if mcp_server else None)
+            # 创建工具管理器，传入启用的MCP服务器
+            self.tool_manager = MCPToolManager(enabled_servers=enabled_mcp_servers)
             await self.tool_manager.initialize()
             
-            # 启用选中的工具
+            # 启用选中的传统工具
             for tool in available_tools:
                 await self.tool_manager.enable_tool(tool)
             
@@ -242,10 +282,80 @@ class AgentApp:
             else:
                 return "❌ 暂不支持该Agent类型"
             
-            return f"✅ 配置成功！使用 {llm_provider}/{model_name}，启用 {len(available_tools)} 个工具"
+            total_tools = len(available_tools) + len(enabled_mcp_servers)
+            return f"✅ 配置成功！使用 {llm_provider}/{model_name}，启用 {total_tools} 个工具（{len(available_tools)} 个传统工具 + {len(enabled_mcp_servers)} 个MCP服务器）"
             
         except Exception as e:
             return f"❌ 配置失败: {str(e)}"
+    
+    async def _refresh_mcp_servers(self):
+        """刷新MCP服务器状态"""
+        try:
+            from ..tools.mcp_manager import mcp_manager
+            
+            servers = mcp_manager.list_servers()
+            
+            # 生成状态HTML
+            status_html = "<div style='font-family: monospace;'>"
+            status_html += "<h4>🔌 MCP服务器状态</h4>"
+            
+            if not servers:
+                status_html += "<p>暂无可用的MCP服务器</p>"
+            else:
+                for server in servers:
+                    status_icon = "🟢" if server['connected'] else "🔴"
+                    type_icon = {"local_stdio": "💻", "remote_http": "🌐", "local_http": "🏠"}.get(server['type'], "❓")
+                    
+                    status_html += f"<div style='margin: 8px 0; padding: 8px; border: 1px solid #ddd; border-radius: 4px;'>"
+                    status_html += f"<strong>{status_icon} {type_icon} {server['name']}</strong><br/>"
+                    status_html += f"<small>ID: {server['id']} | 类型: {server['type']}</small><br/>"
+                    status_html += f"<small>状态: {'已连接' if server['connected'] else '未连接'}</small><br/>"
+                    
+                    if server['tools']:
+                        status_html += f"<small>工具: {', '.join(server['tools'][:3])}"
+                        if len(server['tools']) > 3:
+                            status_html += f" (+{len(server['tools'])-3} 个更多)"
+                        status_html += "</small><br/>"
+                    
+                    status_html += f"<small>{server['description']}</small>"
+                    status_html += "</div>"
+            
+            status_html += "</div>"
+            
+            # 生成可选择的服务器列表
+            choices = [(f"{server['name']} ({server['id']})", server['id']) for server in servers]
+            
+            return status_html, gr.CheckboxGroup.update(choices=choices)
+            
+        except Exception as e:
+            error_html = f"<div style='color: red;'>❌ 刷新MCP服务器失败: {str(e)}</div>"
+            return error_html, gr.CheckboxGroup.update(choices=[])
+    
+    async def _add_remote_server(self, name: str, url: str):
+        """添加远程MCP服务器"""
+        try:
+            if not name or not url:
+                return name, url, "<div style='color: red;'>❌ 请填写服务器名称和URL</div>", gr.CheckboxGroup.update()
+            
+            from ..tools.mcp_manager import mcp_manager
+            
+            # 生成服务器ID
+            server_id = f"remote_{name.lower().replace(' ', '_')}"
+            
+            # 添加远程服务器
+            mcp_manager.add_remote_server(server_id, name, url, f"远程服务器: {name}")
+            
+            # 刷新状态
+            status_html, checkbox_update = await self._refresh_mcp_servers()
+            
+            success_html = f"<div style='color: green;'>✅ 成功添加远程服务器: {name}</div>"
+            
+            # 清空输入框
+            return "", "", success_html, checkbox_update
+            
+        except Exception as e:
+            error_html = f"<div style='color: red;'>❌ 添加远程服务器失败: {str(e)}</div>"
+            return name, url, error_html, gr.CheckboxGroup.update()
     
     async def _chat(self, message: str, history: List[List[str]]):
         """处理聊天消息"""
