@@ -3,7 +3,8 @@
 """
 import asyncio
 import os
-from src.agents import ReactAgent
+
+from src.agents.react_agent import ReactAgent
 from src.llm import create_llm_provider
 from src.tools import MCPToolManager
 
