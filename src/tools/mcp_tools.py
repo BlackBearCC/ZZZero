@@ -8,9 +8,13 @@ import logging
 from typing import Dict, List, Optional, Any, Union
 import json
 
-from .base import ToolManager
-from ..core.base import BaseTool
-from .mcp_manager import mcp_manager, MCPServerType
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
+from tools.base import ToolManager
+from core.base import BaseTool
+from tools.mcp_manager import mcp_manager, MCPServerType
 
 logger = logging.getLogger(__name__)
 

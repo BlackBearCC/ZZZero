@@ -1,12 +1,16 @@
 """
 结构化输出解析器 - 将LLM输出解析为结构化数据
 """
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '../'))
+
 from typing import Type, TypeVar, Dict, Any, Optional, List
 from pydantic import BaseModel, ValidationError
 import json
 import re
 
-from ..core.base import BaseParser
+from core.base import BaseParser
 from .json_parser import JSONParser
 
 

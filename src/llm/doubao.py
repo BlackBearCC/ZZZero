@@ -7,7 +7,11 @@ from typing import List, Dict, Any, AsyncIterator, Optional
 from datetime import datetime
 
 from .base import BaseLLMProvider, LLMFactory
-from ..core.types import Message, MessageRole
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
+from core.types import Message, MessageRole
 
 
 class DoubaoLLM(BaseLLMProvider):

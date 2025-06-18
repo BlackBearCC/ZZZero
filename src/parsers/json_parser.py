@@ -1,11 +1,15 @@
 """
 JSON解析器 - 从文本中提取和解析JSON
 """
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '../'))
+
 import json
 import re
 from typing import Any, Dict, List, Union, Optional
 
-from ..core.base import BaseParser
+from core.base import BaseParser
 
 
 class JSONParser(BaseParser[Dict[str, Any]]):

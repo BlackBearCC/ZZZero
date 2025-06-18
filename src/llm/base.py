@@ -6,8 +6,12 @@ from typing import Dict, List, Any, Optional, AsyncIterator, Type
 import asyncio
 from enum import Enum
 
-from ..core.base import BaseLLM
-from ..core.types import Message, MessageRole, LLMConfig
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
+from core.base import BaseLLM
+from core.types import Message, MessageRole, LLMConfig
 
 
 class LLMProvider(str, Enum):

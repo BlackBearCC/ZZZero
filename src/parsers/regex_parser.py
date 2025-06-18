@@ -1,10 +1,14 @@
 """
 正则表达式解析器 - 使用正则表达式提取信息
 """
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '../'))
+
 import re
 from typing import Dict, List, Any, Pattern, Union, Optional
 
-from ..core.base import BaseParser
+from core.base import BaseParser
 
 
 class RegexParser(BaseParser[Dict[str, Any]]):

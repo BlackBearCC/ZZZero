@@ -1,12 +1,16 @@
 """
 并行节点 - 支持并行执行多个子节点
 """
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '../'))
+
 import asyncio
-from typing import Dict, List, Any, Optional, Union
+from typing import Dict, List, Any, Optional, Union, Tuple
 from datetime import datetime
 
-from ..core.base import BaseNode
-from ..core.types import NodeInput, NodeOutput, NodeType
+from core.base import BaseNode
+from core.types import NodeInput, NodeOutput, NodeType
 
 
 class ParallelNode(BaseNode):

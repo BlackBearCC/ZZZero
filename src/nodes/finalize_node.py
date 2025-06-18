@@ -1,11 +1,15 @@
 """
 最终化节点 - 负责生成最终答案
 """
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '../'))
+
 from typing import Dict, Any, Optional, List
 
-from ..core.base import BaseNode
-from ..core.types import NodeInput, NodeOutput, NodeType, Message, MessageRole
-from ..llm.base import BaseLLMProvider
+from core.base import BaseNode
+from core.types import NodeInput, NodeOutput, NodeType, Message, MessageRole
+from llm.base import BaseLLMProvider
 
 
 class FinalizeNode(BaseNode):

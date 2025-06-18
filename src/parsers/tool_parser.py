@@ -1,13 +1,17 @@
 """
 工具调用解析器 - 解析LLM输出中的工具调用
 """
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '../'))
+
 import re
 import json
 import uuid
 from typing import List, Dict, Any, Optional, Union
 
-from ..core.base import BaseParser
-from ..core.types import ToolCall
+from core.base import BaseParser
+from core.types import ToolCall
 from .json_parser import JSONParser
 
 

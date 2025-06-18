@@ -1,11 +1,15 @@
 """
 路由节点 - 负责根据条件选择下一个执行节点
 """
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '../'))
+
 from typing import Dict, Any, Optional, List, Callable, Union
 from enum import Enum
 
-from ..core.base import BaseNode
-from ..core.types import NodeInput, NodeOutput, NodeType
+from core.base import BaseNode
+from core.types import NodeInput, NodeOutput, NodeType
 
 
 class RouteCondition(Enum):

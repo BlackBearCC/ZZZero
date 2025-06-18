@@ -5,8 +5,12 @@ import json
 import aiohttp
 from typing import List, Dict, Any, AsyncIterator, Optional
 
-from .base import BaseLLMProvider, LLMFactory
-from ..core.types import Message, MessageRole
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
+from llm.base import BaseLLMProvider, LLMFactory
+from core.types import Message, MessageRole
 
 
 class OpenAILLM(BaseLLMProvider):
@@ -77,7 +81,7 @@ class OpenAILLM(BaseLLMProvider):
                 # 处理工具调用
                 tool_calls = None
                 if "tool_calls" in message:
-                    from ..core.types import ToolCall
+                    from core.types import ToolCall
                     tool_calls = []
                     for tc in message["tool_calls"]:
                         tool_calls.append(ToolCall(

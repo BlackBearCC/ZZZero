@@ -7,10 +7,15 @@ from typing import List, Dict, Any, Optional, Tuple
 import json
 from datetime import datetime
 
-from ..core.types import AgentType, ToolConfig, LLMConfig, TaskResult
-from ..agents.react_agent import ReactAgent
-from ..llm.factory import LLMFactory
-from ..tools.mcp_tools import MCPToolManager
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
+from core.types import AgentType, ToolConfig, LLMConfig, TaskResult
+from agents.react_agent import ReactAgent
+from llm.base import LLMFactory
+
+from tools.mcp_tools import MCPToolManager
 
 
 class AgentApp:
@@ -291,7 +296,7 @@ class AgentApp:
     async def _refresh_mcp_servers(self):
         """刷新MCP服务器状态"""
         try:
-            from ..tools.mcp_manager import mcp_manager
+            from tools.mcp_manager import mcp_manager
             
             servers = mcp_manager.list_servers()
             
@@ -337,7 +342,7 @@ class AgentApp:
             if not name or not url:
                 return name, url, "<div style='color: red;'>❌ 请填写服务器名称和URL</div>", gr.CheckboxGroup.update()
             
-            from ..tools.mcp_manager import mcp_manager
+            from tools.mcp_manager import mcp_manager
             
             # 生成服务器ID
             server_id = f"remote_{name.lower().replace(' ', '_')}"

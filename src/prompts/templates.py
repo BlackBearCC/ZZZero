@@ -1,11 +1,15 @@
 """
 提示模板实现
 """
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '../'))
+
 from typing import List, Dict, Any, Optional
 import re
 from jinja2 import Template
 
-from ..core.base import BasePromptTemplate
+from core.base import BasePromptTemplate
 
 
 class JinjaPromptTemplate(BasePromptTemplate):

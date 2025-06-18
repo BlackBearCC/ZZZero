@@ -5,14 +5,18 @@ import uuid
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 
-from ..core.base import BaseAgent, AgentContext
-from ..core.types import AgentType, TaskResult, Message, MessageRole
-from ..core.graph import Graph, GraphBuilder, GraphExecutor
-from ..nodes.think_node import ThinkNode
-from ..nodes.act_node import ActNode
-from ..nodes.observe_node import ObserveNode
-from ..llm.base import BaseLLMProvider
-from ..tools.base import ToolManager
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
+from core.base import BaseAgent, AgentContext
+from core.types import AgentType, TaskResult, Message, MessageRole
+from core.graph import Graph, GraphBuilder, GraphExecutor
+from nodes.think_node import ThinkNode
+from nodes.act_node import ActNode
+from nodes.observe_node import ObserveNode
+from llm.base import BaseLLMProvider
+from tools.base import ToolManager
 
 
 class ReactAgent(BaseAgent):
@@ -55,7 +59,7 @@ class ReactAgent(BaseAgent):
         observe_node = ObserveNode("observe", self.llm)
         
         # 创建最终化节点
-        from ..nodes.finalize_node import FinalizeNode
+        from nodes.finalize_node import FinalizeNode
         finalize_node = FinalizeNode("finalize", self.llm)
         
         # 构建图

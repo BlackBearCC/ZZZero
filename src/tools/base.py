@@ -5,7 +5,10 @@ from abc import ABC, abstractmethod
 from typing import Dict, List, Any, Optional
 import asyncio
 
-from ..core.base import BaseTool
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+from core.base import BaseTool
 
 
 class ToolManager(ABC):

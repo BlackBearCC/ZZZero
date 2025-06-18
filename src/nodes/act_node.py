@@ -1,13 +1,17 @@
 """
 行动节点 - 负责选择和执行工具
 """
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '../'))
+
 from typing import Dict, Any, Optional, List
 
-from ..core.base import BaseNode
-from ..core.types import NodeInput, NodeOutput, NodeType, Message, MessageRole, ToolCall
-from ..llm.base import BaseLLMProvider
-from ..parsers.tool_parser import ToolCallParser
-from ..tools.base import ToolManager
+from core.base import BaseNode
+from core.types import NodeInput, NodeOutput, NodeType, Message, MessageRole, ToolCall
+from llm.base import BaseLLMProvider
+from parsers.tool_parser import ToolCallParser
+from tools.base import ToolManager
 
 
 class ActNode(BaseNode):

@@ -3,10 +3,18 @@
 """
 from typing import Dict, Any, Optional
 
-from ..core.base import BaseNode
-from ..core.types import NodeInput, NodeOutput, NodeType, Message, MessageRole
-from ..llm.base import BaseLLMProvider
-from ..prompts.templates import ThinkingPromptTemplate
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
+from core.base import BaseNode
+from core.types import NodeInput, NodeOutput, NodeType, Message, MessageRole
+from llm.base import BaseLLMProvider
+try:
+    from prompts.templates import ThinkingPromptTemplate
+except ImportError:
+    # 如果没有模板模块，使用简单实现
+    ThinkingPromptTemplate = None
 
 
 class ThinkNode(BaseNode):

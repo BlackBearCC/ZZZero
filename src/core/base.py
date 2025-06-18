@@ -2,7 +2,7 @@
 核心基类定义 - 定义框架的抽象接口
 """
 from abc import ABC, abstractmethod
-from typing import Dict, List, Any, Optional, Union, Type, TypeVar, Generic
+from typing import Dict, List, Any, Optional, Union, Type, TypeVar, Generic, AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime
 import asyncio
