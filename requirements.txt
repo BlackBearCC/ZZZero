@@ -1,0 +1,35 @@
+# 核心依赖
+pydantic>=2.5.0
+asyncio>=3.4.3
+aiohttp>=3.9.0
+httpx>=0.25.0
+jinja2>=3.1.2
+networkx>=3.2
+python-dotenv>=1.0.0
+pyyaml>=6.0
+
+# LLM相关
+tiktoken>=0.5.0
+
+# Web界面
+gradio>=4.0.0
+
+# MCP相关
+mcp>=0.1.0
+
+# 数据处理
+numpy>=1.24.0
+pandas>=2.0.0
+sqlalchemy>=2.0.0
+
+# 工具
+rich>=13.0.0
+click>=8.1.0
+
+# 开发工具（可选）
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.5.0
+ipython>=8.0.0 

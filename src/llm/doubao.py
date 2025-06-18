@@ -1,0 +1,152 @@
+"""
+豆包(Doubao) LLM 实现
+"""
+import json
+import aiohttp
+from typing import List, Dict, Any, AsyncIterator, Optional
+from datetime import datetime
+
+from .base import BaseLLMProvider, LLMFactory
+from ..core.types import Message, MessageRole
+
+
+class DoubaoLLM(BaseLLMProvider):
+    """豆包LLM实现"""
+    
+    async def initialize(self):
+        """初始化客户端"""
+        if not self.config.api_key:
+            raise ValueError("豆包API密钥未设置")
+            
+        # 设置默认API基础URL
+        if not self.config.api_base:
+            self.config.api_base = "https://ark.cn-beijing.volces.com/api/v3"
+            
+    async def generate(self, 
+                      messages: List[Message],
+                      **kwargs) -> Message:
+        """生成回复"""
+        headers = {
+            "Authorization": f"Bearer {self.config.api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        # 转换消息格式
+        formatted_messages = self._convert_messages(messages)
+        
+        # 构建请求数据
+        data = {
+            "model": self.config.model_name,
+            "messages": formatted_messages,
+            "temperature": kwargs.get("temperature", self.config.temperature),
+            "max_tokens": kwargs.get("max_tokens", self.config.max_tokens),
+        }
+        
+        # 添加额外参数
+        if self.config.extra_params:
+            data.update(self.config.extra_params)
+            
+        # 发送请求
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{self.config.api_base}/chat/completions",
+                headers=headers,
+                json=data,
+                timeout=aiohttp.ClientTimeout(total=self.config.timeout)
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    raise Exception(f"豆包API调用失败: {error_text}")
+                    
+                result = await response.json()
+                
+                # 提取回复内容
+                content = result["choices"][0]["message"]["content"]
+                
+                # 创建响应消息
+                return Message(
+                    role=MessageRole.ASSISTANT,
+                    content=content,
+                    metadata={
+                        "model": self.config.model_name,
+                        "usage": result.get("usage", {}),
+                        "finish_reason": result["choices"][0].get("finish_reason")
+                    }
+                )
+                
+    async def stream_generate(self,
+                            messages: List[Message],
+                            **kwargs) -> AsyncIterator[str]:
+        """流式生成回复"""
+        headers = {
+            "Authorization": f"Bearer {self.config.api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        # 转换消息格式
+        formatted_messages = self._convert_messages(messages)
+        
+        # 构建请求数据
+        data = {
+            "model": self.config.model_name,
+            "messages": formatted_messages,
+            "temperature": kwargs.get("temperature", self.config.temperature),
+            "max_tokens": kwargs.get("max_tokens", self.config.max_tokens),
+            "stream": True,
+            "stream_options": {
+                "include_usage": True
+            }
+        }
+        
+        # 添加额外参数
+        if self.config.extra_params:
+            data.update(self.config.extra_params)
+            
+        # 发送流式请求
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{self.config.api_base}/chat/completions",
+                headers=headers,
+                json=data,
+                timeout=aiohttp.ClientTimeout(total=self.config.timeout)
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    raise Exception(f"豆包API调用失败: {error_text}")
+                    
+                # 处理流式响应
+                async for line in response.content:
+                    line_text = line.decode('utf-8').strip()
+                    if not line_text:
+                        continue
+                        
+                    if line_text.startswith("data: "):
+                        line_text = line_text[6:]
+                        
+                    if line_text == "[DONE]":
+                        break
+                        
+                    try:
+                        chunk = json.loads(line_text)
+                        
+                        # 提取增量内容
+                        if chunk.get("choices") and len(chunk["choices"]) > 0:
+                            choice = chunk["choices"][0]
+                            if choice.get("delta") and choice["delta"].get("content"):
+                                yield choice["delta"]["content"]
+                                
+                    except json.JSONDecodeError:
+                        continue
+                        
+    def count_tokens(self, text: str) -> int:
+        """估算token数量"""
+        # 中文大约1.5个字符一个token，英文大约4个字符一个token
+        # 这里使用简单的估算
+        chinese_count = sum(1 for char in text if '\u4e00' <= char <= '\u9fff')
+        english_count = len(text) - chinese_count
+        
+        return int(chinese_count / 1.5 + english_count / 4)
+
+
+# 注册到工厂
+LLMFactory.register("doubao", DoubaoLLM) 
