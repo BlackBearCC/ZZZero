@@ -196,11 +196,19 @@ class Graph:
     
     def _is_allowed_cycle(self, component: set) -> bool:
         """检查是否是允许的循环模式"""
-        # 允许的循环模式：ReAct循环 (think, act, observe)
+        # 允许的循环模式：
+        # 1. 传统ReAct循环 (think, act, observe)
         react_pattern = {"think", "act", "observe"}
+        
+        # 2. 标准LangGraph ReAct循环 (agent, tools)
+        langgraph_react_pattern = {"agent", "tools"}
         
         # 如果循环包含ReAct模式的子集，则允许
         if component.issubset(react_pattern) and len(component) >= 2:
+            return True
+            
+        # 如果循环包含LangGraph ReAct模式，则允许
+        if component.issubset(langgraph_react_pattern) and len(component) >= 2:
             return True
             
         # 允许包含finalize节点的循环（可能的路径）

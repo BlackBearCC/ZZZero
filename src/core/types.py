@@ -31,6 +31,9 @@ class NodeType(str, Enum):
     FINALIZE = "finalize"
     ROUTER = "router"
     PARALLEL = "parallel"
+    AGENT = "agent"  # ReAct Agent节点
+    TOOL = "tool"    # 工具执行节点
+    CHAT = "chat"    # 简单对话节点
     CUSTOM = "custom"
 
 

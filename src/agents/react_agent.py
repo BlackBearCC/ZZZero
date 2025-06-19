@@ -12,9 +12,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from core.base import BaseAgent, AgentContext
 from core.types import AgentType, TaskResult, Message, MessageRole
 from core.graph import Graph, GraphBuilder, GraphExecutor
-from nodes.think_node import ThinkNode
-from nodes.act_node import ActNode
-from nodes.observe_node import ObserveNode
+
 from llm.base import BaseLLMProvider
 from tools.base import ToolManager
 
@@ -50,49 +48,52 @@ class ReactAgent(BaseAgent):
         self.executor = GraphExecutor(max_iterations=max_iterations)
         
     def build_graph(self) -> Graph:
-        """构建ReAct执行图"""
+        """构建标准ReAct执行图 - 基于LangGraph最佳实践"""
         builder = GraphBuilder("react_graph")
-        
-        # 创建节点
-        think_node = ThinkNode("think", self.llm)
-        
-        # 创建最终化节点
-        from nodes.finalize_node import FinalizeNode
-        finalize_node = FinalizeNode("finalize", self.llm)
         
         # 判断是否有工具可用
         if self.tool_manager and self.tool_manager.list_tools():
-            # 有工具时使用完整的ReAct流程
-            act_node = ActNode("act", self.llm, self.tool_manager)
-            observe_node = ObserveNode("observe", self.llm)
+            # 创建标准ReAct节点
+            from nodes.react_agent_node import ReactAgentNode
+            from nodes.react_tool_node import ReactToolNode
             
-            # 构建完整图
+            agent_node = ReactAgentNode("agent", self.llm, self.tool_manager)
+            tool_node = ReactToolNode("tools", self.tool_manager)
+            
+            # 构建标准双节点ReAct图
             graph = (builder
-                .add_node(think_node)
-                .add_node(act_node)
-                .add_node(observe_node)
-                .add_node(finalize_node)
-                .entry("think")
-                .connect("think", "act")
-                .connect("act", "observe")
-                .connect("observe", "think", condition="output['continue'] == True")
-                .connect("observe", "finalize", condition="output['continue'] == False")
-                .connect("think", "finalize", condition="output['should_continue'] == False")
-                .exit("finalize")
+                .add_node(agent_node)
+                .add_node(tool_node) 
+                .entry("agent")
+                .connect("agent", "tools", condition="output.get('has_tool_calls', False)")
+                .connect("tools", "agent")
+                .exit("agent")
                 .build()
             )
         else:
-            # 没有工具时，直接从思考到最终化
+            # 没有工具时的简单对话模式
+            from nodes.simple_chat_node import SimpleChatNode
+            chat_node = SimpleChatNode("chat", self.llm)
+            
             graph = (builder
-                .add_node(think_node)
-                .add_node(finalize_node)
-                .entry("think")
-                .connect("think", "finalize")
-                .exit("finalize")
+                .add_node(chat_node)
+                .entry("chat")
                 .build()
             )
         
         return graph
+    
+    def _should_continue(self, state: Dict[str, Any]) -> str:
+        """决定是否继续使用工具"""
+        messages = state.get("messages", [])
+        if not messages:
+            return "end"
+            
+        last_message = messages[-1]
+        # 检查是否有工具调用
+        if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
+            return "continue"
+        return "end"
         
     async def run(self, query: str, context: Optional[Dict[str, Any]] = None) -> TaskResult:
         """运行ReAct Agent"""
@@ -106,89 +107,119 @@ class ReactAgent(BaseAgent):
             agent_type=self.agent_type
         )
         
-        try:
-            # 初始化
-            await self.initialize()
-            
-            # 获取可用工具列表
-            available_tools = []
-            if self.tool_manager:
-                available_tools = self.tool_manager.list_tools()
-            
-            # 创建执行上下文
-            agent_context = AgentContext(
-                task_id=task_id,
-                agent_type=self.agent_type,
-                available_tools=available_tools,
-                messages=[
-                    Message(
-                        role=MessageRole.SYSTEM,
-                        content=self._build_system_prompt()
-                    ),
-                    Message(
-                        role=MessageRole.USER,
-                        content=query
-                    )
-                ],
-                variables=context or {}
-            )
-            print(f"agent_context: {agent_context}")
-            # 构建并执行图
-            graph = self.build_graph()
-            node_results = await self.executor.execute(graph, agent_context)
-            
-            # 提取最终结果
+
+        # 初始化
+        await self.initialize()
+        
+        # 获取可用工具列表
+        available_tools = []
+        if self.tool_manager:
+            available_tools = self.tool_manager.list_tools()
+        
+        # 创建执行上下文
+        agent_context = AgentContext(
+            task_id=task_id,
+            agent_type=self.agent_type,
+            available_tools=available_tools,
+            messages=[
+                Message(
+                    role=MessageRole.SYSTEM,
+                    content=self._build_system_prompt()
+                ),
+                Message(
+                    role=MessageRole.USER,
+                    content=query
+                )
+            ],
+            variables=context or {}
+        )
+        print(f"agent_context: {agent_context}")
+        # 构建并执行图
+        graph = self.build_graph()
+        node_results = await self.executor.execute(graph, agent_context)
+        
+        # 提取最终结果 - 从最后一个有效的输出节点获取结果
+        if node_results:
+            # 寻找最后一个成功执行的agent或chat节点
             for node_result in reversed(node_results):
-                if node_result.node_name == "finalize" and node_result.output:
-                    result.result = node_result.output.data.get("answer", "无法生成答案")
-                    result.success = True
-                    break
+                if (node_result.node_name in ["agent", "chat"] and 
+                    node_result.output and 
+                    node_result.output.data):
                     
-            # 构建执行轨迹
-            result.execution_trace = [
-                {
-                    "node": nr.node_name,
-                    "type": nr.node_type.value,
-                    "duration": nr.duration,
-                    "state": nr.state.value,
-                    "output": nr.output.data if nr.output else None
-                }
-                for nr in node_results
-            ]
+                    # 从消息中提取最终回答
+                    messages = node_result.output.data.get("messages", [])
+                    if messages:
+                        last_message = messages[-1]
+                        result.result = last_message.content
+                        result.success = True
+                        break
+                    
+                    # 备用：从agent_response或chat_response字段获取
+                    agent_response = (node_result.output.data.get("agent_response") or 
+                                    node_result.output.data.get("chat_response"))
+                    if agent_response:
+                        result.result = agent_response
+                        result.success = True
+                        break
             
-            # 计算指标
-            result.metrics = {
-                "total_nodes": len(node_results),
-                "iterations": sum(1 for nr in node_results if nr.node_name == "think"),
-                "tool_calls": sum(1 for nr in node_results if nr.node_name == "act"),
-                "total_duration": sum(nr.duration or 0 for nr in node_results)
+            # 如果没有找到有效结果，设置默认消息
+            if not result.success:
+                result.result = "抱歉，无法生成回复"
+                
+        # 构建执行轨迹
+        result.execution_trace = [
+            {
+                "node": nr.node_name,
+                "type": nr.node_type.value,
+                "duration": nr.duration,
+                "state": nr.state.value,
+                "output": nr.output.data if nr.output else None
             }
+            for nr in node_results
+        ]
+        
+        # 计算指标
+        result.metrics = {
+            "total_nodes": len(node_results),
+            "iterations": sum(1 for nr in node_results if nr.node_name == "think"),
+            "tool_calls": sum(1 for nr in node_results if nr.node_name == "act"),
+            "total_duration": sum(nr.duration or 0 for nr in node_results)
+        }
             
-        except Exception as e:
-            result.success = False
-            result.error = str(e)
-            
+
         return result
         
     def _build_system_prompt(self) -> str:
         """构建系统提示"""
         # 检查是否有工具可用
         if self.tool_manager and self.tool_manager.list_tools():
-            return """你是一个基于ReAct（Reasoning and Acting）范式的智能助手。
+            # 获取工具描述
+            tools_desc = self.tool_manager.get_tools_description()
+            tool_names = self.tool_manager.list_tools()
+            
+            return f"""你是一个基于ReAct（Reasoning and Acting）范式的智能助手。
 
-你的工作流程：
-1. **思考（Thought）**: 推理分析，确定问题的关键信息和解决思路，
-2. **行动（Action）**: 根据思考结果选择合适的工具执行，或者决定不使用工具
-3. **观察（Observation）**: 分析工具执行结果，判断是否需要继续
-4. **最终回答（Final）**: 当信息充足时生成完整答案
+可用工具：
+{tools_desc}
+
+使用以下格式进行推理和行动：
+
+Question: 你需要回答的问题
+Thought: 你应该思考要做什么
+Action: 要采取的行动，应该是 [{', '.join(tool_names)}] 中的一个
+Action Input: 行动的输入
+Observation: 行动的结果
+... (这个 Thought/Action/Action Input/Observation 可以重复N次)
+Thought: 我现在知道最终答案了
+Final Answer: 对原始问题的最终答案
 
 重要规则：
-- **思考阶段**：专注于分析和推理，不考虑具体工具，但可以直接跳到最终回答
-- **行动阶段**：此时才会获得工具信息，选择最合适的工具或选择不使用工具
-- **观察阶段**：基于结果决定是否继续循环或直接给出答案
-- 每次只执行一个工具，仔细分析每个结果
+1. 如果你有足够信息回答问题，直接给出 Final Answer
+2. 如果需要更多信息，使用可用的工具
+3. 每次只使用一个工具
+4. 仔细分析工具的返回结果
 
-请始终保持清晰的推理过程。"""
+开始！"""
         else:
             # 没有工具时的提示
             return """你是一个智能助手。
