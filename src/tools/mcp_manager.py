@@ -91,6 +91,16 @@ class SimpleMCPManager:
                 working_dir=str(self.project_root),
                 description="ChromaDB向量数据库操作服务器"
             )
+        
+        # 文件管理服务器
+        file_manager_path = self.project_root / "mcp_servers" / "file_manager_server.py"
+        if file_manager_path.exists():
+            self.servers["filemanager"] = MCPServerConfig(
+                name="工作空间文件管理服务器",
+                command=[python_exe, str(file_manager_path)],
+                working_dir=str(self.project_root),
+                description="工作空间输入输出文件管理服务器"
+            )
     
     def start_all_servers(self) -> Dict[str, bool]:
         """启动所有MCP服务器 - 应用启动时调用一次"""

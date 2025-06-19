@@ -34,12 +34,12 @@ logger = logging.getLogger(__name__)
 class ChromaDBManager:
     """ChromaDB管理器 - 提供高级向量数据库操作"""
     
-    def __init__(self, data_dir: str = "./chroma_data"):
+    def __init__(self, data_dir: str = "./workspace/vectordb"):
         """
         初始化ChromaDB管理器
         
         Args:
-            data_dir: ChromaDB数据存储目录
+            data_dir: ChromaDB数据存储目录，默认存储到workspace/vectordb
         """
         if not CHROMADB_AVAILABLE:
             raise ImportError("ChromaDB未安装，请运行: pip install chromadb")
@@ -405,12 +405,12 @@ class ChromaDBManager:
 class ChromaDBCRUDServer(StdioMCPServer):
     """ChromaDB向量数据库MCP服务器"""
     
-    def __init__(self, data_dir: str = "./chroma_data"):
+    def __init__(self, data_dir: str = "./workspace/vectordb"):
         """
         初始化ChromaDB CRUD服务器
         
         Args:
-            data_dir: ChromaDB数据存储目录
+            data_dir: ChromaDB数据存储目录，默认存储到workspace/vectordb
         """
         super().__init__(
             name="chromadb_crud_server",
@@ -720,7 +720,7 @@ class ChromaDBCRUDServer(StdioMCPServer):
 
 async def main():
     """启动ChromaDB CRUD服务器"""
-    server = ChromaDBCRUDServer("./chroma_data")
+    server = ChromaDBCRUDServer("./workspace/vectordb")
     
     try:
         logger.info("启动ChromaDB CRUD服务器...")

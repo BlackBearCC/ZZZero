@@ -153,6 +153,83 @@ class DoubaoLLM(BaseLLMProvider):
                                 
                     except json.JSONDecodeError:
                         continue
+    
+    async def stream_generate_with_interrupt(self,
+                                           messages: List[Message],
+                                           interrupt_checker=None,
+                                           **kwargs) -> AsyncIterator[str]:
+        """支持中断检查的流式生成"""
+        headers = {
+            "Authorization": f"Bearer {self.config.api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        # 转换消息格式
+        formatted_messages = self._convert_messages(messages)
+        
+        # 构建请求数据
+        data = {
+            "model": self.config.model_name,
+            "messages": formatted_messages,
+            "temperature": kwargs.get("temperature", self.config.temperature),
+            "max_tokens": kwargs.get("max_tokens", self.config.max_tokens),
+            "stream": True,
+            "stream_options": {
+                "include_usage": True
+            }
+        }
+        
+        # 添加额外参数
+        if self.config.extra_params:
+            data.update(self.config.extra_params)
+            
+        # 发送流式请求
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{self.config.api_base}/chat/completions",
+                headers=headers,
+                json=data,
+                timeout=aiohttp.ClientTimeout(total=self.config.timeout)
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    raise Exception(f"豆包API调用失败: {error_text}")
+                    
+                # 累积内容用于中断检查
+                accumulated_content = ""
+                
+                # 处理流式响应
+                async for line in response.content:
+                    line_text = line.decode('utf-8').strip()
+                    if not line_text:
+                        continue
+                        
+                    if line_text.startswith("data: "):
+                        line_text = line_text[6:]
+                        
+                    if line_text == "[DONE]":
+                        break
+                        
+                    try:
+                        chunk = json.loads(line_text)
+                        
+                        # 提取增量内容
+                        if chunk.get("choices") and len(chunk["choices"]) > 0:
+                            choice = chunk["choices"][0]
+                            if choice.get("delta") and choice["delta"].get("content"):
+                                content_chunk = choice["delta"]["content"]
+                                accumulated_content += content_chunk
+                                
+                                # 如果提供了中断检查器，检查是否需要中断
+                                if interrupt_checker and interrupt_checker(accumulated_content):
+                                    # 发送当前chunk后中断
+                                    yield content_chunk
+                                    break
+                                
+                                yield content_chunk
+                                
+                    except json.JSONDecodeError:
+                        continue
                         
     def count_tokens(self, text: str) -> int:
         """估算token数量"""

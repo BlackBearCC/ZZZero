@@ -101,75 +101,109 @@ class StreamReactAgentNode(BaseNode):
         """流式生成ReAct响应，检测Observation并调用工具"""
         accumulated_content = ""
         
+        # 定义中断检查器，用于检测ReAct的Observation模式
+        def should_interrupt_for_observation(content: str) -> bool:
+            """检查是否应该因为空Observation而中断生成"""
+            return self._should_trigger_tool_execution(content)
+        
         # 开始流式生成
         try:
-            async for chunk in self.llm.stream_generate(messages):
-                accumulated_content += chunk
-                
-                # 发送文本块
-                yield {
-                    "type": "text_chunk",
-                    "content": chunk,
-                    "accumulated": accumulated_content
-                }
-                
-                # 检测是否包含Observation:标记且没有实际观察内容
-                if "Observation:" in accumulated_content and not self._has_filled_observation(accumulated_content):
-                    # 检查是否在当前块结束时有完整的Action和Action Input
-                    if self._should_trigger_tool_execution(accumulated_content):
-                        # 停止当前流，解析Action和Action Input
-                        parsed_content = self.react_parser.parse(accumulated_content)
-                        
-                        action = parsed_content.get('action')
-                        action_input = parsed_content.get('action_input')
-                        
-                        if action and self.tool_manager:
-                            # 调用MCP工具
-                            try:
-                                tool_result = await self._execute_tool(action.strip(), action_input.strip() if action_input else "")
-                                
-                                # 构造Observation结果，替换空的Observation
-                                observation_text = f" {tool_result}\n"
-                                
-                                # 发送工具结果
-                                yield {
-                                    "type": "tool_result",
-                                    "content": observation_text,
-                                    "tool_name": action.strip(),
-                                    "tool_input": action_input.strip() if action_input else "",
-                                    "tool_output": tool_result
-                                }
-                                
-                                # 更新累积内容
-                                accumulated_content += observation_text
-                                
-                                # 继续生成，基于新的上下文
-                                messages_with_observation = messages.copy()
-                                messages_with_observation.append(Message(
-                                    role=MessageRole.ASSISTANT,
-                                    content=accumulated_content
-                                ))
-                                
-                                # 递归继续流式生成
-                                async for next_chunk in self._stream_react_generation(messages_with_observation):
-                                    yield next_chunk
-                                
-                                return  # 结束当前生成流
-                                
-                            except Exception as e:
-                                error_text = f" 工具执行错误: {str(e)}\n"
-                                
-                                yield {
-                                    "type": "tool_error",
-                                    "content": error_text,
-                                    "error": str(e)
-                                }
+            # 检查LLM是否支持中断机制
+            if hasattr(self.llm, 'stream_generate_with_interrupt'):
+                # 使用支持中断的流式生成
+                async for chunk in self.llm.stream_generate_with_interrupt(
+                    messages, 
+                    interrupt_checker=should_interrupt_for_observation
+                ):
+                    accumulated_content += chunk
+                    
+                    # 发送文本块
+                    yield {
+                        "type": "text_chunk",
+                        "content": chunk,
+                        "accumulated": accumulated_content
+                    }
+                    
+                    # 检查是否因为Observation而中断了
+                    if should_interrupt_for_observation(accumulated_content):
+                        # 执行工具调用逻辑
+                        async for tool_chunk in self._handle_tool_execution(accumulated_content, messages):
+                            yield tool_chunk
+                        return
+            else:
+                # 回退到原有的实现
+                async for chunk in self.llm.stream_generate(messages):
+                    accumulated_content += chunk
+                    
+                    # 发送文本块
+                    yield {
+                        "type": "text_chunk",
+                        "content": chunk,
+                        "accumulated": accumulated_content
+                    }
+                    
+                    # 检测是否包含Observation:标记且没有实际观察内容
+                    if "Observation:" in accumulated_content and not self._has_filled_observation(accumulated_content):
+                        # 检查是否在当前块结束时有完整的Action和Action Input
+                        if self._should_trigger_tool_execution(accumulated_content):
+                            async for tool_chunk in self._handle_tool_execution(accumulated_content, messages):
+                                yield tool_chunk
+                            return
+                            
         except Exception as e:
             yield {
                 "type": "stream_error",
                 "content": f"\n[流式生成错误: {str(e)}]\n",
                 "error": str(e)
             }
+    
+    async def _handle_tool_execution(self, accumulated_content: str, messages: List[Message]) -> AsyncIterator[Dict[str, Any]]:
+        """处理工具执行逻辑"""
+        # 解析Action和Action Input
+        parsed_content = self.react_parser.parse(accumulated_content)
+        
+        action = parsed_content.get('action')
+        action_input = parsed_content.get('action_input')
+        
+        if action and self.tool_manager:
+            # 调用MCP工具
+            try:
+                tool_result = await self._execute_tool(action.strip(), action_input.strip() if action_input else "")
+                
+                # 构造Observation结果，替换空的Observation
+                observation_text = f" {tool_result}\n"
+                
+                # 发送工具结果
+                yield {
+                    "type": "tool_result",
+                    "content": observation_text,
+                    "tool_name": action.strip(),
+                    "tool_input": action_input.strip() if action_input else "",
+                    "tool_output": tool_result
+                }
+                
+                # 更新累积内容
+                accumulated_content += observation_text
+                
+                # 继续生成，基于新的上下文
+                messages_with_observation = messages.copy()
+                messages_with_observation.append(Message(
+                    role=MessageRole.ASSISTANT,
+                    content=accumulated_content
+                ))
+                
+                # 递归继续流式生成
+                async for next_chunk in self._stream_react_generation(messages_with_observation):
+                    yield next_chunk
+                    
+            except Exception as e:
+                error_text = f" 工具执行错误: {str(e)}\n"
+                
+                yield {
+                    "type": "tool_error",
+                    "content": error_text,
+                    "error": str(e)
+                }
     
     def _has_filled_observation(self, text: str) -> bool:
         """检查Observation是否已经有内容"""
@@ -179,13 +213,40 @@ class StreamReactAgentNode(BaseNode):
         return bool(re.search(pattern, text))
     
     def _should_trigger_tool_execution(self, text: str) -> bool:
-        """判断是否应该触发工具执行"""
-        # 检查是否有Action和Action Input，且Observation为空
+        """判断是否应该触发工具执行 - 检测空的Observation"""
+        import re
+        
+        # 检查是否有Action和Action Input
         has_action = "Action:" in text
         has_action_input = "Action Input:" in text
-        has_empty_observation = bool(re.search(r'Observation:\s*$', text, re.MULTILINE))
+        has_observation = "Observation:" in text
         
-        return has_action and has_action_input and has_empty_observation
+        # 只有当所有必要元素都存在时才考虑触发
+        if not (has_action and has_action_input and has_observation):
+            return False
+        
+        # 查找最后一个Observation的位置和内容
+        observation_matches = list(re.finditer(r'Observation:\s*([^\n]*)', text))
+        
+        if observation_matches:
+            last_observation = observation_matches[-1]
+            observation_content = last_observation.group(1).strip()
+            
+            # 如果最后一个Observation后面没有实际内容，则应该触发工具执行
+            if not observation_content:
+                # 检查Observation后面是否有其他内容（如新的Thought、Final Answer等）
+                observation_end = last_observation.end()
+                remaining_text = text[observation_end:].strip()
+                
+                # 如果Observation后面没有内容，或者只有少量空白字符，则触发
+                if not remaining_text or len(remaining_text) < 3:
+                    return True
+        
+        # 特殊情况：检查是否以"Observation:"结尾（正在等待工具执行）
+        if text.rstrip().endswith("Observation:"):
+            return True
+            
+        return False
     
     async def _execute_tool(self, tool_name: str, tool_input: str) -> str:
         """执行MCP工具"""

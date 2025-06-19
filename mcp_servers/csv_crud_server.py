@@ -31,12 +31,12 @@ logger = logging.getLogger(__name__)
 class CSVDatabase:
     """CSV数据库管理器 - 提供高级数据操作功能"""
     
-    def __init__(self, base_dir: str = "./csv_data"):
+    def __init__(self, base_dir: str = "./workspace/output"):
         """
         初始化CSV数据库
         
         Args:
-            base_dir: CSV文件存储基础目录
+            base_dir: CSV文件存储基础目录，默认输出到workspace/output
         """
         self.base_dir = Path(base_dir)
         self.base_dir.mkdir(exist_ok=True)
@@ -361,12 +361,12 @@ class CSVDatabase:
 class CSVCRUDServer(StdioMCPServer):
     """高级CSV数据库MCP服务器"""
     
-    def __init__(self, data_dir: str = "./csv_data"):
+    def __init__(self, data_dir: str = "./workspace/output"):
         """
         初始化CSV CRUD服务器
         
         Args:
-            data_dir: CSV数据存储目录
+            data_dir: CSV数据存储目录，默认输出到workspace/output
         """
         super().__init__(
             name="csv_crud_server",
@@ -586,7 +586,7 @@ class CSVCRUDServer(StdioMCPServer):
 
 async def main():
     """启动CSV CRUD服务器"""
-    server = CSVCRUDServer("./csv_data")
+    server = CSVCRUDServer("./workspace/output")
     
     try:
         logger.info("启动CSV CRUD服务器...")

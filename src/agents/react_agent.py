@@ -282,7 +282,7 @@ class ReactAgent(BaseAgent):
 可用工具：
 {tools_desc}
 
-使用以下格式进行推理和行动：
+必须使用以下格式进行推理和行动：
 
 Question: 你需要回答的问题
 Thought: 你应该思考要做什么

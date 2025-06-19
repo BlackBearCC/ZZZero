@@ -44,6 +44,18 @@ class AgentApp:
             'enabled_mcp_servers': []
         }
         
+        # 工作空间配置
+        self.workspace_config = {
+            'base_dir': './workspace',
+            'input_dir': './workspace/input',
+            'output_dir': './workspace/output',
+            'vectordb_dir': './workspace/vectordb',
+            'temp_dir': './workspace/temp'
+        }
+        
+        # 创建工作空间目录
+        self._ensure_workspace_dirs()
+        
     async def _update_agent_config(self):
         """更新Agent配置"""
         try:
@@ -66,7 +78,7 @@ class AgentApp:
                 await self.llm.initialize()
             
             # 更新工具管理器的启用服务器（仅在工具管理器存在时）
-            enabled_servers = self.current_config.get('enabled_mcp_servers', ['csv', 'chromadb'])  # 默认启用
+            enabled_servers = self.current_config.get('enabled_mcp_servers', ['csv', 'chromadb', 'filemanager'])  # 默认启用
             if self.tool_manager:
                 self.tool_manager.set_enabled_servers(enabled_servers)
             
@@ -87,6 +99,63 @@ class AgentApp:
             error_msg = f"更新Agent配置失败: {e}"
             logger.error(error_msg)
             return error_msg
+    
+    def _ensure_workspace_dirs(self):
+        """确保工作空间目录存在"""
+        import os
+        for dir_path in self.workspace_config.values():
+            os.makedirs(dir_path, exist_ok=True)
+            logger.info(f"创建工作空间目录: {dir_path}")
+    
+    def _list_files_in_dir(self, dir_path: str) -> List[Dict[str, Any]]:
+        """列出目录中的文件"""
+        import os
+        from pathlib import Path
+        
+        files = []
+        if os.path.exists(dir_path):
+            for item in Path(dir_path).iterdir():
+                if item.is_file():
+                    stat = item.stat()
+                    files.append({
+                        'name': item.name,
+                        'path': str(item),
+                        'size': stat.st_size,
+                        'modified': datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S'),
+                        'type': item.suffix.lower()
+                    })
+        return sorted(files, key=lambda x: x['modified'], reverse=True)
+    
+    def _format_file_list_html(self, files: List[Dict], title: str) -> str:
+        """格式化文件列表为HTML"""
+        if not files:
+            return f"<div style='padding: 10px; color: #666;'>{title}: 暂无文件</div>"
+        
+        html = f"<div style='margin-bottom: 10px;'><strong>{title} ({len(files)} 个文件)</strong></div>"
+        html += "<div style='max-height: 200px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px;'>"
+        
+        for file in files:
+            size_str = self._format_file_size(file['size'])
+            html += f"""
+            <div style='padding: 8px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between;'>
+                <div>
+                    <strong>{file['name']}</strong>
+                    <div style='font-size: 0.8em; color: #666;'>{file['modified']}</div>
+                </div>
+                <div style='text-align: right; color: #888;'>{size_str}</div>
+            </div>
+            """
+        html += "</div>"
+        return html
+    
+    def _format_file_size(self, size_bytes: int) -> str:
+        """格式化文件大小"""
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 * 1024:
+            return f"{size_bytes / 1024:.1f} KB"
+        else:
+            return f"{size_bytes / (1024 * 1024):.1f} MB"
     
 
             
@@ -155,8 +224,8 @@ class AgentApp:
                                 if 'name' in server and 'id' in server:
                                     choice = (f"{server['name']} ({server['id']})", server['id'])
                                     initial_choices.append(choice)
-                                    # 默认勾选csv和chromadb
-                                    if server['id'] in ['csv', 'chromadb']:
+                                    # 默认勾选csv、chromadb和filemanager
+                                    if server['id'] in ['csv', 'chromadb', 'filemanager']:
                                         default_enabled.append(server['id'])
                         except Exception as e:
                             print(f"初始化MCP服务器失败: {e}")
@@ -196,6 +265,32 @@ class AgentApp:
                             value=[],
                             label="启用的传统工具"
                         )
+                    
+                    # 文件管理
+                    with gr.Accordion("📁 文件管理", open=True):
+                        # 文件上传
+                        with gr.Tab("上传文件"):
+                            file_upload = gr.File(
+                                label="上传文件到输入目录",
+                                file_count="multiple",
+                                file_types=None
+                            )
+                            upload_btn = gr.Button("上传文件", variant="primary")
+                            upload_status = gr.HTML()
+                        
+                        # 文件浏览
+                        with gr.Tab("文件浏览"):
+                            refresh_files_btn = gr.Button("刷新文件列表", variant="secondary")
+                            
+                            input_files_display = gr.HTML(
+                                value="<p>正在加载输入文件...</p>",
+                                label="输入文件夹"
+                            )
+                            
+                            output_files_display = gr.HTML(
+                                value="<p>正在加载输出文件...</p>", 
+                                label="输出文件夹"
+                            )
                     
                     # 配置状态（只显示，不需要应用按钮）
                     config_status = gr.Textbox(label="配置状态", interactive=False, value="✅ 配置已自动应用")
@@ -375,6 +470,24 @@ class AgentApp:
                 outputs=[mcp_servers_status]
             )
             
+            # 文件管理事件
+            upload_btn.click(
+                self._upload_files,
+                inputs=[file_upload],
+                outputs=[upload_status, input_files_display]
+            )
+            
+            refresh_files_btn.click(
+                self._refresh_file_lists,
+                outputs=[input_files_display, output_files_display]
+            )
+            
+            # 页面加载时刷新文件列表
+            app.load(
+                self._refresh_file_lists,
+                outputs=[input_files_display, output_files_display]
+            )
+            
             msg_input.submit(
                 self._stream_chat,
                 inputs=[msg_input, chatbot],
@@ -486,6 +599,62 @@ class AgentApp:
         except Exception as e:
             error_html = f"<div style='color: red;'>❌ 刷新MCP服务器失败: {str(e)}</div>"
             return error_html, gr.update(choices=[])
+    
+    async def _upload_files(self, files):
+        """上传文件到输入目录"""
+        import shutil
+        import os
+        
+        if not files:
+            return "❌ 请选择要上传的文件", self._format_file_list_html([], "输入文件夹")
+        
+        try:
+            uploaded_count = 0
+            for file_info in files:
+                if hasattr(file_info, 'name') and file_info.name:
+                    # 文件路径
+                    src_path = file_info.name
+                    filename = os.path.basename(src_path)
+                    dst_path = os.path.join(self.workspace_config['input_dir'], filename)
+                    
+                    # 复制文件
+                    shutil.copy2(src_path, dst_path)
+                    uploaded_count += 1
+                    logger.info(f"文件上传成功: {filename} -> {dst_path}")
+            
+            status_msg = f"✅ 成功上传 {uploaded_count} 个文件到输入目录"
+            
+            # 刷新输入文件列表
+            input_files = self._list_files_in_dir(self.workspace_config['input_dir'])
+            input_files_html = self._format_file_list_html(input_files, "输入文件夹")
+            
+            return status_msg, input_files_html
+            
+        except Exception as e:
+            error_msg = f"❌ 文件上传失败: {str(e)}"
+            logger.error(error_msg)
+            return error_msg, self._format_file_list_html([], "输入文件夹")
+    
+    async def _refresh_file_lists(self):
+        """刷新文件列表"""
+        try:
+            # 确保目录存在
+            self._ensure_workspace_dirs()
+            
+            # 获取输入文件
+            input_files = self._list_files_in_dir(self.workspace_config['input_dir'])
+            input_files_html = self._format_file_list_html(input_files, "输入文件夹")
+            
+            # 获取输出文件
+            output_files = self._list_files_in_dir(self.workspace_config['output_dir'])
+            output_files_html = self._format_file_list_html(output_files, "输出文件夹")
+            
+            return input_files_html, output_files_html
+            
+        except Exception as e:
+            error_msg = f"❌ 刷新文件列表失败: {str(e)}"
+            logger.error(error_msg)
+            return error_msg, error_msg
     
     async def _on_mcp_servers_change(self, enabled_servers: List[str]):
         """处理MCP服务器勾选变化 - 只更新工具暴露，不重启服务器"""
