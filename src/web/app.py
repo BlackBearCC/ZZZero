@@ -47,12 +47,12 @@ class AgentApp:
     async def _update_agent_config(self):
         """更新Agent配置"""
         try:
-            # 创建工具管理器
+            # 创建工具管理器（只创建一次）
             if not self.tool_manager:
                 self.tool_manager = MCPToolManager()
                 await self.tool_manager.initialize()
             
-            # 创建LLM实例
+            # 创建LLM实例（只创建一次）
             if not self.llm:
                 # 创建LLM配置对象
                 llm_config = LLMConfig(
@@ -64,6 +64,11 @@ class AgentApp:
                 # 使用工厂创建LLM实例
                 self.llm = LLMFactory.create(llm_config)
                 await self.llm.initialize()
+            
+            # 更新工具管理器的启用服务器（仅在工具管理器存在时）
+            enabled_servers = self.current_config.get('enabled_mcp_servers', ['csv', 'chromadb'])  # 默认启用
+            if self.tool_manager:
+                self.tool_manager.set_enabled_servers(enabled_servers)
             
             # 创建或更新Agent
             self.agent = ReactAgent(
@@ -83,30 +88,7 @@ class AgentApp:
             logger.error(error_msg)
             return error_msg
     
-    async def _auto_start_mcp_servers(self):
-        """自动启动所有MCP服务器"""
-        try:
-            from tools.mcp_manager import mcp_manager
-            
-            # 直接使用简化的mcp_manager启动服务器
-            # 启动CSV服务器
-            print("正在启动CSV MCP服务器...")
-            success = mcp_manager.start_server('csv')
-            if success:
-                print("✅ CSV MCP服务器启动成功")
-            else:
-                print("❌ CSV MCP服务器启动失败")
-            
-            # 启动ChromaDB服务器
-            print("正在启动ChromaDB MCP服务器...")
-            success = mcp_manager.start_server('chromadb')
-            if success:
-                print("✅ ChromaDB MCP服务器启动成功")
-            else:
-                print("❌ ChromaDB MCP服务器启动失败")
-                    
-        except Exception as e:
-            print(f"自动启动MCP服务器失败: {e}")
+
             
     def create_interface(self) -> gr.Blocks:
         """创建Gradio界面"""
@@ -280,6 +262,7 @@ class AgentApp:
                 llm_provider, model_name, temperature, agent_type, max_iterations, available_tools, enabled_mcp_servers = args
                 
                 # 更新配置
+                old_config = self.current_config.copy()
                 self.current_config.update({
                     'llm_provider': llm_provider,
                     'model_name': model_name,
@@ -290,11 +273,18 @@ class AgentApp:
                     'enabled_mcp_servers': enabled_mcp_servers
                 })
                 
-                # 异步更新Agent
-                await self._update_agent_config()
+                # 只有在配置真正改变时才更新Agent
+                config_changed = old_config != self.current_config
+                if config_changed:
+                    await self._update_agent_config()
+                    logger.info("配置已更改，Agent已更新")
                 
                 total_tools = len(available_tools) + len(enabled_mcp_servers)
-                return f"✅ 配置已自动应用！使用 {llm_provider}/{model_name}，启用 {total_tools} 个工具"
+                status_text = f"✅ 配置已应用！使用 {llm_provider}/{model_name}，启用 {total_tools} 个工具"
+                if not config_changed:
+                    status_text += " (无变化)"
+                
+                return status_text
             
             # 绑定配置变化事件
             for component in [llm_provider, model_name, temperature, agent_type, max_iterations, available_tools, enabled_mcp_servers]:
@@ -320,42 +310,47 @@ class AgentApp:
             async def on_load():
                 """页面加载时的初始化"""
                 try:
-                    # 初始化配置
+                    # 初始化配置（MCP服务器已在main.py中启动）
                     await self._update_agent_config()
-                    
-                    # 自动启动MCP服务器
-                    await self._auto_start_mcp_servers()
                     
                     # 获取服务器状态并更新界面
                     servers_status = self.tool_manager.get_servers_status() if self.tool_manager else {}
                     
-                    status_text = "=== MCP服务器状态 ===\n"
-                    for server_id, info in servers_status.items():
-                        status_text += f"{info['name']}: {'✅ 运行中' if info['running'] else '❌ 未运行'}\n"
+                    # 生成状态HTML
+                    status_html = "<div style='font-family: monospace;'>"
+                    status_html += "<h4>🔌 MCP服务器状态</h4>"
                     
                     if not servers_status:
-                        status_text += "暂无MCP服务器\n"
+                        status_html += "<p>暂无可用的MCP服务器</p>"
+                    else:
+                        for server_id, info in servers_status.items():
+                            status_icon = "🟢" if info['running'] else "🔴"
+                            enable_icon = "✅" if info.get('enabled', False) else "⚪"
+                            
+                            status_html += f"<div style='margin: 8px 0; padding: 8px; border: 1px solid #ddd; border-radius: 4px;'>"
+                            status_html += f"<strong>{status_icon} {enable_icon} {info['name']}</strong><br/>"
+                            status_html += f"<small>ID: {server_id} | 状态: {'运行中' if info['running'] else '未运行'}</small><br/>"
+                            status_html += f"<small>工具: {info.get('enabled_tools', 0)}/{info.get('total_tools', 0)} 个可用</small><br/>"
+                            status_html += f"<small>{info['description']}</small>"
+                            status_html += "</div>"
                     
-                    # 获取可用的服务器列表和默认启用的服务器
-                    from tools.mcp_manager import mcp_manager
-                    servers = mcp_manager.list_servers()
+                    status_html += "</div>"
                     
-                    # 生成choices和默认选中的服务器
+                    # 生成可选择的服务器列表
                     choices = []
                     default_enabled = []
                     
-                    for server in servers:
-                        if 'name' in server and 'id' in server:
-                            choice = (f"{server['name']} ({server['id']})", server['id'])
-                            choices.append(choice)
-                            # 默认勾选已连接的服务器
-                            if server.get('connected', False):
-                                default_enabled.append(server['id'])
+                    for server_id, info in servers_status.items():
+                        label = f"{info['name']} ({server_id})"
+                        choices.append((label, server_id))
+                        # 默认勾选已启用的服务器
+                        if info.get('enabled', False):
+                            default_enabled.append(server_id)
                     
                     # 返回状态HTML和更新后的CheckboxGroup
                     import gradio as gr
                     return (
-                        status_text,
+                        status_html,
                         gr.update(choices=choices, value=default_enabled)
                     )
                     
@@ -491,13 +486,19 @@ class AgentApp:
             return error_html, gr.update(choices=[])
     
     async def _on_mcp_servers_change(self, enabled_servers: List[str]):
-        """处理MCP服务器勾选变化"""
+        """处理MCP服务器勾选变化 - 只更新工具暴露，不重启服务器"""
         try:
-            from tools.mcp_manager import mcp_manager
-            
             # 防护：如果 enabled_servers 为空或者无效，直接返回当前状态
             if not isinstance(enabled_servers, list):
                 enabled_servers = []
+            
+            # 更新工具管理器的启用服务器（只影响工具暴露）
+            if self.tool_manager:
+                self.tool_manager.set_enabled_servers(enabled_servers)
+                logger.info(f"已更新启用的MCP服务器: {enabled_servers}")
+            
+            # 获取最新的服务器状态
+            from tools.mcp_manager import mcp_manager
             
             # 更新配置中的enabled_mcp_servers
             self.current_config['enabled_mcp_servers'] = enabled_servers
@@ -514,29 +515,11 @@ class AgentApp:
                 is_enabled = server_id in enabled_servers
                 is_running = info['running']
                 
-                # 处理服务器状态变化
-                if is_enabled and not is_running:
-                    # 需要启动的服务器
-                    try:
-                        success = mcp_manager.start_server(server_id)
-                        if success:
-                            status_messages.append(f"✅ 已启动MCP服务器: {info['name']}")
-                        else:
-                            status_messages.append(f"❌ 启动失败 {info['name']}")
-                    except Exception as e:
-                        error_msg = str(e)
-                        status_messages.append(f"❌ 启动失败 {info['name']}: {error_msg}")
-                
-                elif not is_enabled and is_running:
-                    # 需要停止的服务器
-                    try:
-                        success = mcp_manager.stop_server(server_id)
-                        if success:
-                            status_messages.append(f"🔌 已停止MCP服务器: {info['name']}")
-                        else:
-                            status_messages.append(f"❌ 停止失败 {info['name']}")
-                    except Exception as e:
-                        status_messages.append(f"❌ 停止失败 {info['name']}: {str(e)}")
+                # 只记录状态变化，不实际启动/停止服务器
+                if is_enabled:
+                    status_messages.append(f"✅ 已启用工具: {info['name']}")
+                else:
+                    status_messages.append(f"⚪ 已禁用工具: {info['name']}")
             
             # 刷新状态
             status_html, _ = await self._refresh_mcp_servers()
@@ -545,9 +528,6 @@ class AgentApp:
             if status_messages:
                 messages_html = "<br/>".join(status_messages)
                 status_html = f"{status_html}<div style='margin-top: 10px; padding: 10px; background-color: #f0f8ff; border-radius: 4px;'>{messages_html}</div>"
-            
-            # 配置改变后更新Agent
-            await self._update_agent_config()
             
             return status_html
             
@@ -573,8 +553,8 @@ class AgentApp:
             # 生成服务器ID
             server_id = f"remote_{name.lower().replace(' ', '_')}"
             
-            # 添加远程服务器
-            mcp_manager.add_remote_server(server_id, name, url, f"远程服务器: {name}")
+            # 暂时不支持添加远程服务器功能
+            raise NotImplementedError("暂时不支持添加远程服务器功能")
             
             # 刷新状态
             status_html, checkbox_update = await self._refresh_mcp_servers()
@@ -590,11 +570,23 @@ class AgentApp:
     
     async def _chat(self, message: str, history: List[Dict[str, str]]):
         """处理聊天消息"""
-        # 如果没有Agent，尝试创建一个默认的
+        # 如果没有Agent，尝试创建一个默认的（只创建一次）
         if not self.current_agent:
             try:
-                # 使用默认配置创建Agent
-                await self._update_agent_config()
+                # 使用默认配置创建Agent，但不重复创建工具管理器
+                if not self.tool_manager:
+                    await self._update_agent_config()
+                else:
+                    # 如果工具管理器已存在，只创建Agent
+                    from agents.react_agent import ReactAgent
+                    self.agent = ReactAgent(
+                        llm=self.llm,
+                        tool_manager=self.tool_manager,
+                        max_iterations=self.current_config.get('max_iterations', 10),
+                        name="智能助手"
+                    )
+                    self.current_agent = self.agent
+                    logger.info("Agent创建完成（复用现有工具管理器）")
             except Exception as e:
                 print(f"创建默认Agent失败: {e}")
                 # 如果还是失败，返回错误消息

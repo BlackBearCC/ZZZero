@@ -132,7 +132,7 @@ class ReactAgent(BaseAgent):
                 ],
                 variables=context or {}
             )
-            
+            print(f"agent_context: {agent_context}")
             # 构建并执行图
             graph = self.build_graph()
             node_results = await self.executor.execute(graph, agent_context)
@@ -168,35 +168,25 @@ class ReactAgent(BaseAgent):
             result.success = False
             result.error = str(e)
             
-        finally:
-            result.end_time = datetime.now()
-            await self.cleanup()
-            
         return result
         
     def _build_system_prompt(self) -> str:
         """构建系统提示"""
         # 检查是否有工具可用
         if self.tool_manager and self.tool_manager.list_tools():
-            tools_desc = self.tool_manager.get_tools_description()
-            
-            return f"""你是一个基于ReAct（Reasoning and Acting）范式的智能助手。
+            return """你是一个基于ReAct（Reasoning and Acting）范式的智能助手。
 
 你的工作流程：
-1. **思考（Think）**: 分析问题，确定需要什么信息
-2. **行动（Act）**: 选择并调用合适的工具
-3. **观察（Observe）**: 分析工具返回的结果
-4. 重复以上步骤直到问题解决
-
-可用工具：
-{tools_desc}
+1. **思考（Thought）**: 纯粹的推理分析，确定问题的关键信息和解决思路
+2. **行动（Action）**: 根据思考结果选择合适的工具执行，或者决定不使用工具
+3. **观察（Observation）**: 分析工具执行结果，判断是否需要继续
+4. **最终回答（Final）**: 当信息充足时生成完整答案
 
 重要规则：
-- 每次只执行一个工具
-- 仔细分析每个工具的结果
-- 基于观察结果决定下一步
-- 当收集到足够信息后，生成完整的答案
-- 如果遇到错误，尝试其他方法
+- **思考阶段**：专注于分析和推理，不考虑具体工具，但可以直接跳到最终回答
+- **行动阶段**：此时才会获得工具信息，选择最合适的工具或选择不使用工具
+- **观察阶段**：基于结果决定是否继续循环或直接给出答案
+- 每次只执行一个工具，仔细分析每个结果
 
 请始终保持清晰的推理过程。"""
         else:

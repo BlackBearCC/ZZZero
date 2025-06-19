@@ -62,6 +62,25 @@ class ActNode(BaseNode):
         # 添加响应到消息历史
         context.messages.append(response)
         
+        # 检查是否选择跳过工具使用
+        if "跳过工具使用" in response.content or "不使用工具" in response.content:
+            # 用户选择不使用工具，直接进入最终化阶段
+            return NodeOutput(
+                data={
+                    "action": response.content,
+                    "tool_calls": [],
+                    "results": [],
+                    "skipped_tools": True
+                },
+                next_node="finalize",
+                should_continue=False,
+                metadata={
+                    "tools_used": [],
+                    "success_count": 0,
+                    "action_type": "skip_tools"
+                }
+            )
+        
         # 解析工具调用
         tool_calls = await self.parser.aparse(response.content)
         
@@ -92,18 +111,20 @@ class ActNode(BaseNode):
         
         # 决定是否需要继续
         should_continue = len(results) > 0
+        next_node = "observe" if should_continue else "finalize"
         
         return NodeOutput(
             data={
                 "action": response.content,
-                "tool_calls": [tc.model_dump() for tc in tool_calls],
+                "tool_calls": [tc.model_dump() for tc in tool_calls] if tool_calls else [],
                 "results": results
             },
-            next_node="observe" if should_continue else "finalize",
+            next_node=next_node,
             should_continue=should_continue,
             metadata={
-                "tools_used": [tc.name for tc in tool_calls],
-                "success_count": sum(1 for r in results if r.get("success", False))
+                "tools_used": [tc.name for tc in tool_calls] if tool_calls else [],
+                "success_count": sum(1 for r in results if r.get("success", False)),
+                "action_type": "use_tools" if tool_calls else "no_tools"
             }
         )
         
@@ -112,29 +133,40 @@ class ActNode(BaseNode):
         # 获取可用工具描述
         tools_desc = self.tool_manager.get_tools_description()
         
-        prompt = f"""基于以下思考，选择合适的工具来执行：
+        prompt = f"""【行动阶段】
 
+基于思考结果，现在需要选择具体的行动：
+
+思考结果：
 {thought if thought else "需要采取行动来解决问题。"}
 
-可用工具：
+现在，这里是可用的工具：
 {tools_desc}
 
-请选择一个或多个工具来执行。使用以下JSON格式：
+行动选择：
+你可以选择以下两种行动之一：
+
+**选项1: 使用工具**
+如果需要获取更多信息，请使用以下JSON格式选择工具：
 
 ```json
 {{
-    "tool": "工具名称",
+    "tool": "工具名称", 
     "arguments": {{
         "参数名": "参数值"
     }}
 }}
 ```
 
-如果需要调用多个工具，可以返回多个JSON块。
+**选项2: 不使用工具**
+如果思考阶段已经确定可以直接回答，可以回复"跳过工具使用"。
 
-重要：
-1. 只选择必要的工具
+选择指导：
+1. 只选择对解决问题最必要的工具
 2. 确保参数正确且完整
-3. 工具名称必须与可用工具列表中的名称完全匹配"""
+3. 工具名称必须与上面列表中的名称完全匹配
+4. 每次只选择一个工具以便观察结果
+
+请做出你的选择："""
         
         return prompt 

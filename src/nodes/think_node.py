@@ -162,15 +162,12 @@ class ThinkNode(BaseNode):
         class SimpleThinkingTemplate:
             def format(self, **kwargs):
                 query = kwargs.get("query", "")
-                tools = kwargs.get("available_tools", [])
                 prev_thought = kwargs.get("previous_thought", "")
                 prev_action = kwargs.get("previous_action", "")
                 
-                prompt = f"""基于以下信息进行思考和分析：
+                prompt = f"""【思考阶段】
 
 用户问题: {query}
-
-可用工具: {', '.join(tools) if tools else '无'}
 
 """
                 
@@ -178,15 +175,22 @@ class ThinkNode(BaseNode):
                     prompt += f"之前的思考: {prev_thought}\n\n"
                     
                 if prev_action:
-                    prompt += f"之前的行动: {prev_action}\n\n"
+                    prompt += f"之前的行动结果: {prev_action}\n\n"
                     
-                prompt += """请分析：
-1. 问题的关键点是什么？
-2. 需要什么信息来回答这个问题？
-3. 应该使用哪些工具？为什么？
-4. 下一步应该做什么？
+                prompt += """请进行纯粹的推理分析：
 
-请给出清晰的推理过程。"""
+1. **问题分析**: 这个问题的核心是什么？需要解决什么？
+2. **信息评估**: 基于已有信息，我能直接回答吗？还缺少什么关键信息？
+3. **解决策略**: 
+   - 如果信息充足：可以直接生成最终答案
+   - 如果信息不足：需要通过工具获取什么具体信息？
+4. **下一步决策**: 
+   - 选择"行动"去获取更多信息
+   - 或者选择"最终回答"直接解决问题
+
+注意：此阶段专注于分析和推理，不需要考虑具体的工具细节。
+
+请给出清晰的思考过程和下一步决策。"""
                 
                 return prompt
                 

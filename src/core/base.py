@@ -45,6 +45,27 @@ class NodeResult:
         if self.end_time:
             return (self.end_time - self.start_time).total_seconds()
         return None
+    
+    @property
+    def is_success(self) -> bool:
+        """检查是否执行成功"""
+        return self.state == ExecutionState.SUCCESS
+    
+    @property
+    def is_failed(self) -> bool:
+        """检查是否执行失败"""
+        return self.state == ExecutionState.FAILED
+    
+    def raise_if_failed(self):
+        """如果执行失败则抛出异常 - 用于需要严格异常处理的场景"""
+        if self.is_failed:
+            raise RuntimeError(f"节点 {self.node_name} 执行失败: {self.error}")
+    
+    def get_error_summary(self) -> str:
+        """获取错误摘要(不包含堆栈跟踪)"""
+        if not self.error:
+            return ""
+        return self.error.split("\n堆栈跟踪:")[0]
 
 
 @dataclass
@@ -104,7 +125,7 @@ class BaseNode(ABC):
         """执行后钩子 - 可以修改输出数据"""
         return output
         
-    async def run(self, input_data: NodeInput) -> NodeResult:
+    async def run(self, input_data: NodeInput, raise_on_error: bool = False) -> NodeResult:
         """运行节点 - 包含前后处理逻辑"""
         result = NodeResult(
             node_name=self.name,
@@ -128,10 +149,19 @@ class BaseNode(ABC):
             result.end_time = datetime.now()
             
         except Exception as e:
+            # 记录详细的异常信息，包含堆栈跟踪
+            import traceback
             result.state = ExecutionState.FAILED
-            result.error = str(e)
+            result.error = f"{str(e)}\n堆栈跟踪:\n{traceback.format_exc()}"
             result.end_time = datetime.now()
-            raise
+            
+            # 记录异常日志
+            print(f"节点 {self.name} 执行失败: {e}")
+            print(f"详细错误: {result.error}")
+            
+            # 根据参数决定是否抛出异常
+            if raise_on_error:
+                raise
             
         return result
 

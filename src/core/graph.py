@@ -160,19 +160,62 @@ class Graph:
         if not self.entry_point:
             raise ValueError("未设置入口节点")
             
-        # 检查是否有循环
-        if not nx.is_directed_acyclic_graph(self._graph):
-            raise ValueError("图中存在循环")
-            
-        # 检查所有节点是否可达
-        reachable = nx.descendants(self._graph, self.entry_point)
-        reachable.add(self.entry_point)
+        # 对于ReAct等需要循环的图，跳过循环检查
+        # 只检查强连通分量，确保图结构合理
+        strongly_connected = list(nx.strongly_connected_components(self._graph))
         
-        unreachable = set(self.nodes.keys()) - reachable
-        if unreachable:
-            raise ValueError(f"以下节点不可达: {unreachable}")
+        # 检查是否有强连通分量包含多个节点（实际的循环）
+        for component in strongly_connected:
+            if len(component) > 1:
+                # 检查是否是允许的循环模式（如ReAct的think->act->observe->think）
+                if not self._is_allowed_cycle(component):
+                    raise ValueError(f"图中存在不允许的循环: {component}")
+            
+        # 检查所有节点是否可达（在有向图中使用弱连通性）
+        if not nx.is_weakly_connected(self._graph):
+            # 找出不可达的节点
+            reachable = set()
+            stack = [self.entry_point]
+            visited = set()
+            
+            while stack:
+                node = stack.pop()
+                if node not in visited:
+                    visited.add(node)
+                    reachable.add(node)
+                    # 添加后继节点
+                    stack.extend(self._graph.successors(node))
+                    # 添加前驱节点（对于循环图）
+                    stack.extend(self._graph.predecessors(node))
+            
+            unreachable = set(self.nodes.keys()) - reachable
+            if unreachable:
+                raise ValueError(f"以下节点不可达: {unreachable}")
             
         return True
+    
+    def _is_allowed_cycle(self, component: set) -> bool:
+        """检查是否是允许的循环模式"""
+        # 允许的循环模式：ReAct循环 (think, act, observe)
+        react_pattern = {"think", "act", "observe"}
+        
+        # 如果循环包含ReAct模式的子集，则允许
+        if component.issubset(react_pattern) and len(component) >= 2:
+            return True
+            
+        # 允许包含finalize节点的循环（可能的路径）
+        if "finalize" in component:
+            return True
+            
+        # 其他情况需要具体判断，暂时允许所有包含条件连接的循环
+        for node in component:
+            outgoing_edges = self._graph.edges(node, data=True)
+            for _, _, data in outgoing_edges:
+                connection = data.get('connection')
+                if connection and connection.connection_type == ConnectionType.CONDITIONAL:
+                    return True
+                    
+        return False
         
     def visualize(self) -> str:
         """生成图的可视化表示（Mermaid格式）"""

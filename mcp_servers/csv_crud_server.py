@@ -17,8 +17,12 @@ import chardet
 
 # 导入自定义MCP基类和类型
 import sys
+
+# 添加项目根目录到Python路径，以便导入本地mcp模块
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
 from mcp.server.stdio_server import StdioMCPServer
+
 from mcp.types import Tool, Resource, JSONSchema, ToolInputSchema
 
 logger = logging.getLogger(__name__)

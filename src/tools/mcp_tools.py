@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 简化版MCP工具管理器
-直接调用MCP服务器，简化工具使用
+只管理工具的暴露，不管理服务器生命周期
+启用/禁用只控制是否向Agent暴露工具描述
 """
 import asyncio
 import logging
@@ -11,6 +12,7 @@ from dataclasses import dataclass
 
 from tools.base import ToolManager
 from tools.mcp_manager import mcp_manager
+from core.base import BaseTool
 
 logger = logging.getLogger(__name__)
 
@@ -33,119 +35,192 @@ class MCPTool:
     schema: Optional[Dict[str, Any]] = None
 
 
+class MCPBaseTool(BaseTool):
+    """MCP工具的BaseTool适配器"""
+    
+    def __init__(self, mcp_tool: MCPTool, tool_manager: 'MCPToolManager'):
+        """
+        初始化MCP工具适配器
+        
+        Args:
+            mcp_tool: MCP工具信息
+            tool_manager: MCP工具管理器引用
+        """
+        # 构建参数描述 - 简化版本，实际应该从MCP服务器获取
+        parameters = {
+            "data": {
+                "type": "object",
+                "description": "工具执行参数",
+                "required": False
+            }
+        }
+        
+        super().__init__(
+            name=f"{mcp_tool.server_id}_{mcp_tool.name}",
+            description=f"[{mcp_tool.server_id}] {mcp_tool.description}",
+            parameters=parameters
+        )
+        
+        self.mcp_tool = mcp_tool
+        self.tool_manager = tool_manager
+    
+    async def execute(self, **kwargs) -> Any:
+        """执行MCP工具"""
+        return await self.tool_manager._simulate_tool_call(self.mcp_tool, kwargs)
+
+
 class MCPToolManager(ToolManager):
-    """简化版MCP工具管理器"""
+    """简化版MCP工具管理器 - 只管理工具暴露，不管理服务器生命周期"""
     
     def __init__(self):
         """初始化MCP工具管理器"""
         super().__init__()
-        self.available_tools: Dict[str, MCPTool] = {}
+        # 所有可用的工具定义（不管服务器是否启用）
+        self.all_available_tools: Dict[str, MCPTool] = {}
+        # 当前启用的服务器ID集合
         self.enabled_servers: set = set()
         
+        # 注册所有可用工具
+        self._register_all_tools()
+        
         # 默认启用常用服务器
-        self.enable_server("csv")
-        self.enable_server("chromadb")
+        self.set_enabled_servers(["csv", "chromadb"])
         
         logger.info("简化MCP工具管理器初始化完成")
     
     async def initialize(self):
         """实现抽象方法：初始化工具管理器"""
-        # 启动所有已启用的服务器
-        for server_id in list(self.enabled_servers):
-            try:
-                mcp_manager.start_server(server_id)
-            except Exception as e:
-                logger.warning(f"初始化时启动服务器失败 {server_id}: {e}")
+        # MCP服务器应该已经在main.py中启动了，这里只做初始化检查
+        servers_status = mcp_manager.list_servers()
+        running_count = sum(1 for info in servers_status.values() if info['running'])
+        total_count = len(servers_status)
         
-        logger.info("MCP工具管理器初始化完成")
-    
-    def enable_server(self, server_id: str) -> bool:
-        """启用MCP服务器"""
-        try:
-            success = mcp_manager.start_server(server_id)
-            if success:
-                self.enabled_servers.add(server_id)
-                self._register_server_tools(server_id)
-                logger.info(f"启用MCP服务器: {server_id}")
-            return success
-        except Exception as e:
-            logger.error(f"启用服务器失败 {server_id}: {e}")
-            return False
-    
-    def disable_server(self, server_id: str) -> bool:
-        """禁用MCP服务器"""
-        try:
-            mcp_manager.stop_server(server_id)
-            self.enabled_servers.discard(server_id)
-            self._unregister_server_tools(server_id)
-            logger.info(f"禁用MCP服务器: {server_id}")
-            return True
-        except Exception as e:
-            logger.error(f"禁用服务器失败 {server_id}: {e}")
-            return False
-    
-    def _register_server_tools(self, server_id: str):
-        """注册服务器工具"""
-        # 为简化起见，手动注册已知工具
-        if server_id == "csv":
-            csv_tools = [
-                MCPTool("create_table", "创建CSV表", server_id),
-                MCPTool("insert_records", "插入记录", server_id),
-                MCPTool("query_records", "查询记录", server_id),
-                MCPTool("update_records", "更新记录", server_id),
-                MCPTool("delete_records", "删除记录", server_id),
-                MCPTool("list_tables", "列出所有表", server_id),
-                MCPTool("get_table_info", "获取表信息", server_id),
-                MCPTool("drop_table", "删除表", server_id),
-            ]
-            for tool in csv_tools:
-                self.available_tools[f"{server_id}_{tool.name}"] = tool
+        # 添加详细的调试信息
+        logger.info(f"MCP工具管理器初始化完成，检测到 {running_count}/{total_count} 个服务器运行中")
+        logger.debug(f"访问的MCP管理器实例ID: {id(mcp_manager)}")
+        for server_id, info in servers_status.items():
+            logger.debug(f"服务器 {server_id}: {info['name']} - 运行状态: {info['running']}")
         
-        elif server_id == "chromadb":
-            chroma_tools = [
-                MCPTool("create_collection", "创建集合", server_id),
-                MCPTool("add_documents", "添加文档", server_id),
-                MCPTool("query_documents", "查询文档", server_id),
-                MCPTool("update_documents", "更新文档", server_id),
-                MCPTool("delete_documents", "删除文档", server_id),
-                MCPTool("list_collections", "列出所有集合", server_id),
-                MCPTool("get_collection_info", "获取集合信息", server_id),
-                MCPTool("delete_collection", "删除集合", server_id),
-            ]
-            for tool in chroma_tools:
-                self.available_tools[f"{server_id}_{tool.name}"] = tool
+        # 检查进程字典
+        logger.debug(f"MCP管理器进程数量: {len(mcp_manager.processes)}")
+        for server_id, process in mcp_manager.processes.items():
+            poll_result = process.poll()
+            logger.debug(f"进程 {server_id}: poll() = {poll_result} (None表示运行中)")
     
-    def _unregister_server_tools(self, server_id: str):
-        """注销服务器工具"""
-        keys_to_remove = [key for key in self.available_tools.keys() 
-                         if key.startswith(f"{server_id}_")]
-        for key in keys_to_remove:
-            del self.available_tools[key]
+    def _register_all_tools(self):
+        """注册所有可用的工具定义"""
+        # CSV服务器工具
+        csv_tools = [
+            MCPTool("create_table", "创建CSV表", "csv"),
+            MCPTool("insert_records", "插入记录", "csv"),
+            MCPTool("query_records", "查询记录", "csv"),
+            MCPTool("update_records", "更新记录", "csv"),
+            MCPTool("delete_records", "删除记录", "csv"),
+            MCPTool("list_tables", "列出所有表", "csv"),
+            MCPTool("get_table_info", "获取表信息", "csv"),
+            MCPTool("drop_table", "删除表", "csv"),
+        ]
+        for tool in csv_tools:
+            tool_key = f"{tool.server_id}_{tool.name}"
+            self.all_available_tools[tool_key] = tool
+            # 创建BaseTool适配器并注册到基类
+            base_tool = MCPBaseTool(tool, self)
+            self.register_tool(base_tool)
+        
+        # ChromaDB服务器工具
+        chroma_tools = [
+            MCPTool("create_collection", "创建集合", "chromadb"),
+            MCPTool("add_documents", "添加文档", "chromadb"),
+            MCPTool("query_documents", "查询文档", "chromadb"),
+            MCPTool("update_documents", "更新文档", "chromadb"),
+            MCPTool("delete_documents", "删除文档", "chromadb"),
+            MCPTool("list_collections", "列出所有集合", "chromadb"),
+            MCPTool("get_collection_info", "获取集合信息", "chromadb"),
+            MCPTool("delete_collection", "删除集合", "chromadb"),
+        ]
+        for tool in chroma_tools:
+            tool_key = f"{tool.server_id}_{tool.name}"
+            self.all_available_tools[tool_key] = tool
+            # 创建BaseTool适配器并注册到基类
+            base_tool = MCPBaseTool(tool, self)
+            self.register_tool(base_tool)
+    
+    def set_enabled_servers(self, server_ids: List[str]):
+        """设置启用的服务器（只影响工具暴露，不影响服务器进程）"""
+        self.enabled_servers = set(server_ids)
+        self._update_enabled_tools()
+        logger.info(f"更新启用的MCP服务器: {server_ids}")
+    
+    def _update_enabled_tools(self):
+        """根据启用的服务器更新可用工具列表"""
+        # 清空当前启用工具
+        self.enabled_tools.clear()
+        
+        # 根据启用的服务器添加工具
+        for tool_key, tool in self.all_available_tools.items():
+            if tool.server_id in self.enabled_servers:
+                self.enabled_tools.add(tool_key)
+        
+        enabled_count = len(self.enabled_tools)
+        total_count = len(self.all_available_tools)
+        logger.info(f"工具暴露更新：{enabled_count}/{total_count} 个工具可用")
     
     def get_available_tools(self) -> List[Dict[str, Any]]:
-        """获取可用工具列表"""
+        """获取可用工具列表（只返回启用服务器且服务器正在运行的工具）"""
         tools = []
-        for tool_key, tool in self.available_tools.items():
-            if tool.server_id in self.enabled_servers and mcp_manager.is_running(tool.server_id):
-                tools.append({
-                    'name': tool_key,
-                    'description': f"[{tool.server_id}] {tool.description}",
-                    'server_id': tool.server_id,
-                    'original_name': tool.name
-                })
+        for tool_name in self.enabled_tools:
+            if tool_name in self.all_available_tools:
+                tool = self.all_available_tools[tool_name]
+                # 检查服务器是否运行
+                if mcp_manager.is_running(tool.server_id):
+                    tools.append({
+                        'name': tool_name,
+                        'description': f"[{tool.server_id}] {tool.description}",
+                        'server_id': tool.server_id,
+                        'original_name': tool.name
+                    })
+                else:
+                    logger.warning(f"服务器 {tool.server_id} 未运行，工具 {tool_name} 不可用")
+        
         return tools
+    
+    def get_all_servers_info(self) -> Dict[str, Dict[str, Any]]:
+        """获取所有服务器信息（包括工具数量）"""
+        servers_info = mcp_manager.list_servers()
+        
+        # 为每个服务器添加工具数量信息
+        for server_id, info in servers_info.items():
+            tool_count = len([t for t in self.all_available_tools.values() if t.server_id == server_id])
+            enabled_tool_count = len([tool_name for tool_name in self.enabled_tools 
+                                    if tool_name in self.all_available_tools and 
+                                    self.all_available_tools[tool_name].server_id == server_id])
+            
+            info.update({
+                'total_tools': tool_count,
+                'enabled_tools': enabled_tool_count,
+                'enabled': server_id in self.enabled_servers
+            })
+        
+        return servers_info
     
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> ToolResult:
         """调用MCP工具"""
         try:
-            if tool_name not in self.available_tools:
+            if tool_name not in self.enabled_tools:
                 return ToolResult(
                     success=False,
-                    result=f"未知工具: {tool_name}",
+                    result=f"工具未启用: {tool_name}",
+                    error=f"工具 {tool_name} 未启用或不存在"
+                )
+            
+            if tool_name not in self.all_available_tools:
+                return ToolResult(
+                    success=False,
+                    result=f"工具不存在: {tool_name}",
                     error=f"工具 {tool_name} 不存在"
                 )
             
-            tool = self.available_tools[tool_name]
+            tool = self.all_available_tools[tool_name]
             
             # 检查服务器是否运行
             if not mcp_manager.is_running(tool.server_id):
@@ -155,8 +230,7 @@ class MCPToolManager(ToolManager):
                     error=f"MCP服务器 {tool.server_id} 未运行"
                 )
             
-            # 简化的工具调用 - 返回模拟结果
-            # 在实际实现中，这里应该通过MCP协议调用服务器
+            # 调用工具
             result = await self._simulate_tool_call(tool, arguments)
             
             return ToolResult(
@@ -221,24 +295,22 @@ class MCPToolManager(ToolManager):
     
     def get_servers_status(self) -> Dict[str, Dict[str, Any]]:
         """获取服务器状态"""
-        return mcp_manager.list_servers()
-    
-    def start_all_servers(self) -> Dict[str, bool]:
-        """启动所有服务器"""
-        return mcp_manager.start_all()
+        return self.get_all_servers_info()
     
     async def cleanup(self):
         """异步清理资源（实现抽象方法）"""
-        try:
-            mcp_manager.stop_all()
-            logger.info("MCP工具管理器已清理")
-        except Exception as e:
-            logger.error(f"清理MCP工具管理器失败: {e}")
+        # 不再管理服务器生命周期，只清理内部状态
+        self.enabled_tools.clear()
+        self.enabled_servers.clear()
+        self.tools.clear()
+        self.all_available_tools.clear()
+        logger.info("MCP工具管理器已清理")
     
     def cleanup_sync(self):
         """同步清理资源"""
-        try:
-            mcp_manager.stop_all()
-            logger.info("MCP工具管理器已清理")
-        except Exception as e:
-            logger.error(f"清理MCP工具管理器失败: {e}") 
+        # 不再管理服务器生命周期，只清理内部状态
+        self.enabled_tools.clear()
+        self.enabled_servers.clear()
+        self.tools.clear()
+        self.all_available_tools.clear()
+        logger.info("MCP工具管理器已清理") 
