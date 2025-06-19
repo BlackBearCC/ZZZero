@@ -177,7 +177,7 @@ class ReactAgent(BaseAgent):
             return """你是一个基于ReAct（Reasoning and Acting）范式的智能助手。
 
 你的工作流程：
-1. **思考（Thought）**: 纯粹的推理分析，确定问题的关键信息和解决思路
+1. **思考（Thought）**: 推理分析，确定问题的关键信息和解决思路，
 2. **行动（Action）**: 根据思考结果选择合适的工具执行，或者决定不使用工具
 3. **观察（Observation）**: 分析工具执行结果，判断是否需要继续
 4. **最终回答（Final）**: 当信息充足时生成完整答案
