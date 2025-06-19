@@ -3,6 +3,7 @@ Gradio应用主文件 - 提供类ChatGPT风格的界面
 """
 import gradio as gr
 import asyncio
+import logging
 from typing import List, Dict, Any, Optional, Tuple
 import json
 from datetime import datetime
@@ -17,6 +18,8 @@ from llm.base import LLMFactory
 
 from tools.mcp_tools import MCPToolManager
 
+# 配置日志
+logger = logging.getLogger(__name__)
 
 class AgentApp:
     """Agent应用界面"""
@@ -27,6 +30,7 @@ class AgentApp:
         self.title = title
         self.description = description
         self.current_agent = None
+        self.agent = None  # 添加agent属性
         self.tool_manager = None
         self.llm = None
         # 保存当前配置
@@ -41,70 +45,66 @@ class AgentApp:
         }
         
     async def _update_agent_config(self):
-        """更新Agent配置（内部方法）"""
+        """更新Agent配置"""
         try:
-            # 创建LLM配置
-            llm_config = LLMConfig(
-                provider=self.current_config['llm_provider'],
-                model_name=self.current_config['model_name'],
-                temperature=self.current_config['temperature']
+            # 创建工具管理器
+            if not self.tool_manager:
+                self.tool_manager = MCPToolManager()
+                await self.tool_manager.initialize()
+            
+            # 创建LLM实例
+            if not self.llm:
+                # 创建LLM配置对象
+                llm_config = LLMConfig(
+                    provider=self.current_config.get('llm_provider', 'doubao'),
+                    model_name=self.current_config.get('model_name', 'ep-20250221154410-vh78x'),
+                    temperature=self.current_config.get('temperature', 0.7)
+                )
+                
+                # 使用工厂创建LLM实例
+                self.llm = LLMFactory.create(llm_config)
+                await self.llm.initialize()
+            
+            # 创建或更新Agent
+            self.agent = ReactAgent(
+                llm=self.llm,  # 传递LLM实例作为第一个参数
+                tool_manager=self.tool_manager,
+                max_iterations=self.current_config.get('max_iterations', 10),
+                name="智能助手"
             )
             
-            # 创建或更新LLM实例
-            if self.llm:
-                await self.llm.cleanup()
-            self.llm = LLMFactory.create(llm_config)
-            await self.llm.initialize()
+            # 同时设置current_agent以兼容其他方法
+            self.current_agent = self.agent
             
-            # 创建或更新工具管理器
-            if self.tool_manager:
-                await self.tool_manager.cleanup()
-            self.tool_manager = MCPToolManager(enabled_servers=self.current_config['enabled_mcp_servers'])
-            await self.tool_manager.initialize()
-            
-            # 启用选中的传统工具
-            for tool in self.current_config['available_tools']:
-                await self.tool_manager.enable_tool(tool)
-            
-            # 创建Agent
-            if self.current_config['agent_type'] == 'react':
-                self.current_agent = ReactAgent(
-                    llm=self.llm,
-                    tool_manager=self.tool_manager,
-                    max_iterations=self.current_config['max_iterations']
-                )
+            logger.info("Agent配置更新成功")
             
         except Exception as e:
-            print(f"更新Agent配置失败: {str(e)}")
-            # 确保至少有一个基本的Agent可用
-            if not self.current_agent and self.llm:
-                self.current_agent = ReactAgent(
-                    llm=self.llm,
-                    tool_manager=self.tool_manager or MCPToolManager(enabled_servers=[]),
-                    max_iterations=self.current_config['max_iterations']
-                )
+            error_msg = f"更新Agent配置失败: {e}"
+            logger.error(error_msg)
+            return error_msg
     
     async def _auto_start_mcp_servers(self):
         """自动启动所有MCP服务器"""
         try:
-            import subprocess
-            from pathlib import Path
+            from tools.mcp_manager import mcp_manager
             
-            # 获取MCP服务器启动器路径
-            launcher_path = Path(__file__).parent.parent.parent / "mcp_servers" / "advanced_launcher.py"
+            # 直接使用简化的mcp_manager启动服务器
+            # 连接CSV服务器
+            print("正在启动CSV MCP服务器...")
+            success = await mcp_manager.connect_server('csv')
+            if success:
+                print("✅ CSV MCP服务器启动成功")
+            else:
+                print("❌ CSV MCP服务器启动失败")
             
-            if launcher_path.exists():
-                # 启动CSV服务器
-                subprocess.Popen([sys.executable, str(launcher_path), "start", "--server", "csv"], 
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                
-                # 启动ChromaDB服务器
-                subprocess.Popen([sys.executable, str(launcher_path), "start", "--server", "chromadb"], 
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                
-                # 等待服务器启动
-                await asyncio.sleep(2)
-                
+            # 连接ChromaDB服务器
+            print("正在启动ChromaDB MCP服务器...")
+            success = await mcp_manager.connect_server('chromadb')
+            if success:
+                print("✅ ChromaDB MCP服务器启动成功")
+            else:
+                print("❌ ChromaDB MCP服务器启动失败")
+                    
         except Exception as e:
             print(f"自动启动MCP服务器失败: {e}")
             
@@ -319,19 +319,37 @@ class AgentApp:
             # 页面加载时的初始化
             async def on_load():
                 """页面加载时的初始化"""
-                # 先启动MCP服务器
-                await self._auto_start_mcp_servers()
-                
-                # 刷新MCP服务器状态
-                status_html, checkbox_update = await self._refresh_mcp_servers()
-                
-                # 更新默认的enabled_mcp_servers
-                self.current_config['enabled_mcp_servers'] = default_enabled
-                
-                # 初始化Agent配置
-                await self._update_agent_config()
-                
-                return status_html, checkbox_update
+                try:
+                    # 初始化配置
+                    await self._update_agent_config()
+                    
+                    # 自动启动MCP服务器
+                    await self._auto_start_mcp_servers()
+                    
+                    # 获取服务器状态并更新界面
+                    servers_status = self.tool_manager.get_servers_status() if self.tool_manager else {}
+                    
+                    status_text = "=== MCP服务器状态 ===\n"
+                    for server_id, info in servers_status.items():
+                        status_text += f"{info['name']}: {'✅ 运行中' if info['running'] else '❌ 未运行'}\n"
+                    
+                    if not servers_status:
+                        status_text += "暂无MCP服务器\n"
+                    
+                    return (
+                        status_text,
+                        True,  # csv服务器默认选中
+                        True   # chromadb服务器默认选中
+                    )
+                    
+                except Exception as e:
+                    error_msg = f"页面加载初始化失败: {e}"
+                    logger.error(error_msg)
+                    return (
+                        f"❌ 初始化失败: {str(e)}",
+                        False,
+                        False
+                    )
             
             app.load(
                 on_load,
@@ -458,9 +476,11 @@ class AgentApp:
             from tools.mcp_manager import mcp_manager
             
             # 防护：如果 enabled_servers 为空或者无效，直接返回当前状态
-            if not enabled_servers:
-                status_html, _ = await self._refresh_mcp_servers()
-                return status_html
+            if not isinstance(enabled_servers, list):
+                enabled_servers = []
+            
+            # 更新配置中的enabled_mcp_servers
+            self.current_config['enabled_mcp_servers'] = enabled_servers
             
             # 获取所有服务器
             all_servers = mcp_manager.list_servers()
@@ -478,31 +498,24 @@ class AgentApp:
                 is_enabled = server_id in enabled_servers
                 is_connected = server['connected']
                 
+                # 处理服务器状态变化
                 if is_enabled and not is_connected:
-                    # 需要启动的服务器
-                    if server['type'] == 'local_stdio':
-                        # 启动本地stdio服务器
-                        try:
-                            await mcp_manager.connect_server(server_id)
-                            status_messages.append(f"✅ 启动本地MCP服务器: {server['name']}")
-                        except Exception as e:
-                            error_msg = str(e)
-                            if "_AsyncGeneratorContextManager" in error_msg:
-                                error_msg = "MCP服务器连接失败：异步调用错误，请检查服务器实现"
-                            status_messages.append(f"❌ 启动失败 {server['name']}: {error_msg}")
-                    elif server['type'] == 'remote_http':
-                        # 尝试连接远程服务器
-                        try:
-                            await mcp_manager.connect_server(server_id)
-                            status_messages.append(f"✅ 连接远程MCP服务器: {server['name']}")
-                        except Exception as e:
-                            status_messages.append(f"❌ 连接失败 {server['name']}: {str(e)}")
+                    # 需要连接的服务器
+                    try:
+                        success = await mcp_manager.connect_server(server_id)
+                        if success:
+                            status_messages.append(f"✅ 已连接MCP服务器: {server['name']}")
+                        else:
+                            status_messages.append(f"❌ 连接失败 {server['name']}")
+                    except Exception as e:
+                        error_msg = str(e)
+                        status_messages.append(f"❌ 连接失败 {server['name']}: {error_msg}")
                 
                 elif not is_enabled and is_connected:
                     # 需要断开的服务器
                     try:
                         await mcp_manager.disconnect_server(server_id)
-                        status_messages.append(f"🔌 断开MCP服务器: {server['name']}")
+                        status_messages.append(f"🔌 已断开MCP服务器: {server['name']}")
                     except Exception as e:
                         status_messages.append(f"❌ 断开失败 {server['name']}: {str(e)}")
             
@@ -513,6 +526,9 @@ class AgentApp:
             if status_messages:
                 messages_html = "<br/>".join(status_messages)
                 status_html = f"{status_html}<div style='margin-top: 10px; padding: 10px; background-color: #f0f8ff; border-radius: 4px;'>{messages_html}</div>"
+            
+            # 配置改变后更新Agent
+            await self._update_agent_config()
             
             return status_html
             

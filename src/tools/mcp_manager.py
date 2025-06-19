@@ -1,461 +1,208 @@
 #!/usr/bin/env python3
 """
-增强版MCP管理器
-支持本地和远程MCP服务器的统一管理
+简化版MCP管理器
+直接启动和管理MCP服务器进程
 """
 import os
 import sys
 import asyncio
 import subprocess
 import logging
-import httpx
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
 from dataclasses import dataclass
 from enum import Enum
 
-# 使用安装的mcp包
-from mcp.client.stdio import stdio_client, StdioServerParameters
-from mcp.client.session import ClientSession
-
 logger = logging.getLogger(__name__)
 
 
-class MCPServerType(Enum):
-    """MCP服务器类型"""
-    LOCAL_STDIO = "local_stdio"
-    REMOTE_HTTP = "remote_http"
-    LOCAL_HTTP = "local_http"
+class ServerStatus(Enum):
+    """服务器状态枚举"""
+    STOPPED = "stopped"
+    STARTING = "starting"
+    RUNNING = "running"
+    ERROR = "error"
 
 
 @dataclass
 class MCPServerConfig:
     """MCP服务器配置"""
     name: str
-    type: MCPServerType
-    description: str
-    
-    # 本地stdio配置
-    script_path: Optional[str] = None
-    args: Optional[List[str]] = None
-    cwd: Optional[str] = None
-    
-    # HTTP配置
-    url: Optional[str] = None
-    headers: Optional[Dict[str, str]] = None
-    
-    # 状态
-    enabled: bool = False
-    connected: bool = False
-    
-    # 元数据
-    capabilities: Optional[Dict[str, Any]] = None
-    tools: Optional[List[str]] = None
-    resources: Optional[List[str]] = None
-    prompts: Optional[List[str]] = None
+    command: List[str]
+    working_dir: Optional[str] = None
+    env: Optional[Dict[str, str]] = None
+    description: str = ""
 
 
-class MCPManager:
-    """增强版MCP管理器"""
+class SimpleMCPManager:
+    """简化版MCP管理器 - 只管理进程，不处理复杂连接"""
     
     def __init__(self):
         """初始化MCP管理器"""
         self.servers: Dict[str, MCPServerConfig] = {}
-        self.sessions: Dict[str, ClientSession] = {}
         self.processes: Dict[str, subprocess.Popen] = {}
+        self.status: Dict[str, ServerStatus] = {}
+        self.project_root = Path(__file__).parent.parent.parent
         
         # 注册内置服务器
         self._register_builtin_servers()
-        
-        logger.info("MCP管理器初始化完成")
     
     def _register_builtin_servers(self):
-        """注册内置服务器"""
-        # 获取mcp_servers目录路径
-        mcp_servers_dir = Path(__file__).parent.parent.parent / "mcp_servers"
-        
-        # 测试服务器（用于调试）
-        self.servers["test"] = MCPServerConfig(
-            name="测试服务器",
-            type=MCPServerType.LOCAL_STDIO,
-            description="简单的MCP测试服务器",
-            script_path=str(mcp_servers_dir / "test_server.py"),
-            args=[],
-            cwd=str(mcp_servers_dir)
-        )
+        """注册内置MCP服务器"""
+        python_exe = sys.executable
         
         # CSV CRUD服务器
-        self.servers["csv"] = MCPServerConfig(
-            name="CSV CRUD服务器",
-            type=MCPServerType.LOCAL_STDIO,
-            description="高级CSV数据库服务器，支持完整的CRUD操作、复杂查询、数据验证等",
-            script_path=str(mcp_servers_dir / "csv_crud_server.py"),
-            args=[],
-            cwd=str(mcp_servers_dir)
-        )
+        csv_server_path = self.project_root / "mcp_servers" / "csv_crud_server.py"
+        if csv_server_path.exists():
+            self.servers["csv"] = MCPServerConfig(
+                name="CSV CRUD服务器",
+                command=[python_exe, str(csv_server_path)],
+                working_dir=str(self.project_root),
+                description="CSV文件数据库CRUD操作服务器"
+            )
         
-        # ChromaDB CRUD服务器
-        self.servers["chromadb"] = MCPServerConfig(
-            name="ChromaDB CRUD服务器", 
-            type=MCPServerType.LOCAL_STDIO,
-            description="高级ChromaDB向量数据库服务器，支持向量存储、语义搜索、集合管理等",
-            script_path=str(mcp_servers_dir / "chromadb_crud_server.py"),
-            args=[],
-            cwd=str(mcp_servers_dir)
-        )
+        # ChromaDB服务器
+        chroma_server_path = self.project_root / "mcp_servers" / "chromadb_server.py"
+        if chroma_server_path.exists():
+            self.servers["chromadb"] = MCPServerConfig(
+                name="ChromaDB CRUD服务器",
+                command=[python_exe, str(chroma_server_path)],
+                working_dir=str(self.project_root),
+                description="ChromaDB向量数据库操作服务器"
+            )
     
-    def add_remote_server(self, server_id: str, name: str, url: str, 
-                         description: str = "", headers: Optional[Dict[str, str]] = None):
-        """添加远程MCP服务器"""
-        self.servers[server_id] = MCPServerConfig(
-            name=name,
-            type=MCPServerType.REMOTE_HTTP,
-            description=description,
-            url=url,
-            headers=headers or {}
-        )
-        logger.info(f"已添加远程MCP服务器: {name} ({url})")
-    
-    def add_local_http_server(self, server_id: str, name: str, url: str,
-                             description: str = "", headers: Optional[Dict[str, str]] = None):
-        """添加本地HTTP MCP服务器"""
-        self.servers[server_id] = MCPServerConfig(
-            name=name,
-            type=MCPServerType.LOCAL_HTTP,
-            description=description,
-            url=url,
-            headers=headers or {}
-        )
-        logger.info(f"已添加本地HTTP MCP服务器: {name} ({url})")
-    
-    def list_servers(self) -> List[Dict[str, Any]]:
-        """列出所有服务器"""
-        servers_info = []
-        for server_id, config in self.servers.items():
-            info = {
-                'id': server_id,
-                'name': config.name,
-                'type': config.type.value,
-                'description': config.description,
-                'enabled': config.enabled,
-                'connected': config.connected,
-                'capabilities': config.capabilities,
-                'tools': config.tools or [],
-                'resources': config.resources or [],
-                'prompts': config.prompts or []
-            }
-            
-            if config.type == MCPServerType.REMOTE_HTTP or config.type == MCPServerType.LOCAL_HTTP:
-                info['url'] = config.url
-            elif config.type == MCPServerType.LOCAL_STDIO:
-                info['script_path'] = config.script_path
-                
-            servers_info.append(info)
-        
-        return servers_info
-    
-    async def connect_server(self, server_id: str) -> bool:
-        """连接服务器"""
+    def start_server(self, server_id: str) -> bool:
+        """启动MCP服务器"""
         if server_id not in self.servers:
             logger.error(f"未知服务器: {server_id}")
             return False
         
+        # 如果已经在运行，先停止
+        if self.is_running(server_id):
+            self.stop_server(server_id)
+        
         config = self.servers[server_id]
+        self.status[server_id] = ServerStatus.STARTING
         
         try:
-            if config.type == MCPServerType.LOCAL_STDIO:
-                success = await self._connect_stdio_server(server_id, config)
-            elif config.type in [MCPServerType.REMOTE_HTTP, MCPServerType.LOCAL_HTTP]:
-                success = await self._connect_http_server(server_id, config)
-            else:
-                logger.error(f"不支持的服务器类型: {config.type}")
-                return False
+            logger.info(f"启动MCP服务器: {config.name}")
             
-            if success:
-                config.connected = True
-                await self._fetch_server_capabilities(server_id)
-                logger.info(f"成功连接服务器: {config.name}")
-            
-            return success
-            
-        except Exception as e:
-            logger.error(f"连接服务器失败 {config.name}: {e}")
-            return False
-    
-    async def _connect_stdio_server(self, server_id: str, config: MCPServerConfig) -> bool:
-        """连接stdio服务器"""
-        if not config.script_path or not Path(config.script_path).exists():
-            logger.error(f"脚本文件不存在: {config.script_path}")
-            return False
-        
-        try:
-            # 创建服务器参数
-            server_params = StdioServerParameters(
-                command=sys.executable,
-                args=[config.script_path] + (config.args or []),
-                cwd=config.cwd
+            # 启动进程
+            process = subprocess.Popen(
+                config.command,
+                cwd=config.working_dir,
+                env={**os.environ, **(config.env or {})},
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                stdin=subprocess.PIPE,
+                text=True,
+                bufsize=0
             )
             
-            # 创建一个任务来管理stdio连接
-            async def manage_stdio_connection():
-                try:
-                    logger.debug(f"启动stdio客户端: {config.name}")
-                    async with stdio_client(server_params) as (read_stream, write_stream):
-                        logger.debug(f"stdio客户端已连接: {config.name}")
-                        
-                        # 创建会话
-                        session = ClientSession(read_stream, write_stream)
-                        logger.debug(f"会话已创建: {config.name}")
-                        
-                        # 初始化会话
-                        await session.initialize()
-                        logger.debug(f"会话已初始化: {config.name}")
-                        
-                        # 保存会话
-                        self.sessions[server_id] = session
-                        
-                        # 创建一个永远不会完成的Future，保持连接
-                        self._connection_futures[server_id] = asyncio.Future()
-                        try:
-                            # 等待断开信号
-                            await self._connection_futures[server_id]
-                        except asyncio.CancelledError:
-                            # 正常断开
-                            logger.debug(f"收到断开信号: {config.name}")
-                            pass
-                        finally:
-                            # 清理会话
-                            if server_id in self.sessions:
-                                del self.sessions[server_id]
-                            logger.debug(f"会话已清理: {config.name}")
-                except Exception as e:
-                    logger.error(f"stdio连接管理出错 {config.name}: {e}", exc_info=True)
-                    # 确保在出错时也将服务器标记为未连接
-                    if server_id in self.sessions:
-                        del self.sessions[server_id]
+            # 简短等待确保进程启动
+            time.sleep(0.5)
             
-            # 初始化连接futures字典
-            if not hasattr(self, '_connection_futures'):
-                self._connection_futures = {}
-            
-            # 在后台任务中运行连接
-            if not hasattr(self, '_connection_tasks'):
-                self._connection_tasks = {}
-            
-            self._connection_tasks[server_id] = asyncio.create_task(manage_stdio_connection())
-            
-            # 等待会话初始化
-            retry_count = 0
-            max_retries = 100  # 增加到10秒
-            while retry_count < max_retries:
-                if server_id in self.sessions:
-                    logger.info(f"成功初始化会话: {config.name}")
-                    return True
-                await asyncio.sleep(0.1)
-                retry_count += 1
+            # 检查进程是否还在运行
+            if process.poll() is None:
+                self.processes[server_id] = process
+                self.status[server_id] = ServerStatus.RUNNING
+                logger.info(f"✅ MCP服务器启动成功: {config.name}")
+                return True
+            else:
+                stdout, stderr = process.communicate()
+                logger.error(f"❌ MCP服务器启动失败: {config.name}")
+                logger.error(f"stdout: {stdout}")
+                logger.error(f"stderr: {stderr}")
+                self.status[server_id] = ServerStatus.ERROR
+                return False
                 
-                # 每秒打印一次状态
-                if retry_count % 10 == 0:
-                    logger.debug(f"等待 {config.name} 初始化... ({retry_count/10}秒)")
-            
-            # 如果超时，取消任务
-            if server_id in self._connection_tasks:
-                self._connection_tasks[server_id].cancel()
-                try:
-                    await self._connection_tasks[server_id]
-                except asyncio.CancelledError:
-                    pass
-                del self._connection_tasks[server_id]
-            
-            logger.error(f"连接超时: {config.name} (等待了{max_retries/10}秒)")
-            return False
-            
         except Exception as e:
-            logger.error(f"连接stdio服务器失败 {config.name}: {e}")
+            logger.error(f"启动MCP服务器失败 {config.name}: {e}")
+            self.status[server_id] = ServerStatus.ERROR
             return False
     
-    async def _connect_http_server(self, server_id: str, config: MCPServerConfig) -> bool:
-        """连接HTTP服务器"""
-        # 测试连接
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(config.url, headers=config.headers)
-                if response.status_code == 200:
-                    # 这里应该实现HTTP MCP协议
-                    # 目前先简单测试连接
-                    return True
-                else:
-                    logger.error(f"HTTP服务器响应错误: {response.status_code}")
-                    return False
-        except Exception as e:
-            logger.error(f"连接HTTP服务器失败: {e}")
-            return False
-    
-    async def _fetch_server_capabilities(self, server_id: str):
-        """获取服务器能力信息"""
-        session = self.sessions.get(server_id)
-        if not session:
-            return
-        
-        config = self.servers[server_id]
-        
-        try:
-            # 获取工具列表
-            tools_result = await session.list_tools()
-            if tools_result and hasattr(tools_result, 'tools'):
-                config.tools = [tool.name for tool in tools_result.tools]
-            
-            # 获取资源列表
+    def stop_server(self, server_id: str) -> bool:
+        """停止MCP服务器"""
+        if server_id in self.processes:
             try:
-                resources_result = await session.list_resources()
-                if resources_result and hasattr(resources_result, 'resources'):
-                    config.resources = [resource.name for resource in resources_result.resources]
-            except:
-                config.resources = []
-            
-            # 获取提示列表
-            try:
-                prompts_result = await session.list_prompts()
-                if prompts_result and hasattr(prompts_result, 'prompts'):
-                    config.prompts = [prompt.name for prompt in prompts_result.prompts]
-            except:
-                config.prompts = []
-            
-            logger.info(f"已获取服务器能力: {config.name}")
-            
-        except Exception as e:
-            logger.warning(f"获取服务器能力失败 {config.name}: {e}")
-    
-    async def disconnect_server(self, server_id: str) -> bool:
-        """断开服务器连接"""
-        if server_id not in self.servers:
-            return False
-        
-        config = self.servers[server_id]
-        
-        try:
-            # 发送断开信号给连接任务
-            if hasattr(self, '_connection_futures') and server_id in self._connection_futures:
-                self._connection_futures[server_id].cancel()
-                del self._connection_futures[server_id]
-            
-            # 取消连接任务
-            if hasattr(self, '_connection_tasks') and server_id in self._connection_tasks:
-                task = self._connection_tasks[server_id]
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-                del self._connection_tasks[server_id]
-            
-            # 终止进程（如果是本地服务器）
-            if server_id in self.processes:
                 process = self.processes[server_id]
                 process.terminate()
+                
+                # 等待进程结束
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+                
                 del self.processes[server_id]
-            
-            config.connected = False
-            logger.info(f"已断开服务器: {config.name}")
+                self.status[server_id] = ServerStatus.STOPPED
+                logger.info(f"MCP服务器已停止: {self.servers[server_id].name}")
+                return True
+            except Exception as e:
+                logger.error(f"停止MCP服务器失败: {e}")
+                return False
+        return True
+    
+    def is_running(self, server_id: str) -> bool:
+        """检查服务器是否运行"""
+        if server_id not in self.processes:
+            return False
+        
+        process = self.processes[server_id]
+        if process.poll() is None:
             return True
-            
-        except Exception as e:
-            logger.error(f"断开服务器失败 {config.name}: {e}")
+        else:
+            # 进程已结束，清理状态
+            del self.processes[server_id]
+            self.status[server_id] = ServerStatus.STOPPED
             return False
     
-    async def enable_server(self, server_id: str) -> bool:
-        """启用服务器"""
+    def get_server_status(self, server_id: str) -> ServerStatus:
+        """获取服务器状态"""
         if server_id not in self.servers:
-            return False
+            return ServerStatus.ERROR
         
-        self.servers[server_id].enabled = True
+        # 更新状态
+        if self.is_running(server_id):
+            self.status[server_id] = ServerStatus.RUNNING
+        elif server_id not in self.status:
+            self.status[server_id] = ServerStatus.STOPPED
         
-        # 如果尚未连接，尝试连接
-        if not self.servers[server_id].connected:
-            return await self.connect_server(server_id)
-        
-        return True
+        return self.status.get(server_id, ServerStatus.STOPPED)
     
-    async def disable_server(self, server_id: str) -> bool:
-        """禁用服务器"""
-        if server_id not in self.servers:
-            return False
-        
-        self.servers[server_id].enabled = False
-        
-        # 断开连接
-        if self.servers[server_id].connected:
-            await self.disconnect_server(server_id)
-        
-        return True
+    def list_servers(self) -> Dict[str, Dict[str, Any]]:
+        """列出所有服务器及其状态"""
+        result = {}
+        for server_id, config in self.servers.items():
+            result[server_id] = {
+                'name': config.name,
+                'description': config.description,
+                'status': self.get_server_status(server_id).value,
+                'running': self.is_running(server_id)
+            }
+        return result
     
-    def get_enabled_servers(self) -> List[str]:
-        """获取已启用的服务器列表"""
-        return [server_id for server_id, config in self.servers.items() if config.enabled]
+    def start_all(self) -> Dict[str, bool]:
+        """启动所有服务器"""
+        results = {}
+        for server_id in self.servers:
+            results[server_id] = self.start_server(server_id)
+        return results
     
-    def get_connected_servers(self) -> List[str]:
-        """获取已连接的服务器列表"""
-        return [server_id for server_id, config in self.servers.items() if config.connected]
+    def stop_all(self):
+        """停止所有服务器"""
+        for server_id in list(self.processes.keys()):
+            self.stop_server(server_id)
     
-    async def call_tool(self, server_id: str, tool_name: str, arguments: Dict[str, Any]) -> Any:
-        """调用工具"""
-        if server_id not in self.sessions:
-            raise ValueError(f"服务器未连接: {server_id}")
-        
-        session = self.sessions[server_id]
-        
-        try:
-            result = await session.call_tool(tool_name, arguments)
-            return result
-        except Exception as e:
-            logger.error(f"调用工具失败 {tool_name}: {e}")
-            raise
-    
-    async def get_resource(self, server_id: str, resource_uri: str) -> Any:
-        """获取资源"""
-        if server_id not in self.sessions:
-            raise ValueError(f"服务器未连接: {server_id}")
-        
-        session = self.sessions[server_id]
-        
-        try:
-            result = await session.read_resource(resource_uri)
-            return result
-        except Exception as e:
-            logger.error(f"获取资源失败 {resource_uri}: {e}")
-            raise
-    
-    async def get_prompt(self, server_id: str, prompt_name: str, arguments: Optional[Dict[str, Any]] = None) -> Any:
-        """获取提示"""
-        if server_id not in self.sessions:
-            raise ValueError(f"服务器未连接: {server_id}")
-        
-        session = self.sessions[server_id]
-        
-        try:
-            result = await session.get_prompt(prompt_name, arguments)
-            return result
-        except Exception as e:
-            logger.error(f"获取提示失败 {prompt_name}: {e}")
-            raise
-    
-    async def cleanup(self):
+    def __del__(self):
         """清理资源"""
-        # 断开所有连接
-        server_ids = []
-        
-        # 收集所有需要断开的服务器ID
-        if hasattr(self, 'sessions'):
-            server_ids.extend(list(self.sessions.keys()))
-        if hasattr(self, '_connection_tasks'):
-            server_ids.extend(list(self._connection_tasks.keys()))
-        
-        # 去重并断开所有服务器
-        for server_id in set(server_ids):
-            await self.disconnect_server(server_id)
-        
-        logger.info("MCP管理器已清理")
+        try:
+            self.stop_all()
+        except:
+            pass
 
 
-# 单例实例
-mcp_manager = MCPManager() 
+# 全局MCP管理器实例
+mcp_manager = SimpleMCPManager() 

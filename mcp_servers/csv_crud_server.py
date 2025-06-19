@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-高级CSV数据库服务器 - 基于MCP服务基类实现CRUD操作
+高级CSV数据库服务器 - 基于自定义MCP服务基类实现CRUD操作
 支持多文件管理、复杂查询、数据验证、事务操作等
 """
 import os
@@ -15,7 +15,7 @@ import asyncio
 import logging
 import chardet
 
-# 导入MCP基类和类型
+# 导入自定义MCP基类和类型
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from mcp.server.stdio_server import StdioMCPServer
