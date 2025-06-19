@@ -89,17 +89,17 @@ class AgentApp:
             from tools.mcp_manager import mcp_manager
             
             # 直接使用简化的mcp_manager启动服务器
-            # 连接CSV服务器
+            # 启动CSV服务器
             print("正在启动CSV MCP服务器...")
-            success = await mcp_manager.connect_server('csv')
+            success = mcp_manager.start_server('csv')
             if success:
                 print("✅ CSV MCP服务器启动成功")
             else:
                 print("❌ CSV MCP服务器启动失败")
             
-            # 连接ChromaDB服务器
+            # 启动ChromaDB服务器
             print("正在启动ChromaDB MCP服务器...")
-            success = await mcp_manager.connect_server('chromadb')
+            success = mcp_manager.start_server('chromadb')
             if success:
                 print("✅ ChromaDB MCP服务器启动成功")
             else:
@@ -336,19 +336,36 @@ class AgentApp:
                     if not servers_status:
                         status_text += "暂无MCP服务器\n"
                     
+                    # 获取可用的服务器列表和默认启用的服务器
+                    from tools.mcp_manager import mcp_manager
+                    servers = mcp_manager.list_servers()
+                    
+                    # 生成choices和默认选中的服务器
+                    choices = []
+                    default_enabled = []
+                    
+                    for server in servers:
+                        if 'name' in server and 'id' in server:
+                            choice = (f"{server['name']} ({server['id']})", server['id'])
+                            choices.append(choice)
+                            # 默认勾选已连接的服务器
+                            if server.get('connected', False):
+                                default_enabled.append(server['id'])
+                    
+                    # 返回状态HTML和更新后的CheckboxGroup
+                    import gradio as gr
                     return (
                         status_text,
-                        True,  # csv服务器默认选中
-                        True   # chromadb服务器默认选中
+                        gr.update(choices=choices, value=default_enabled)
                     )
                     
                 except Exception as e:
                     error_msg = f"页面加载初始化失败: {e}"
                     logger.error(error_msg)
+                    import gradio as gr
                     return (
                         f"❌ 初始化失败: {str(e)}",
-                        False,
-                        False
+                        gr.update(choices=[], value=[])
                     )
             
             app.load(
@@ -420,7 +437,20 @@ class AgentApp:
         try:
             from tools.mcp_manager import mcp_manager
             
-            servers = mcp_manager.list_servers()
+            # 使用正确的方法获取服务器列表
+            servers_dict = mcp_manager.list_servers()
+            
+            # 转换为列表格式以兼容后续代码
+            servers = []
+            for server_id, info in servers_dict.items():
+                servers.append({
+                    'id': server_id,
+                    'name': info['name'],
+                    'description': info['description'],
+                    'connected': info['running'],  # running 对应 connected
+                    'type': 'local_stdio',
+                    'tools': []  # 简化版没有工具列表
+                })
             
             # 生成状态HTML
             status_html = "<div style='font-family: monospace;'>"
@@ -437,23 +467,15 @@ class AgentApp:
                     status_html += f"<strong>{status_icon} {type_icon} {server['name']}</strong><br/>"
                     status_html += f"<small>ID: {server['id']} | 类型: {server['type']}</small><br/>"
                     status_html += f"<small>状态: {'已连接' if server['connected'] else '未连接'}</small><br/>"
-                    
-                    if server['tools']:
-                        status_html += f"<small>工具: {', '.join(server['tools'][:3])}"
-                        if len(server['tools']) > 3:
-                            status_html += f" (+{len(server['tools'])-3} 个更多)"
-                        status_html += "</small><br/>"
-                    
                     status_html += f"<small>{server['description']}</small>"
                     status_html += "</div>"
             
             status_html += "</div>"
             
-            # 生成可选择的服务器列表 - 添加保护逻辑
+            # 生成可选择的服务器列表
             choices = []
             for server in servers:
                 try:
-                    # 确保每个服务器都有必要的字段
                     if 'name' in server and 'id' in server:
                         label = f"{server['name']} ({server['id']})"
                         value = server['id']
@@ -462,12 +484,10 @@ class AgentApp:
                     print(f"跳过无效服务器配置: {e}")
                     continue
             
-            # 使用gr.update()来更新CheckboxGroup，避免值冲突
             return status_html, gr.update(choices=choices)
             
         except Exception as e:
             error_html = f"<div style='color: red;'>❌ 刷新MCP服务器失败: {str(e)}</div>"
-            # 返回空的choices列表，避免Gradio错误
             return error_html, gr.update(choices=[])
     
     async def _on_mcp_servers_change(self, enabled_servers: List[str]):
@@ -483,41 +503,40 @@ class AgentApp:
             self.current_config['enabled_mcp_servers'] = enabled_servers
             
             # 获取所有服务器
-            all_servers = mcp_manager.list_servers()
-            if not all_servers:
+            servers_dict = mcp_manager.list_servers()
+            if not servers_dict:
                 status_html, _ = await self._refresh_mcp_servers()
                 return status_html
             
             status_messages = []
             
-            # 建立服务器ID到服务器的映射
-            server_map = {server['id']: server for server in all_servers}
-            
-            for server in all_servers:
-                server_id = server['id']
+            for server_id, info in servers_dict.items():
                 is_enabled = server_id in enabled_servers
-                is_connected = server['connected']
+                is_running = info['running']
                 
                 # 处理服务器状态变化
-                if is_enabled and not is_connected:
-                    # 需要连接的服务器
+                if is_enabled and not is_running:
+                    # 需要启动的服务器
                     try:
-                        success = await mcp_manager.connect_server(server_id)
+                        success = mcp_manager.start_server(server_id)
                         if success:
-                            status_messages.append(f"✅ 已连接MCP服务器: {server['name']}")
+                            status_messages.append(f"✅ 已启动MCP服务器: {info['name']}")
                         else:
-                            status_messages.append(f"❌ 连接失败 {server['name']}")
+                            status_messages.append(f"❌ 启动失败 {info['name']}")
                     except Exception as e:
                         error_msg = str(e)
-                        status_messages.append(f"❌ 连接失败 {server['name']}: {error_msg}")
+                        status_messages.append(f"❌ 启动失败 {info['name']}: {error_msg}")
                 
-                elif not is_enabled and is_connected:
-                    # 需要断开的服务器
+                elif not is_enabled and is_running:
+                    # 需要停止的服务器
                     try:
-                        await mcp_manager.disconnect_server(server_id)
-                        status_messages.append(f"🔌 已断开MCP服务器: {server['name']}")
+                        success = mcp_manager.stop_server(server_id)
+                        if success:
+                            status_messages.append(f"🔌 已停止MCP服务器: {info['name']}")
+                        else:
+                            status_messages.append(f"❌ 停止失败 {info['name']}")
                     except Exception as e:
-                        status_messages.append(f"❌ 断开失败 {server['name']}: {str(e)}")
+                        status_messages.append(f"❌ 停止失败 {info['name']}: {str(e)}")
             
             # 刷新状态
             status_html, _ = await self._refresh_mcp_servers()
