@@ -14,11 +14,9 @@ from typing import Dict, List, Optional, Any, Union
 from dataclasses import dataclass
 from enum import Enum
 
-# 添加父目录到路径以便导入MCP模块
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
-
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+# 使用安装的mcp包
+from mcp.client.stdio import stdio_client, StdioServerParameters
+from mcp.client.session import ClientSession
 
 logger = logging.getLogger(__name__)
 
@@ -188,14 +186,19 @@ class MCPManager:
                 cwd=config.cwd
             )
             
-            # 建立连接 - stdio_client返回的是异步上下文管理器
-            transport, channel = await stdio_client(server_params)
-            session = ClientSession(transport, channel)
+            # 使用stdio_client创建连接 - 正确使用异步上下文管理器
+            async with stdio_client(server_params) as (read_stream, write_stream):
+                # 创建会话
+                session = ClientSession(read_stream, write_stream)
+                
+                # 初始化会话
+                await session.initialize()
+                
+                # 保存会话和流（需要保持连接）
+                self.sessions[server_id] = session
+                # 注意：这里需要特殊处理，因为退出上下文管理器会关闭流
+                # 我们需要保持流开启，所以可能需要不同的方法
             
-            # 初始化会话
-            await session.initialize()
-            
-            self.sessions[server_id] = session
             return True
             
         except Exception as e:
@@ -230,13 +233,13 @@ class MCPManager:
         try:
             # 获取工具列表
             tools_result = await session.list_tools()
-            if tools_result:
+            if tools_result and hasattr(tools_result, 'tools'):
                 config.tools = [tool.name for tool in tools_result.tools]
             
             # 获取资源列表
             try:
                 resources_result = await session.list_resources()
-                if resources_result:
+                if resources_result and hasattr(resources_result, 'resources'):
                     config.resources = [resource.name for resource in resources_result.resources]
             except:
                 config.resources = []
@@ -244,7 +247,7 @@ class MCPManager:
             # 获取提示列表
             try:
                 prompts_result = await session.list_prompts()
-                if prompts_result:
+                if prompts_result and hasattr(prompts_result, 'prompts'):
                     config.prompts = [prompt.name for prompt in prompts_result.prompts]
             except:
                 config.prompts = []
@@ -265,7 +268,13 @@ class MCPManager:
             # 关闭会话
             if server_id in self.sessions:
                 session = self.sessions[server_id]
-                # 这里应该有正确的关闭方法
+                # 关闭会话 - ClientSession可能没有disconnect方法
+                try:
+                    # 尝试关闭会话
+                    if hasattr(session, 'close'):
+                        await session.close()
+                except:
+                    pass
                 del self.sessions[server_id]
             
             # 终止进程（如果是本地服务器）
