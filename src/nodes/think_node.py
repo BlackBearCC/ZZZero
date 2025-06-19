@@ -82,7 +82,6 @@ class ThinkNode(BaseNode):
         """构建思考提示"""
         # 提取关键信息
         query = self._extract_query(context)
-        available_tools = context.available_tools
         previous_thought = None
         previous_action = None
         
@@ -90,10 +89,9 @@ class ThinkNode(BaseNode):
             previous_thought = previous_output.get("thought")
             previous_action = previous_output.get("action")
             
-        # 使用模板生成提示
+        # 使用模板生成提示（不传递工具信息）
         return self.prompt_template.format(
             query=query,
-            available_tools=available_tools,
             previous_thought=previous_thought,
             previous_action=previous_action
         )
@@ -158,40 +156,5 @@ class ThinkNode(BaseNode):
             
     def _get_default_template(self) -> ThinkingPromptTemplate:
         """获取默认思考模板"""
-        # 这里返回一个简单的模板实现
-        class SimpleThinkingTemplate:
-            def format(self, **kwargs):
-                query = kwargs.get("query", "")
-                prev_thought = kwargs.get("previous_thought", "")
-                prev_action = kwargs.get("previous_action", "")
-                
-                prompt = f"""【思考阶段】
-
-用户问题: {query}
-
-"""
-                
-                if prev_thought:
-                    prompt += f"之前的思考: {prev_thought}\n\n"
-                    
-                if prev_action:
-                    prompt += f"之前的行动结果: {prev_action}\n\n"
-                    
-                prompt += """请进行纯粹的推理分析：
-
-1. **问题分析**: 这个问题的核心是什么？需要解决什么？
-2. **信息评估**: 基于已有信息，我能直接回答吗？还缺少什么关键信息？
-3. **解决策略**: 
-   - 如果信息充足：可以直接生成最终答案
-   - 如果需要使用工具：需要通过什么工具获取什么具体信息？
-4. **下一步决策**: 
-   - 选择"行动"去获取更多信息
-   - 或者选择"最终回答"直接解决问题
-
-注意：此阶段专注于分析和推理，不需要考虑具体的工具细节。
-
-请给出清晰的思考过程和下一步决策。"""
-                
-                return prompt
-                
-        return SimpleThinkingTemplate() 
+        from prompts.templates import ThinkingPromptTemplate
+        return ThinkingPromptTemplate() 

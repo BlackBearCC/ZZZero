@@ -43,49 +43,42 @@ class JinjaPromptTemplate(BasePromptTemplate):
 class ThinkingPromptTemplate(JinjaPromptTemplate):
     """思考提示模板"""
     
-    DEFAULT_TEMPLATE = """基于以下信息进行深入思考和分析：
+    DEFAULT_TEMPLATE = """【思考阶段】
 
 用户问题: {{ query }}
 
-{% if available_tools %}
-可用工具:
-{% for tool in available_tools %}
-- {{ tool }}
-{% endfor %}
-{% endif %}
-
 {% if previous_thought %}
-之前的思考:
-{{ previous_thought }}
+之前的思考: {{ previous_thought }}
 {% endif %}
 
 {% if previous_action %}
-之前的行动:
-{{ previous_action }}
+之前的行动结果: {{ previous_action }}
 {% endif %}
 
-请进行以下分析：
+请进行深入的推理分析：
 
 1. **问题理解**：
-   - 用户真正想要什么？
-   - 问题的关键点是什么？
-   - 有哪些隐含的需求？
+   - 这个问题的核心是什么？
+   - 用户真正想要什么信息或解决方案？
+   - 问题的复杂程度如何？
 
 2. **信息评估**：
-   - 目前掌握了哪些信息？
+   - 基于我的知识，我能直接回答这个问题吗？
    - 还缺少哪些关键信息？
-   - 信息的可靠性如何？
+   - 需要外部数据或工具支持吗？
 
-3. **策略制定**：
-   - 应该采取什么策略来解决问题？
-   - 需要使用哪些工具？为什么？
-   - 执行顺序应该是怎样的？
+3. **解决策略**：
+   - 如果信息充足：可以直接进入最终回答
+   - 如果信息不足：需要通过什么方式获取信息？
+   - 应该采取什么步骤来解决问题？
 
-4. **风险考虑**：
-   - 可能遇到什么问题？
-   - 有什么备选方案？
+4. **下一步决策**：
+   - 选择"行动"获取更多信息
+   - 或者选择"最终回答"直接解决问题
 
-请给出清晰、逻辑严密的推理过程。"""
+注意：此阶段专注于分析和推理，暂不考虑具体工具细节。
+
+请给出清晰的思考过程和决策。"""
     
     def __init__(self, template: Optional[str] = None):
         super().__init__(template or self.DEFAULT_TEMPLATE)
