@@ -40,38 +40,32 @@ class AgentApp:
             with gr.Row():
                 # 左侧配置面板
                 with gr.Column(scale=1):
+                    gr.Markdown("## ⚙️ 配置面板")
+                    
                     # LLM配置
-                    with gr.Accordion("🤖 LLM配置", open=True):
+                    with gr.Accordion("🧠 LLM配置", open=True):
                         llm_provider = gr.Dropdown(
-                            choices=["openai", "anthropic", "doubao"],
+                            choices=["doubao", "openai"],
                             value="doubao",
                             label="LLM提供商"
                         )
                         model_name = gr.Textbox(
-                            value="ep-20250221154410-vh78x",
+                            value="ep-20240611085454-2wj24",
                             label="模型名称"
                         )
-                        api_key = gr.Textbox(
-                            type="password",
-                            label="API密钥",
-                            placeholder="输入API密钥"
-                        )
+                        # 移除API密钥配置，使用.env文件
                         temperature = gr.Slider(
-                            minimum=0,
-                            maximum=1,
+                            minimum=0.0,
+                            maximum=1.0,
                             value=0.7,
                             step=0.1,
-                            label="Temperature"
+                            label="生成温度"
                         )
                     
-                    # Agent选择
-                    with gr.Accordion("🎯 Agent选择", open=True):
+                    # Agent配置
+                    with gr.Accordion("🤖 Agent配置", open=True):
                         agent_type = gr.Dropdown(
-                            choices=[
-                                ("ReAct", "react"),
-                                ("思维链", "chain_of_thought"),
-                                ("计划执行", "plan_execute")
-                            ],
+                            choices=["react"],
                             value="react",
                             label="Agent类型"
                         )
@@ -83,8 +77,9 @@ class AgentApp:
                             label="最大迭代次数"
                         )
                     
-                    # MCP服务器选择
-                    with gr.Accordion("🔌 MCP服务器", open=True):
+                    # MCP服务器管理
+                    with gr.Accordion("🔌 MCP服务器管理", open=True):
+                        # 服务器状态和勾选在一起
                         mcp_servers_status = gr.HTML(
                             value="<p>正在加载MCP服务器信息...</p>",
                             label="MCP服务器状态"
@@ -92,13 +87,10 @@ class AgentApp:
                         
                         # 先同步获取初始的servers列表
                         initial_choices = []
-                        initial_status = "<p>正在加载MCP服务器信息...</p>"
                         try:
                             from tools.mcp_manager import mcp_manager
                             servers = mcp_manager.list_servers()
                             initial_choices = [(f"{server['name']} ({server['id']})", server['id']) for server in servers if 'name' in server and 'id' in server]
-                            if servers:
-                                initial_status = "<div>✅ 已发现本地MCP服务器</div>"
                         except Exception as e:
                             print(f"初始化MCP服务器失败: {e}")
                         
@@ -107,6 +99,7 @@ class AgentApp:
                             value=[],
                             label="启用的MCP服务器"
                         )
+                        
                         # 远程服务器添加
                         with gr.Row():
                             remote_server_name = gr.Textbox(
@@ -201,7 +194,7 @@ class AgentApp:
             apply_config_btn.click(
                 self._apply_config,
                 inputs=[
-                    llm_provider, model_name, api_key, temperature,
+                    llm_provider, model_name, temperature,
                     agent_type, max_iterations, available_tools, enabled_mcp_servers
                 ],
                 outputs=[config_status]
@@ -250,46 +243,211 @@ class AgentApp:
                 outputs=[batch_results]
             )
             
-            # 添加自定义CSS - 使用标准系统字体
+            # 添加自定义CSS - 黑色层级主题，白色点缀
             app.css = """
+            /* 全局黑色层级主题 */
             * {
                 font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
             }
-            .chat-window {
-                border-radius: 10px;
-                border: 1px solid #e0e0e0;
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
-            }
-            .chat-window .message {
-                padding: 10px;
-                margin: 5px;
-                border-radius: 10px;
-            }
-            .chat-window .user {
-                background-color: #e3f2fd;
-                margin-left: 20%;
-            }
-            .chat-window .bot {
-                background-color: #f5f5f5;
-                margin-right: 20%;
-            }
+            
+            /* 主背景 - 最深黑色 */
             .gradio-container {
+                background: #0a0a0a !important;
+                color: #e0e0e0 !important;
                 font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+            }
+            
+            /* 手风琴面板 - 中等黑色 */
+            .gr-accordion {
+                background: #1a1a1a !important;
+                border: 1px solid #333333 !important;
+                border-radius: 8px !important;
+            }
+            
+            /* 输入框 - 浅黑色 */
+            .gr-textbox, .gr-dropdown {
+                background: #2a2a2a !important;
+                border: 1px solid #404040 !important;
+                color: #e0e0e0 !important;
+                border-radius: 6px !important;
+            }
+            
+            /* 按钮 - 白色点缀，黑色文字 */
+            .gr-button {
+                background: #ffffff !important;
+                color: #000000 !important;
+                border: 1px solid #ffffff !important;
+                font-weight: 600 !important;
+                border-radius: 6px !important;
+                transition: all 0.2s ease !important;
+            }
+            
+            .gr-button:hover {
+                background: #f5f5f5 !important;
+                color: #000000 !important;
+                transform: translateY(-1px) !important;
+                box-shadow: 0 4px 8px rgba(255,255,255,0.2) !important;
+            }
+            
+            /* 主要按钮 - 更突出的白色 */
+            .gr-button.gr-button-primary {
+                background: #ffffff !important;
+                color: #000000 !important;
+                border: 2px solid #ffffff !important;
+                font-weight: 700 !important;
+                box-shadow: 0 2px 4px rgba(255,255,255,0.3) !important;
+            }
+            
+            /* 次要按钮 - 深色调 */
+            .gr-button.gr-button-secondary {
+                background: #333333 !important;
+                color: #ffffff !important;
+                border: 1px solid #555555 !important;
+            }
+            
+            .gr-button.gr-button-secondary:hover {
+                background: #404040 !important;
+                color: #ffffff !important;
+            }
+            
+            /* 滑块 - 白色点缀 */
+            .gr-slider {
+                background: #2a2a2a !important;
+            }
+            
+            .gr-slider input[type="range"] {
+                background: #404040 !important;
+                border-radius: 10px !important;
+            }
+            
+            .gr-slider input[type="range"]::-webkit-slider-thumb {
+                background: #ffffff !important;
+                border: 2px solid #ffffff !important;
+                border-radius: 50% !important;
+                box-shadow: 0 0 8px rgba(255,255,255,0.5) !important;
+            }
+            
+            /* 复选框组 - 白色点缀 */
+            .gr-checkbox-group {
+                background: #1a1a1a !important;
+                border: 1px solid #333333 !important;
+                border-radius: 6px !important;
+                padding: 10px !important;
+            }
+            
+            .gr-checkbox-group label {
+                color: #e0e0e0 !important;
+            }
+            
+            .gr-checkbox-group input[type="checkbox"] {
+                accent-color: #ffffff !important;
+            }
+            
+            /* 聊天窗口 - 层级黑色 */
+            .chat-window {
+                background: #1a1a1a !important;
+                border: 1px solid #333333 !important;
+                border-radius: 12px !important;
+            }
+            
+            .chat-window .message {
+                padding: 12px;
+                margin: 8px;
+                border-radius: 12px;
+            }
+            
+            .chat-window .user {
+                background: #2a2a2a !important;
+                color: #e0e0e0 !important;
+                margin-left: 20%;
+                border: 1px solid #404040 !important;
+            }
+            
+            .chat-window .bot {
+                background: #333333 !important;
+                color: #e0e0e0 !important;
+                margin-right: 20%;
+                border: 1px solid #555555 !important;
+            }
+            
+            /* 表格 - 层级背景 */
+            .gr-dataframe {
+                background: #1a1a1a !important;
+                color: #e0e0e0 !important;
+                border: 1px solid #333333 !important;
+                border-radius: 8px !important;
+            }
+            
+            .gr-dataframe th {
+                background: #2a2a2a !important;
+                color: #ffffff !important;
+                border: 1px solid #404040 !important;
+            }
+            
+            .gr-dataframe td {
+                background: #1a1a1a !important;
+                color: #e0e0e0 !important;
+                border: 1px solid #333333 !important;
+            }
+            
+            /* HTML显示区域 - 中等黑色背景 */
+            .gr-html {
+                background: #1a1a1a !important;
+                color: #e0e0e0 !important;
+                border: 1px solid #333333 !important;
+                border-radius: 8px !important;
+                padding: 15px !important;
+            }
+            
+            /* 进度条 - 白色点缀 */
+            .progress-bar {
+                background: #ffffff !important;
+                border-radius: 10px !important;
+                box-shadow: 0 0 10px rgba(255,255,255,0.3) !important;
+            }
+            
+            /* Markdown标题 - 白色点缀 */
+            .gr-markdown {
+                color: #e0e0e0 !important;
+            }
+            
+            .gr-markdown h1, .gr-markdown h2 {
+                color: #ffffff !important;
+                border-bottom: 2px solid #ffffff !important;
+                padding-bottom: 5px !important;
+            }
+            
+            .gr-markdown h3 {
+                color: #f0f0f0 !important;
+            }
+            
+            /* 状态指示器 - 白色点缀 */
+            .status-connected {
+                color: #ffffff !important;
+                background: #2a2a2a !important;
+                border: 1px solid #ffffff !important;
+                padding: 4px 8px !important;
+                border-radius: 4px !important;
+            }
+            
+            /* 输入焦点状态 - 白色边框 */
+            .gr-textbox:focus, .gr-dropdown:focus {
+                border: 2px solid #ffffff !important;
+                box-shadow: 0 0 8px rgba(255,255,255,0.3) !important;
             }
             """
             
         return app
     
     async def _apply_config(self,
-                           llm_provider, model_name, api_key, temperature,
+                           llm_provider, model_name, temperature,
                            agent_type, max_iterations, available_tools, enabled_mcp_servers):
         """应用配置"""
         try:
-            # 创建LLM配置
+            # 创建LLM配置 - 不传入api_key，使用.env文件
             llm_config = LLMConfig(
                 provider=llm_provider,
                 model_name=model_name,
-                api_key=api_key,
                 temperature=temperature
             )
             
