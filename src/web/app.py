@@ -243,197 +243,31 @@ class AgentApp:
                 outputs=[batch_results]
             )
             
-            # 添加自定义CSS - 黑色层级主题，白色点缀
+            # 添加自定义CSS - 使用标准系统字体
             app.css = """
-            /* 全局黑色层级主题 */
             * {
                 font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
             }
-            
-            /* 主背景 - 最深黑色 */
-            .gradio-container {
-                background: #0a0a0a !important;
-                color: #e0e0e0 !important;
+            .chat-window {
+                border-radius: 10px;
+                border: 1px solid #e0e0e0;
                 font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
             }
-            
-            /* 手风琴面板 - 中等黑色 */
-            .gr-accordion {
-                background: #1a1a1a !important;
-                border: 1px solid #333333 !important;
-                border-radius: 8px !important;
-            }
-            
-            /* 输入框 - 浅黑色 */
-            .gr-textbox, .gr-dropdown {
-                background: #2a2a2a !important;
-                border: 1px solid #404040 !important;
-                color: #e0e0e0 !important;
-                border-radius: 6px !important;
-            }
-            
-            /* 按钮 - 白色点缀，黑色文字 */
-            .gr-button {
-                background: #ffffff !important;
-                color: #000000 !important;
-                border: 1px solid #ffffff !important;
-                font-weight: 600 !important;
-                border-radius: 6px !important;
-                transition: all 0.2s ease !important;
-            }
-            
-            .gr-button:hover {
-                background: #f5f5f5 !important;
-                color: #000000 !important;
-                transform: translateY(-1px) !important;
-                box-shadow: 0 4px 8px rgba(255,255,255,0.2) !important;
-            }
-            
-            /* 主要按钮 - 更突出的白色 */
-            .gr-button.gr-button-primary {
-                background: #ffffff !important;
-                color: #000000 !important;
-                border: 2px solid #ffffff !important;
-                font-weight: 700 !important;
-                box-shadow: 0 2px 4px rgba(255,255,255,0.3) !important;
-            }
-            
-            /* 次要按钮 - 深色调 */
-            .gr-button.gr-button-secondary {
-                background: #333333 !important;
-                color: #ffffff !important;
-                border: 1px solid #555555 !important;
-            }
-            
-            .gr-button.gr-button-secondary:hover {
-                background: #404040 !important;
-                color: #ffffff !important;
-            }
-            
-            /* 滑块 - 白色点缀 */
-            .gr-slider {
-                background: #2a2a2a !important;
-            }
-            
-            .gr-slider input[type="range"] {
-                background: #404040 !important;
-                border-radius: 10px !important;
-            }
-            
-            .gr-slider input[type="range"]::-webkit-slider-thumb {
-                background: #ffffff !important;
-                border: 2px solid #ffffff !important;
-                border-radius: 50% !important;
-                box-shadow: 0 0 8px rgba(255,255,255,0.5) !important;
-            }
-            
-            /* 复选框组 - 白色点缀 */
-            .gr-checkbox-group {
-                background: #1a1a1a !important;
-                border: 1px solid #333333 !important;
-                border-radius: 6px !important;
-                padding: 10px !important;
-            }
-            
-            .gr-checkbox-group label {
-                color: #e0e0e0 !important;
-            }
-            
-            .gr-checkbox-group input[type="checkbox"] {
-                accent-color: #ffffff !important;
-            }
-            
-            /* 聊天窗口 - 层级黑色 */
-            .chat-window {
-                background: #1a1a1a !important;
-                border: 1px solid #333333 !important;
-                border-radius: 12px !important;
-            }
-            
             .chat-window .message {
-                padding: 12px;
-                margin: 8px;
-                border-radius: 12px;
+                padding: 10px;
+                margin: 5px;
+                border-radius: 10px;
             }
-            
             .chat-window .user {
-                background: #2a2a2a !important;
-                color: #e0e0e0 !important;
+                background-color: #e3f2fd;
                 margin-left: 20%;
-                border: 1px solid #404040 !important;
             }
-            
             .chat-window .bot {
-                background: #333333 !important;
-                color: #e0e0e0 !important;
+                background-color: #f5f5f5;
                 margin-right: 20%;
-                border: 1px solid #555555 !important;
             }
-            
-            /* 表格 - 层级背景 */
-            .gr-dataframe {
-                background: #1a1a1a !important;
-                color: #e0e0e0 !important;
-                border: 1px solid #333333 !important;
-                border-radius: 8px !important;
-            }
-            
-            .gr-dataframe th {
-                background: #2a2a2a !important;
-                color: #ffffff !important;
-                border: 1px solid #404040 !important;
-            }
-            
-            .gr-dataframe td {
-                background: #1a1a1a !important;
-                color: #e0e0e0 !important;
-                border: 1px solid #333333 !important;
-            }
-            
-            /* HTML显示区域 - 中等黑色背景 */
-            .gr-html {
-                background: #1a1a1a !important;
-                color: #e0e0e0 !important;
-                border: 1px solid #333333 !important;
-                border-radius: 8px !important;
-                padding: 15px !important;
-            }
-            
-            /* 进度条 - 白色点缀 */
-            .progress-bar {
-                background: #ffffff !important;
-                border-radius: 10px !important;
-                box-shadow: 0 0 10px rgba(255,255,255,0.3) !important;
-            }
-            
-            /* Markdown标题 - 白色点缀 */
-            .gr-markdown {
-                color: #e0e0e0 !important;
-            }
-            
-            .gr-markdown h1, .gr-markdown h2 {
-                color: #ffffff !important;
-                border-bottom: 2px solid #ffffff !important;
-                padding-bottom: 5px !important;
-            }
-            
-            .gr-markdown h3 {
-                color: #f0f0f0 !important;
-            }
-            
-            /* 状态指示器 - 白色点缀 */
-            .status-connected {
-                color: #ffffff !important;
-                background: #2a2a2a !important;
-                border: 1px solid #ffffff !important;
-                padding: 4px 8px !important;
-                border-radius: 4px !important;
-            }
-            
-            /* 输入焦点状态 - 白色边框 */
-            .gr-textbox:focus, .gr-dropdown:focus {
-                border: 2px solid #ffffff !important;
-                box-shadow: 0 0 8px rgba(255,255,255,0.3) !important;
+            .gradio-container {
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
             }
             """
             
