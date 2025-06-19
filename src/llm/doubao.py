@@ -19,12 +19,24 @@ class DoubaoLLM(BaseLLMProvider):
     
     async def initialize(self):
         """初始化客户端"""
+        # 如果没有传入api_key，尝试从环境变量获取
         if not self.config.api_key:
-            raise ValueError("豆包API密钥未设置")
+            # 按优先级尝试不同的环境变量名
+            env_keys = ['ARK_API_KEY', 'DOUBAO_API_KEY', 'ARK_API_KEY_ME']
+            for env_key in env_keys:
+                api_key = os.getenv(env_key)
+                if api_key:
+                    self.config.api_key = api_key
+                    break
+        
+        # 再次检查是否有API密钥
+        if not self.config.api_key:
+            raise ValueError("豆包API密钥未设置，请在环境变量中设置 ARK_API_KEY 或 DOUBAO_API_KEY")
             
         # 设置默认API基础URL
         if not self.config.api_base:
-            self.config.api_base = "https://ark.cn-beijing.volces.com/api/v3"
+            # 优先使用环境变量中的URL
+            self.config.api_base = os.getenv('DOUBAO_BASE_URL', "https://ark.cn-beijing.volces.com/api/v3")
             
     async def generate(self, 
                       messages: List[Message],

@@ -159,7 +159,7 @@ class MCPPromptTool(BaseTool):
             description=f"使用MCP提示: {prompt_info.get('description', prompt_name)}",
             parameters=parameters
         )
-    
+        
     async def execute(self, **kwargs) -> Any:
         """执行MCP提示"""
         try:
@@ -173,7 +173,7 @@ class MCPPromptTool(BaseTool):
                     if hasattr(msg, 'content'):
                         if hasattr(msg.content, 'text'):
                             messages.append(f"{msg.role}: {msg.content.text}")
-                        else:
+                else:
                             messages.append(f"{msg.role}: {str(msg.content)}")
                 
                 return "\n".join(messages)
@@ -213,7 +213,7 @@ class MCPToolManager(ToolManager):
     async def enable_tool(self, tool_name: str):
         """启用工具"""
         super().enable_tool(tool_name)
-    
+        
     async def _load_mcp_servers(self):
         """加载MCP服务器"""
         # 如果没有指定启用的服务器，则启用所有可用的
@@ -253,7 +253,7 @@ class MCPToolManager(ToolManager):
             
         except Exception as e:
             logger.error(f"加载MCP服务器失败 {server_id}: {e}")
-    
+            
     async def _load_server_tools(self, server_id: str, server_info: Dict[str, Any]):
         """加载服务器工具"""
         if server_id not in mcp_manager.sessions:
@@ -277,7 +277,7 @@ class MCPToolManager(ToolManager):
                 
         except Exception as e:
             logger.warning(f"加载服务器工具失败 {server_id}: {e}")
-    
+        
     async def _load_server_resources(self, server_id: str, server_info: Dict[str, Any]):
         """加载服务器资源"""
         if server_id not in mcp_manager.sessions:
@@ -302,7 +302,7 @@ class MCPToolManager(ToolManager):
                 
         except Exception as e:
             logger.warning(f"加载服务器资源失败 {server_id}: {e}")
-    
+        
     async def _load_server_prompts(self, server_id: str, server_info: Dict[str, Any]):
         """加载服务器提示"""
         if server_id not in mcp_manager.sessions:
@@ -323,7 +323,7 @@ class MCPToolManager(ToolManager):
                     self.tools[prompt_tool.name] = prompt_tool
                     
                 logger.info(f"加载了 {len(prompts_result.prompts)} 个提示从 {server_id}")
-                
+            
         except Exception as e:
             logger.warning(f"加载服务器提示失败 {server_id}: {e}")
     

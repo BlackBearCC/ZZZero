@@ -50,8 +50,9 @@ class AgentApp:
                             label="LLM提供商"
                         )
                         model_name = gr.Textbox(
-                            value="ep-20240611085454-2wj24",
-                            label="模型名称"
+                            value="ep-20250221154410-vh78x",  # DOUBAO_MODEL_DEEPSEEKV3
+                            label="模型名称",
+                            placeholder="例如: ep-20250221154410-vh78x (deepseekv3)"
                         )
                         # 移除API密钥配置，使用.env文件
                         temperature = gr.Slider(
@@ -268,6 +269,8 @@ class AgentApp:
             }
             .gradio-container {
                 font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+                height: 100vh;
+                overflow-y: auto;
             }
             """
             
@@ -404,7 +407,10 @@ class AgentApp:
                             await mcp_manager.connect_server(server_id)
                             status_messages.append(f"✅ 启动本地MCP服务器: {server['name']}")
                         except Exception as e:
-                            status_messages.append(f"❌ 启动失败 {server['name']}: {str(e)}")
+                            error_msg = str(e)
+                            if "_AsyncGeneratorContextManager" in error_msg:
+                                error_msg = "MCP服务器连接失败：异步调用错误，请检查服务器实现"
+                            status_messages.append(f"❌ 启动失败 {server['name']}: {error_msg}")
                     elif server['type'] == 'remote_http':
                         # 尝试连接远程服务器
                         try:
@@ -663,4 +669,4 @@ class AgentApp:
     def launch(self, **kwargs):
         """启动应用"""
         app = self.create_interface()
-        app.launch(**kwargs) 
+        app.launch(**kwargs)

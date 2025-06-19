@@ -180,21 +180,27 @@ class MCPManager:
             logger.error(f"脚本文件不存在: {config.script_path}")
             return False
         
-        # 创建服务器参数
-        server_params = StdioServerParameters(
-            command=sys.executable,
-            args=[config.script_path] + (config.args or [])
-        )
-        
-        # 建立连接
-        stdio_transport = await stdio_client(server_params)
-        session = ClientSession(stdio_transport[0], stdio_transport[1])
-        
-        # 初始化会话
-        await session.initialize()
-        
-        self.sessions[server_id] = session
-        return True
+        try:
+            # 创建服务器参数
+            server_params = StdioServerParameters(
+                command=sys.executable,
+                args=[config.script_path] + (config.args or []),
+                cwd=config.cwd
+            )
+            
+            # 建立连接 - stdio_client返回的是异步上下文管理器
+            transport, channel = await stdio_client(server_params)
+            session = ClientSession(transport, channel)
+            
+            # 初始化会话
+            await session.initialize()
+            
+            self.sessions[server_id] = session
+            return True
+            
+        except Exception as e:
+            logger.error(f"连接stdio服务器失败 {config.name}: {e}")
+            return False
     
     async def _connect_http_server(self, server_id: str, config: MCPServerConfig) -> bool:
         """连接HTTP服务器"""

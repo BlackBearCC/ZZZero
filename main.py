@@ -4,6 +4,7 @@ ZZZero Agent 主入口
 import asyncio
 import os
 import sys
+import socket
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -13,6 +14,20 @@ src_path = current_dir / "src"
 sys.path.insert(0, str(src_path))
 
 from web.app import AgentApp
+
+
+def find_available_port(start_port: int, max_attempts: int = 10) -> int:
+    """查找可用端口"""
+    for i in range(max_attempts):
+        port = start_port + i
+        try:
+            # 尝试绑定端口
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(('127.0.0.1', port))
+                return port
+        except OSError:
+            continue
+    raise RuntimeError(f"无法在 {start_port} 到 {start_port + max_attempts - 1} 范围内找到可用端口")
 
 
 def main():
@@ -31,33 +46,38 @@ def main():
         )
         print("✅ 应用创建完成")
         
-        # 尝试多个端口启动
-        ports = [7868, 7860, 7861, 7862, 7863]
-        launched = False
-        
-        for port in ports:
-            try:
-                print(f"🚀 尝试在端口 {port} 启动...")
-                app.launch(
-                    server_name="127.0.0.1",  # 使用本地回环地址
-                    server_port=port,
-                    share=False,
-                    show_error=True,
-                    debug=False,
-                    inbrowser=True  # 自动打开浏览器
-                )
-                print(f"✅ 成功在端口 {port} 启动")
-                print(f"🌐 访问地址: http://127.0.0.1:{port}")
-                launched = True
-                break
-            except Exception as e:
-                print(f"❌ 端口 {port} 启动失败: {str(e)}")
-                if port == ports[-1]:  # 最后一个端口也失败
-                    raise e
-                continue
-        
-        if not launched:
-            print("❌ 所有端口都启动失败")
+        # 智能查找可用端口
+        try:
+            port = find_available_port(7860, 20)  # 从7860开始，尝试20个端口
+            print(f"🚀 在端口 {port} 启动服务...")
+            
+            # 设置环境变量，让Gradio使用这个端口
+            os.environ['GRADIO_SERVER_PORT'] = str(port)
+            
+            app.launch(
+                server_name="127.0.0.1",
+                server_port=port,
+                share=False,
+                show_error=True,
+                debug=False,
+                inbrowser=True,  # 自动打开浏览器
+                quiet=False,  # 显示启动信息
+                prevent_thread_lock=False  # 确保主线程被阻塞
+            )
+            print(f"✅ 成功在端口 {port} 启动")
+            print(f"🌐 访问地址: http://127.0.0.1:{port}")
+            
+        except RuntimeError as e:
+            print(f"❌ 无法找到可用端口: {e}")
+            # 最后尝试让Gradio自己选择端口
+            print("🔄 让Gradio自动选择端口...")
+            app.launch(
+                server_name="127.0.0.1",
+                share=False,
+                show_error=True,
+                debug=False,
+                inbrowser=True
+            )
             
     except KeyboardInterrupt:
         print("\n🔄 正在关闭服务器...")

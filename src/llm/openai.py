@@ -18,12 +18,17 @@ class OpenAILLM(BaseLLMProvider):
     
     async def initialize(self):
         """初始化客户端"""
+        # 如果没有传入api_key，尝试从环境变量获取
         if not self.config.api_key:
-            raise ValueError("OpenAI API密钥未设置")
+            self.config.api_key = os.getenv('OPENAI_API_KEY')
+            
+        if not self.config.api_key:
+            raise ValueError("OpenAI API密钥未设置，请在环境变量中设置 OPENAI_API_KEY")
             
         # 设置默认API基础URL
         if not self.config.api_base:
-            self.config.api_base = "https://api.openai.com/v1"
+            # 优先使用环境变量中的URL
+            self.config.api_base = os.getenv('OPENAI_BASE_URL', "https://api.openai.com/v1")
             
     async def generate(self, 
                       messages: List[Message],
