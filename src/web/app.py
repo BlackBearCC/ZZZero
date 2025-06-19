@@ -29,7 +29,85 @@ class AgentApp:
         self.current_agent = None
         self.tool_manager = None
         self.llm = None
+        # 保存当前配置
+        self.current_config = {
+            'llm_provider': 'doubao',
+            'model_name': 'ep-20250221154410-vh78x',
+            'temperature': 0.7,
+            'agent_type': 'react',
+            'max_iterations': 5,
+            'available_tools': [],
+            'enabled_mcp_servers': []
+        }
         
+    async def _update_agent_config(self):
+        """更新Agent配置（内部方法）"""
+        try:
+            # 创建LLM配置
+            llm_config = LLMConfig(
+                provider=self.current_config['llm_provider'],
+                model_name=self.current_config['model_name'],
+                temperature=self.current_config['temperature']
+            )
+            
+            # 创建或更新LLM实例
+            if self.llm:
+                await self.llm.cleanup()
+            self.llm = LLMFactory.create(llm_config)
+            await self.llm.initialize()
+            
+            # 创建或更新工具管理器
+            if self.tool_manager:
+                await self.tool_manager.cleanup()
+            self.tool_manager = MCPToolManager(enabled_servers=self.current_config['enabled_mcp_servers'])
+            await self.tool_manager.initialize()
+            
+            # 启用选中的传统工具
+            for tool in self.current_config['available_tools']:
+                await self.tool_manager.enable_tool(tool)
+            
+            # 创建Agent
+            if self.current_config['agent_type'] == 'react':
+                self.current_agent = ReactAgent(
+                    llm=self.llm,
+                    tool_manager=self.tool_manager,
+                    max_iterations=self.current_config['max_iterations']
+                )
+            
+        except Exception as e:
+            print(f"更新Agent配置失败: {str(e)}")
+            # 确保至少有一个基本的Agent可用
+            if not self.current_agent and self.llm:
+                self.current_agent = ReactAgent(
+                    llm=self.llm,
+                    tool_manager=self.tool_manager or MCPToolManager(enabled_servers=[]),
+                    max_iterations=self.current_config['max_iterations']
+                )
+    
+    async def _auto_start_mcp_servers(self):
+        """自动启动所有MCP服务器"""
+        try:
+            import subprocess
+            from pathlib import Path
+            
+            # 获取MCP服务器启动器路径
+            launcher_path = Path(__file__).parent.parent.parent / "mcp_servers" / "advanced_launcher.py"
+            
+            if launcher_path.exists():
+                # 启动CSV服务器
+                subprocess.Popen([sys.executable, str(launcher_path), "start", "--server", "csv"], 
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                
+                # 启动ChromaDB服务器
+                subprocess.Popen([sys.executable, str(launcher_path), "start", "--server", "chromadb"], 
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                
+                # 等待服务器启动
+                await asyncio.sleep(2)
+                
+        except Exception as e:
+            print(f"自动启动MCP服务器失败: {e}")
+            
     def create_interface(self) -> gr.Blocks:
         """创建Gradio界面"""
         with gr.Blocks(title=self.title, theme=gr.themes.Soft()) as app:
@@ -54,7 +132,6 @@ class AgentApp:
                             label="模型名称",
                             placeholder="例如: ep-20250221154410-vh78x (deepseekv3)"
                         )
-                        # 移除API密钥配置，使用.env文件
                         temperature = gr.Slider(
                             minimum=0.0,
                             maximum=1.0,
@@ -86,18 +163,25 @@ class AgentApp:
                             label="MCP服务器状态"
                         )
                         
-                        # 先同步获取初始的servers列表
+                        # 获取初始的servers列表并设置默认值
                         initial_choices = []
+                        default_enabled = []
                         try:
                             from tools.mcp_manager import mcp_manager
                             servers = mcp_manager.list_servers()
-                            initial_choices = [(f"{server['name']} ({server['id']})", server['id']) for server in servers if 'name' in server and 'id' in server]
+                            for server in servers:
+                                if 'name' in server and 'id' in server:
+                                    choice = (f"{server['name']} ({server['id']})", server['id'])
+                                    initial_choices.append(choice)
+                                    # 默认勾选csv和chromadb
+                                    if server['id'] in ['csv', 'chromadb']:
+                                        default_enabled.append(server['id'])
                         except Exception as e:
                             print(f"初始化MCP服务器失败: {e}")
                         
                         enabled_mcp_servers = gr.CheckboxGroup(
                             choices=initial_choices,
-                            value=[],
+                            value=default_enabled,
                             label="启用的MCP服务器"
                         )
                         
@@ -131,9 +215,8 @@ class AgentApp:
                             label="启用的传统工具"
                         )
                     
-                    # 应用配置按钮
-                    apply_config_btn = gr.Button("应用配置", variant="primary")
-                    config_status = gr.Textbox(label="配置状态", interactive=False)
+                    # 配置状态（只显示，不需要应用按钮）
+                    config_status = gr.Textbox(label="配置状态", interactive=False, value="✅ 配置已自动应用")
                 
                 # 右侧聊天界面
                 with gr.Column(scale=3):
@@ -191,15 +274,35 @@ class AgentApp:
                         # 自动刷新
                         auto_refresh = gr.Checkbox(label="自动刷新", value=True)
             
-            # 事件处理
-            apply_config_btn.click(
-                self._apply_config,
-                inputs=[
-                    llm_provider, model_name, temperature,
-                    agent_type, max_iterations, available_tools, enabled_mcp_servers
-                ],
-                outputs=[config_status]
-            )
+            # === 配置变化自动应用 ===
+            async def on_config_change(*args):
+                """配置变化时自动应用"""
+                llm_provider, model_name, temperature, agent_type, max_iterations, available_tools, enabled_mcp_servers = args
+                
+                # 更新配置
+                self.current_config.update({
+                    'llm_provider': llm_provider,
+                    'model_name': model_name,
+                    'temperature': temperature,
+                    'agent_type': agent_type,
+                    'max_iterations': max_iterations,
+                    'available_tools': available_tools,
+                    'enabled_mcp_servers': enabled_mcp_servers
+                })
+                
+                # 异步更新Agent
+                await self._update_agent_config()
+                
+                total_tools = len(available_tools) + len(enabled_mcp_servers)
+                return f"✅ 配置已自动应用！使用 {llm_provider}/{model_name}，启用 {total_tools} 个工具"
+            
+            # 绑定配置变化事件
+            for component in [llm_provider, model_name, temperature, agent_type, max_iterations, available_tools, enabled_mcp_servers]:
+                component.change(
+                    on_config_change,
+                    inputs=[llm_provider, model_name, temperature, agent_type, max_iterations, available_tools, enabled_mcp_servers],
+                    outputs=[config_status]
+                )
             
             # MCP服务器相关事件
             refresh_mcp_btn.click(
@@ -213,13 +316,29 @@ class AgentApp:
                 outputs=[remote_server_name, remote_server_url, mcp_servers_status, enabled_mcp_servers]
             )
             
-            # 页面加载时自动刷新MCP服务器状态
+            # 页面加载时的初始化
+            async def on_load():
+                """页面加载时的初始化"""
+                # 先启动MCP服务器
+                await self._auto_start_mcp_servers()
+                
+                # 刷新MCP服务器状态
+                status_html, checkbox_update = await self._refresh_mcp_servers()
+                
+                # 更新默认的enabled_mcp_servers
+                self.current_config['enabled_mcp_servers'] = default_enabled
+                
+                # 初始化Agent配置
+                await self._update_agent_config()
+                
+                return status_html, checkbox_update
+            
             app.load(
-                self._refresh_mcp_servers,
+                on_load,
                 outputs=[mcp_servers_status, enabled_mcp_servers]
             )
             
-            # MCP服务器勾选变化事件 - 在页面加载后绑定
+            # MCP服务器勾选变化事件
             enabled_mcp_servers.change(
                 self._on_mcp_servers_change,
                 inputs=[enabled_mcp_servers],
@@ -244,7 +363,7 @@ class AgentApp:
                 outputs=[batch_results]
             )
             
-            # 添加自定义CSS - 使用标准系统字体
+            # 添加自定义CSS
             app.css = """
             * {
                 font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
@@ -275,46 +394,6 @@ class AgentApp:
             """
             
         return app
-    
-    async def _apply_config(self,
-                           llm_provider, model_name, temperature,
-                           agent_type, max_iterations, available_tools, enabled_mcp_servers):
-        """应用配置"""
-        try:
-            # 创建LLM配置 - 不传入api_key，使用.env文件
-            llm_config = LLMConfig(
-                provider=llm_provider,
-                model_name=model_name,
-                temperature=temperature
-            )
-            
-            # 创建LLM实例
-            self.llm = LLMFactory.create(llm_config)
-            await self.llm.initialize()
-            
-            # 创建工具管理器，传入启用的MCP服务器
-            self.tool_manager = MCPToolManager(enabled_servers=enabled_mcp_servers)
-            await self.tool_manager.initialize()
-            
-            # 启用选中的传统工具
-            for tool in available_tools:
-                await self.tool_manager.enable_tool(tool)
-            
-            # 创建Agent
-            if agent_type == "react":
-                self.current_agent = ReactAgent(
-                    llm=self.llm,
-                    tool_manager=self.tool_manager,
-                    max_iterations=max_iterations
-                )
-            else:
-                return "❌ 暂不支持该Agent类型"
-            
-            total_tools = len(available_tools) + len(enabled_mcp_servers)
-            return f"✅ 配置成功！使用 {llm_provider}/{model_name}，启用 {total_tools} 个工具（{len(available_tools)} 个传统工具 + {len(enabled_mcp_servers)} 个MCP服务器）"
-            
-        except Exception as e:
-            return f"❌ 配置失败: {str(e)}"
     
     async def _refresh_mcp_servers(self):
         """刷新MCP服务器状态"""
@@ -476,10 +555,17 @@ class AgentApp:
     
     async def _chat(self, message: str, history: List[Dict[str, str]]):
         """处理聊天消息"""
+        # 如果没有Agent，尝试创建一个默认的
         if not self.current_agent:
-            history.append({"role": "user", "content": message})
-            history.append({"role": "assistant", "content": "请先配置Agent！"})
-            return "", history, {}, "", [], ""
+            try:
+                # 使用默认配置创建Agent
+                await self._update_agent_config()
+            except Exception as e:
+                print(f"创建默认Agent失败: {e}")
+                # 如果还是失败，返回错误消息
+                history.append({"role": "user", "content": message})
+                history.append({"role": "assistant", "content": "抱歉，系统初始化中，请稍后再试。"})
+                return "", history, {}, "", [], ""
         
         # 添加用户消息
         history.append({"role": "user", "content": message})
@@ -505,7 +591,10 @@ class AgentApp:
             return "", history, trace, metrics_text, node_status, flow_diagram
             
         except Exception as e:
-            history.append({"role": "assistant", "content": f"错误: {str(e)}"})
+            # 即使出错也要给出友好的回复
+            error_msg = f"处理请求时出现错误: {str(e)}"
+            print(error_msg)
+            history.append({"role": "assistant", "content": f"抱歉，{error_msg}"})
             return "", history, {}, "", [], ""
     
     async def _batch_execute(self, batch_input: str, parallel: bool):

@@ -5,8 +5,15 @@ import asyncio
 import os
 import sys
 import socket
+import logging
 from pathlib import Path
 from dotenv import load_dotenv
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 
 # 添加src路径
 current_dir = Path(__file__).parent

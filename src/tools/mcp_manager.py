@@ -74,6 +74,16 @@ class MCPManager:
         # 获取mcp_servers目录路径
         mcp_servers_dir = Path(__file__).parent.parent.parent / "mcp_servers"
         
+        # 测试服务器（用于调试）
+        self.servers["test"] = MCPServerConfig(
+            name="测试服务器",
+            type=MCPServerType.LOCAL_STDIO,
+            description="简单的MCP测试服务器",
+            script_path=str(mcp_servers_dir / "test_server.py"),
+            args=[],
+            cwd=str(mcp_servers_dir)
+        )
+        
         # CSV CRUD服务器
         self.servers["csv"] = MCPServerConfig(
             name="CSV CRUD服务器",
@@ -186,20 +196,79 @@ class MCPManager:
                 cwd=config.cwd
             )
             
-            # 使用stdio_client创建连接 - 正确使用异步上下文管理器
-            async with stdio_client(server_params) as (read_stream, write_stream):
-                # 创建会话
-                session = ClientSession(read_stream, write_stream)
-                
-                # 初始化会话
-                await session.initialize()
-                
-                # 保存会话和流（需要保持连接）
-                self.sessions[server_id] = session
-                # 注意：这里需要特殊处理，因为退出上下文管理器会关闭流
-                # 我们需要保持流开启，所以可能需要不同的方法
+            # 创建一个任务来管理stdio连接
+            async def manage_stdio_connection():
+                try:
+                    logger.debug(f"启动stdio客户端: {config.name}")
+                    async with stdio_client(server_params) as (read_stream, write_stream):
+                        logger.debug(f"stdio客户端已连接: {config.name}")
+                        
+                        # 创建会话
+                        session = ClientSession(read_stream, write_stream)
+                        logger.debug(f"会话已创建: {config.name}")
+                        
+                        # 初始化会话
+                        await session.initialize()
+                        logger.debug(f"会话已初始化: {config.name}")
+                        
+                        # 保存会话
+                        self.sessions[server_id] = session
+                        
+                        # 创建一个永远不会完成的Future，保持连接
+                        self._connection_futures[server_id] = asyncio.Future()
+                        try:
+                            # 等待断开信号
+                            await self._connection_futures[server_id]
+                        except asyncio.CancelledError:
+                            # 正常断开
+                            logger.debug(f"收到断开信号: {config.name}")
+                            pass
+                        finally:
+                            # 清理会话
+                            if server_id in self.sessions:
+                                del self.sessions[server_id]
+                            logger.debug(f"会话已清理: {config.name}")
+                except Exception as e:
+                    logger.error(f"stdio连接管理出错 {config.name}: {e}", exc_info=True)
+                    # 确保在出错时也将服务器标记为未连接
+                    if server_id in self.sessions:
+                        del self.sessions[server_id]
             
-            return True
+            # 初始化连接futures字典
+            if not hasattr(self, '_connection_futures'):
+                self._connection_futures = {}
+            
+            # 在后台任务中运行连接
+            if not hasattr(self, '_connection_tasks'):
+                self._connection_tasks = {}
+            
+            self._connection_tasks[server_id] = asyncio.create_task(manage_stdio_connection())
+            
+            # 等待会话初始化
+            retry_count = 0
+            max_retries = 100  # 增加到10秒
+            while retry_count < max_retries:
+                if server_id in self.sessions:
+                    logger.info(f"成功初始化会话: {config.name}")
+                    return True
+                await asyncio.sleep(0.1)
+                retry_count += 1
+                
+                # 每秒打印一次状态
+                if retry_count % 10 == 0:
+                    logger.debug(f"等待 {config.name} 初始化... ({retry_count/10}秒)")
+            
+            # 如果超时，取消任务
+            if server_id in self._connection_tasks:
+                self._connection_tasks[server_id].cancel()
+                try:
+                    await self._connection_tasks[server_id]
+                except asyncio.CancelledError:
+                    pass
+                del self._connection_tasks[server_id]
+            
+            logger.error(f"连接超时: {config.name} (等待了{max_retries/10}秒)")
+            return False
             
         except Exception as e:
             logger.error(f"连接stdio服务器失败 {config.name}: {e}")
@@ -265,17 +334,20 @@ class MCPManager:
         config = self.servers[server_id]
         
         try:
-            # 关闭会话
-            if server_id in self.sessions:
-                session = self.sessions[server_id]
-                # 关闭会话 - ClientSession可能没有disconnect方法
+            # 发送断开信号给连接任务
+            if hasattr(self, '_connection_futures') and server_id in self._connection_futures:
+                self._connection_futures[server_id].cancel()
+                del self._connection_futures[server_id]
+            
+            # 取消连接任务
+            if hasattr(self, '_connection_tasks') and server_id in self._connection_tasks:
+                task = self._connection_tasks[server_id]
+                task.cancel()
                 try:
-                    # 尝试关闭会话
-                    if hasattr(session, 'close'):
-                        await session.close()
-                except:
+                    await task
+                except asyncio.CancelledError:
                     pass
-                del self.sessions[server_id]
+                del self._connection_tasks[server_id]
             
             # 终止进程（如果是本地服务器）
             if server_id in self.processes:
@@ -370,7 +442,16 @@ class MCPManager:
     async def cleanup(self):
         """清理资源"""
         # 断开所有连接
-        for server_id in list(self.sessions.keys()):
+        server_ids = []
+        
+        # 收集所有需要断开的服务器ID
+        if hasattr(self, 'sessions'):
+            server_ids.extend(list(self.sessions.keys()))
+        if hasattr(self, '_connection_tasks'):
+            server_ids.extend(list(self._connection_tasks.keys()))
+        
+        # 去重并断开所有服务器
+        for server_id in set(server_ids):
             await self.disconnect_server(server_id)
         
         logger.info("MCP管理器已清理")
