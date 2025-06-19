@@ -2,7 +2,7 @@
 ReAct Agent - 基于Reasoning and Acting范式的智能代理
 """
 import uuid
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, AsyncIterator
 from datetime import datetime
 
 import sys
@@ -47,29 +47,45 @@ class ReactAgent(BaseAgent):
         self.max_iterations = max_iterations
         self.executor = GraphExecutor(max_iterations=max_iterations)
         
-    def build_graph(self) -> Graph:
-        """构建标准ReAct执行图 - 基于LangGraph最佳实践"""
+    def build_graph(self, use_stream: bool = False) -> Graph:
+        """构建ReAct执行图
+        
+        Args:
+            use_stream: 是否使用流式节点
+        """
         builder = GraphBuilder("react_graph")
         
         # 判断是否有工具可用
         if self.tool_manager and self.tool_manager.list_tools():
-            # 创建标准ReAct节点
-            from nodes.react_agent_node import ReactAgentNode
-            from nodes.react_tool_node import ReactToolNode
-            
-            agent_node = ReactAgentNode("agent", self.llm, self.tool_manager)
-            tool_node = ReactToolNode("tools", self.tool_manager)
-            
-            # 构建标准双节点ReAct图
-            graph = (builder
-                .add_node(agent_node)
-                .add_node(tool_node) 
-                .entry("agent")
-                .connect("agent", "tools", condition="output.get('has_tool_calls', False)")
-                .connect("tools", "agent")
-                .exit("agent")
-                .build()
-            )
+            if use_stream:
+                # 使用流式节点
+                from nodes.stream_react_agent_node import StreamReactAgentNode
+                agent_node = StreamReactAgentNode("agent", self.llm, self.tool_manager)
+                
+                # 流式节点不需要工具节点，内部处理工具调用
+                graph = (builder
+                    .add_node(agent_node)
+                    .entry("agent")
+                    .build()
+                )
+            else:
+                # 使用标准ReAct节点
+                from nodes.react_agent_node import ReactAgentNode
+                from nodes.react_tool_node import ReactToolNode
+                
+                agent_node = ReactAgentNode("agent", self.llm, self.tool_manager)
+                tool_node = ReactToolNode("tools", self.tool_manager)
+                
+                # 构建标准双节点ReAct图
+                graph = (builder
+                    .add_node(agent_node)
+                    .add_node(tool_node) 
+                    .entry("agent")
+                    .connect("agent", "tools", condition="output.get('has_tool_calls', False)")
+                    .connect("tools", "agent")
+                    .exit("agent")
+                    .build()
+                )
         else:
             # 没有工具时的简单对话模式
             from nodes.simple_chat_node import SimpleChatNode
@@ -135,7 +151,7 @@ class ReactAgent(BaseAgent):
         )
         print(f"agent_context: {agent_context}")
         # 构建并执行图
-        graph = self.build_graph()
+        graph = self.build_graph(use_stream=False)  # 标准模式
         node_results = await self.executor.execute(graph, agent_context)
         
         # 提取最终结果 - 从最后一个有效的输出节点获取结果
@@ -188,6 +204,70 @@ class ReactAgent(BaseAgent):
             
 
         return result
+    
+    async def stream_run(self, query: str, context: Optional[Dict[str, Any]] = None) -> AsyncIterator[Dict[str, Any]]:
+        """流式运行ReAct Agent"""
+        # 生成任务ID
+        task_id = str(uuid.uuid4())
+        
+        # 初始化
+        await self.initialize()
+        
+        # 获取可用工具列表
+        available_tools = []
+        if self.tool_manager:
+            available_tools = self.tool_manager.list_tools()
+        
+        # 创建执行上下文
+        agent_context = AgentContext(
+            task_id=task_id,
+            agent_type=self.agent_type,
+            available_tools=available_tools,
+            messages=[
+                Message(
+                    role=MessageRole.SYSTEM,
+                    content=self._build_system_prompt()
+                ),
+                Message(
+                    role=MessageRole.USER,
+                    content=query
+                )
+            ],
+            variables=context or {}
+        )
+        
+        # 构建流式图
+        graph = self.build_graph(use_stream=True)
+        
+        # 创建节点输入
+        from core.types import NodeInput
+        node_input = NodeInput(
+            context=agent_context.to_execution_context(),
+            previous_output=None,
+            parameters={}
+        )
+        
+        # 直接执行流式节点
+        stream_node = graph.nodes["agent"]
+        
+        # 如果是流式节点，直接调用其流式方法
+        if hasattr(stream_node, '_stream_react_generation'):
+            async for chunk_data in stream_node._stream_react_generation(agent_context.messages):
+                yield {
+                    "type": chunk_data["type"],
+                    "content": chunk_data["content"],
+                    "task_id": task_id,
+                    "metadata": chunk_data
+                }
+        else:
+            # 回退到标准执行
+            result = await self.run(query, context)
+            yield {
+                "type": "final_result",
+                "content": result.result,
+                "task_id": task_id,
+                "metadata": {"success": result.success}
+            }
         
     def _build_system_prompt(self) -> str:
         """构建系统提示"""
@@ -209,8 +289,7 @@ Thought: 你应该思考要做什么
 Action: 要采取的行动，应该是 [{', '.join(tool_names)}] 中的一个
 Action Input: 行动的输入
 Observation: 行动的结果
-... (这个 Thought/Action/Action Input/Observation 可以重复N次)
-Thought: 我现在知道最终答案了
+... (这个 Thought/Action/Action Input/Observation 可以重复N次，直到你认为你已经得到了最终答案)
 Final Answer: 对原始问题的最终答案
 
 重要规则：

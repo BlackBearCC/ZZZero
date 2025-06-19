@@ -376,15 +376,17 @@ class AgentApp:
             )
             
             msg_input.submit(
-                self._chat,
+                self._stream_chat,
                 inputs=[msg_input, chatbot],
-                outputs=[msg_input, chatbot, execution_trace, metrics_display, node_status, flow_diagram]
+                outputs=[msg_input, chatbot, execution_trace, metrics_display, node_status, flow_diagram],
+                show_progress=False  # 禁用进度条以支持流式输出
             )
             
             send_btn.click(
-                self._chat,
+                self._stream_chat,
                 inputs=[msg_input, chatbot],
-                outputs=[msg_input, chatbot, execution_trace, metrics_display, node_status, flow_diagram]
+                outputs=[msg_input, chatbot, execution_trace, metrics_display, node_status, flow_diagram],
+                show_progress=False  # 禁用进度条以支持流式输出
             )
             
             batch_btn.click(
@@ -568,16 +570,14 @@ class AgentApp:
             error_html = f"<div style='color: red;'>❌ 添加远程服务器失败: {str(e)}</div>"
             return name, url, error_html, gr.update()
     
-    async def _chat(self, message: str, history: List[Dict[str, str]]):
-        """处理聊天消息"""
-        # 如果没有Agent，尝试创建一个默认的（只创建一次）
+    async def _stream_chat(self, message: str, history: List[Dict[str, str]]):
+        """流式处理聊天消息，支持打字机效果"""
+        # 如果没有Agent，尝试创建一个默认的
         if not self.current_agent:
             try:
-                # 使用默认配置创建Agent，但不重复创建工具管理器
                 if not self.tool_manager:
                     await self._update_agent_config()
                 else:
-                    # 如果工具管理器已存在，只创建Agent
                     from agents.react_agent import ReactAgent
                     self.agent = ReactAgent(
                         llm=self.llm,
@@ -589,90 +589,125 @@ class AgentApp:
                     logger.info("Agent创建完成（复用现有工具管理器）")
             except Exception as e:
                 print(f"创建默认Agent失败: {e}")
-                # 如果还是失败，返回错误消息
                 history.append({"role": "user", "content": message})
                 history.append({"role": "assistant", "content": "抱歉，系统初始化中，请稍后再试。"})
-                return "", history, {}, "", [], ""
+                yield "", history, {}, "", [], ""
+                return
         
         # 添加用户消息
         history.append({"role": "user", "content": message})
         
+        # 添加空的助手消息用于流式更新
+        history.append({"role": "assistant", "content": ""})
+        
         try:
-            # 运行Agent
-            result = await self.current_agent.run(message)
+            accumulated_response = ""
+            tool_calls_made = []
+            execution_trace = []
             
-            # 添加助手回复
-            assistant_reply = result.result or "抱歉，无法生成回复。"
-            history.append({"role": "assistant", "content": assistant_reply})
+            # 使用流式方法
+            async for chunk_data in self.current_agent.stream_run(message):
+                chunk_type = chunk_data.get("type", "")
+                chunk_content = chunk_data.get("content", "")
+                
+                if chunk_type == "text_chunk":
+                    # 文本块 - 打字机效果
+                    accumulated_response += chunk_content
+                    
+                    # 更新历史记录中的最后一条助手消息
+                    history[-1]["content"] = accumulated_response
+                    
+                    # 返回更新的历史记录实现打字机效果
+                    yield "", history, {}, "", [], ""
+                    
+                    # 短暂延迟实现打字机效果
+                    await asyncio.sleep(0.02)  # 20ms延迟
+                    
+                elif chunk_type == "tool_result":
+                    # 工具调用结果
+                    tool_name = chunk_data.get("metadata", {}).get("tool_name", "")
+                    tool_input = chunk_data.get("metadata", {}).get("tool_input", "")
+                    tool_output = chunk_data.get("metadata", {}).get("tool_output", "")
+                    
+                    accumulated_response += chunk_content
+                    history[-1]["content"] = accumulated_response
+                    
+                    # 记录工具调用
+                    tool_calls_made.append({
+                        "tool_name": tool_name,
+                        "input": tool_input,
+                        "output": tool_output
+                    })
+                    
+                    # 添加工具调用到执行轨迹
+                    execution_trace.append({
+                        "node": "tool_execution",
+                        "type": "tool",
+                        "duration": 0.0,
+                        "state": "success",
+                        "output": {
+                            "tool_name": tool_name,
+                            "tool_input": tool_input,
+                            "tool_output": tool_output
+                        }
+                    })
+                    
+                    yield "", history, execution_trace, "", [], ""
+                    
+                elif chunk_type == "tool_error":
+                    # 工具执行错误
+                    error_msg = chunk_data.get("metadata", {}).get("error", "")
+                    accumulated_response += chunk_content
+                    history[-1]["content"] = accumulated_response
+                    
+                    execution_trace.append({
+                        "node": "tool_error",
+                        "type": "tool",
+                        "duration": 0.0,
+                        "state": "failed",
+                        "output": {"error": error_msg}
+                    })
+                    
+                    yield "", history, execution_trace, "", [], ""
+                    
+                elif chunk_type == "final_result":
+                    # 最终结果（回退模式）
+                    history[-1]["content"] = chunk_content
+                    yield "", history, {}, "", [], ""
             
-            # 提取执行轨迹和指标
-            trace = result.execution_trace
-            metrics_text = self._format_metrics(result.metrics)
+            # 生成最终指标
+            metrics_text = self._format_stream_metrics(tool_calls_made, accumulated_response)
             
             # 生成节点状态表
-            node_status = self._generate_node_status(trace)
+            node_status = self._generate_node_status(execution_trace)
             
             # 生成流程图
-            flow_diagram = self._generate_flow_diagram(trace)
+            flow_diagram = self._generate_flow_diagram(execution_trace)
             
-            return "", history, trace, metrics_text, node_status, flow_diagram
+            # 最终输出
+            yield "", history, execution_trace, metrics_text, node_status, flow_diagram
             
         except Exception as e:
-            # 即使出错也要给出友好的回复
+            # 处理错误
             error_msg = f"处理请求时出现错误: {str(e)}"
             print(error_msg)
-            history.append({"role": "assistant", "content": f"抱歉，{error_msg}"})
-            return "", history, {}, "", [], ""
+            history[-1]["content"] = f"抱歉，{error_msg}"
+            yield "", history, {}, "", [], ""
     
-    async def _batch_execute(self, batch_input: str, parallel: bool):
-        """执行批量任务"""
-        if not self.current_agent:
-            return [["", "错误", "请先配置Agent！", ""]]
-        
-        tasks = [line.strip() for line in batch_input.split('\n') if line.strip()]
-        results = []
-        
-        if parallel:
-            # 并行执行
-            async_tasks = [self.current_agent.run(task) for task in tasks]
-            task_results = await asyncio.gather(*async_tasks, return_exceptions=True)
-            
-            for task, result in zip(tasks, task_results):
-                if isinstance(result, Exception):
-                    results.append([task, "失败", str(result), ""])
-                else:
-                    results.append([
-                        task,
-                        "成功" if result.success else "失败",
-                        result.result or result.error,
-                        f"{result.duration:.2f}s" if result.duration else ""
-                    ])
-        else:
-            # 串行执行
-            for task in tasks:
-                try:
-                    result = await self.current_agent.run(task)
-                    results.append([
-                        task,
-                        "成功" if result.success else "失败",
-                        result.result or result.error,
-                        f"{result.duration:.2f}s" if result.duration else ""
-                    ])
-                except Exception as e:
-                    results.append([task, "失败", str(e), ""])
-        
-        return results
-    
-    def _format_metrics(self, metrics: Dict[str, Any]) -> str:
-        """格式化指标显示"""
-        if not metrics:
-            return "无指标数据"
+    def _format_stream_metrics(self, tool_calls: List[Dict], response_text: str) -> str:
+        """格式化流式处理指标"""
+        metrics = {
+            "工具调用次数": len(tool_calls),
+            "响应字符数": len(response_text),
+            "工具类型": list(set(call.get("tool_name", "") for call in tool_calls)) if tool_calls else []
+        }
         
         lines = []
         for key, value in metrics.items():
-            # 转换键名为更友好的显示
-            display_key = key.replace('_', ' ').title()
-            lines.append(f"{display_key}: {value}")
+            if isinstance(value, list):
+                lines.append(f"{key}: {', '.join(value) if value else '无'}")
+            else:
+                lines.append(f"{key}: {value}")
         
         return "\n".join(lines)
     
@@ -781,6 +816,45 @@ class AgentApp:
         """
         
         return html
+    
+    async def _batch_execute(self, batch_input: str, parallel: bool):
+        """执行批量任务"""
+        if not self.current_agent:
+            return [["", "错误", "请先配置Agent！", ""]]
+        
+        tasks = [line.strip() for line in batch_input.split('\n') if line.strip()]
+        results = []
+        
+        if parallel:
+            # 并行执行
+            async_tasks = [self.current_agent.run(task) for task in tasks]
+            task_results = await asyncio.gather(*async_tasks, return_exceptions=True)
+            
+            for task, result in zip(tasks, task_results):
+                if isinstance(result, Exception):
+                    results.append([task, "失败", str(result), ""])
+                else:
+                    results.append([
+                        task,
+                        "成功" if result.success else "失败",
+                        result.result or result.error,
+                        f"{result.duration:.2f}s" if result.duration else ""
+                    ])
+        else:
+            # 串行执行
+            for task in tasks:
+                try:
+                    result = await self.current_agent.run(task)
+                    results.append([
+                        task,
+                        "成功" if result.success else "失败",
+                        result.result or result.error,
+                        f"{result.duration:.2f}s" if result.duration else ""
+                    ])
+                except Exception as e:
+                    results.append([task, "失败", str(e), ""])
+        
+        return results
     
     def launch(self, **kwargs):
         """启动应用"""
