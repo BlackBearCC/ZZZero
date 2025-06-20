@@ -212,17 +212,7 @@ class PythonExecutor:
         start_time = datetime.now()
         
         try:
-            # 安全性检查
-            if not allow_unsafe:
-                is_safe, warnings = SecurityChecker.check_code_safety(code)
-                if not is_safe:
-                    return {
-                        'execution_id': execution_id,
-                        'success': False,
-                        'error': '代码安全检查失败',
-                        'warnings': warnings,
-                        'executed_at': start_time.isoformat()
-                    }
+            # 安全性检查已移除 - 简化设计，直接执行代码
             
             # 检查并安装依赖
             deps_success, deps_message = self._check_and_install_dependencies(code)

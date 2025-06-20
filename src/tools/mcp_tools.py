@@ -149,8 +149,28 @@ class MCPToolManager:
             tool_key = f"python_{tool.name}"
             self.all_available_tools[tool_key] = tool
         
-        # 默认启用CSV和Python服务器
-        self.set_enabled_servers(["csv", "python"])
+        # 注册角色扮演数据生成服务器
+        roleplay_config = MCPServerConfig(
+            name="角色扮演数据生成服务器",
+            description="基于AI的角色扮演数据生成服务，支持日程规划等功能"
+        )
+        self.servers["roleplay"] = roleplay_config
+        
+        # 注册角色扮演数据生成工具
+        roleplay_tools = [
+            MCPTool("generate_schedule_plan", "生成日程计划框架", "roleplay"),
+            MCPTool("generate_detailed_schedule", "生成详细5阶段日程", "roleplay"),
+            MCPTool("get_time_phases", "获取5阶段时间规划信息", "roleplay"),
+            MCPTool("get_generation_history", "获取生成历史记录", "roleplay"),
+            MCPTool("clear_generation_history", "清空生成历史记录", "roleplay"),
+        ]
+        
+        for tool in roleplay_tools:
+            tool_key = f"roleplay_{tool.name}"
+            self.all_available_tools[tool_key] = tool
+        
+        # 默认启用CSV、Python和角色扮演服务器
+        self.set_enabled_servers(["csv", "python", "roleplay"])
     
     async def initialize(self):
         """初始化工具管理器"""
@@ -209,6 +229,18 @@ class MCPToolManager:
                     return True
                 except Exception as e:
                     logger.error(f"Python执行器服务器启动失败: {e}")
+                    return False
+                    
+            elif server_id == "roleplay":
+                # 直接导入并实例化角色扮演数据生成服务器
+                try:
+                    from mcp_servers.roleplay_data_server import RolePlayDataServer
+                    server_instance = RolePlayDataServer()
+                    self.server_instances[server_id] = server_instance
+                    logger.info(f"✅ MCP服务器启动成功: {config.name}")
+                    return True
+                except Exception as e:
+                    logger.error(f"角色扮演数据生成服务器启动失败: {e}")
                     return False
             else:
                 logger.error(f"未知服务器类型: {server_id}")

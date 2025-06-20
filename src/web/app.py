@@ -331,7 +331,7 @@ class AgentApp:
                 with gr.Column(scale=3):
                     # 聊天历史
                     chatbot = gr.Chatbot(
-                        height=500,
+                        height=800,
                         show_label=False,
                         elem_classes=["chat-window"],
                         type="messages",
