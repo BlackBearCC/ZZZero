@@ -393,6 +393,7 @@ class AgentApp:
                             # 数据预览表格
                             csv_preview_table = gr.DataFrame(
                                 value=[],
+                                headers=None,
                                 label="📊 数据预览（前5行）",
                                 interactive=False,
                                 wrap=True
@@ -409,16 +410,16 @@ class AgentApp:
                         
                         with gr.Row():
                             batch_size = gr.Slider(
-                                minimum=5,
+                                minimum=1,
                                 maximum=50,
                                 value=20,
-                                step=5,
+                                step=1,
                                 label="每批处理行数"
                             )
                             concurrent_tasks = gr.Slider(
                                 minimum=1,
-                                maximum=10,
-                                value=5,
+                                maximum=50,
+                                value=10,
                                 step=1,
                                 label="并发任务数"
                             )
@@ -468,6 +469,7 @@ class AgentApp:
                         return ("<div style='color: red;'>❌ 批处理器未初始化</div>", 
                                 gr.update(visible=False), 
                                 "<div>批处理器未初始化</div>", 
+                                gr.update(value=[], headers=None),
                                 gr.update(choices=[], value=[]))
                     
                     if enabled and csv_file:
@@ -521,13 +523,7 @@ class AgentApp:
                             default_selected = []
                             for col in columns:
                                 col_type = column_types.get(col, 'unknown')
-                                # 获取该列的示例数据
-                                sample_values = sample_data.get(col, [''])
-                                sample_preview = sample_values[0] if sample_values else ''
-                                if len(str(sample_preview)) > 20:
-                                    sample_preview = str(sample_preview)[:17] + "..."
-                                
-                                choice_label = f"{col} ({col_type}) - 例: {sample_preview}"
+                                choice_label = f"{col} ({col_type})"
                                 field_choices.append((choice_label, col))
                                 default_selected.append(col)  # 默认全选
                             
@@ -558,7 +554,7 @@ class AgentApp:
                             return (status_html, 
                                     gr.update(visible=False), 
                                     "<div>CSV解析失败</div>", 
-                                    gr.update(value=[], headers=[]),
+                                    gr.update(value=[], headers=None),
                                     gr.update(choices=[], value=[]))
                             
                     elif enabled and not csv_file:
@@ -571,7 +567,7 @@ class AgentApp:
                         return (status_html, 
                                 gr.update(visible=False), 
                                 "<div>等待CSV文件...</div>", 
-                                gr.update(value=[], headers=[]),
+                                gr.update(value=[], headers=None),
                                 gr.update(choices=[], value=[]))
                     else:
                         # 关闭批处理模式
@@ -587,7 +583,7 @@ class AgentApp:
                         return (status_html, 
                                 gr.update(visible=False), 
                                 "<div>批处理模式已关闭</div>", 
-                                gr.update(value=[], headers=[]),
+                                gr.update(value=[], headers=None),
                                 gr.update(choices=[], value=[]))
                     
                 except Exception as e:
@@ -600,7 +596,7 @@ class AgentApp:
                     return (error_html, 
                             gr.update(visible=False), 
                             f"<div>错误: {str(e)}</div>", 
-                            gr.update(value=[], headers=[]),
+                            gr.update(value=[], headers=None),
                             gr.update(choices=[], value=[]))
             
             async def on_fields_update(selected_fields):

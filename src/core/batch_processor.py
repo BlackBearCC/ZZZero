@@ -218,10 +218,11 @@ class BatchInstructionGenerator:
         try:
             if self.llm_caller:
                 # 调用LLM生成指令
-                success, response = await self.llm_caller.call_llm(prompt, max_tokens=1000, temperature=0.3)
+                success, response = await self.llm_caller.call_llm(prompt,  temperature=0.3)
                 
                 if success:
                     # 解析LLM响应
+                    logger.info(f"批处理LLM响应的通用指令: {response}")
                     return self._parse_llm_response(response, csv_structure)
                 else:
                     logger.warning(f"LLM调用失败，使用默认指令: {response}")
