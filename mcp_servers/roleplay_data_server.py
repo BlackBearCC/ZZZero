@@ -120,13 +120,13 @@ class PromptManager:
 - 包含必要的休息时间
 - 使用中文回复"""
     
-    def get_schedule_plan_prompt(self, requirements: str = "") -> str:
+    def get_schedule_plan_prompt(self, description: str = "") -> str:
         """获取日程计划生成提示词"""
-        return self.schedule_plan_prompt.format(requirements=requirements)
+        return self.schedule_plan_prompt.format(requirements=description)
     
-    def get_detailed_schedule_prompt(self, plan_framework: str = "", requirements: str = "") -> str:
+    def get_detailed_schedule_prompt(self, plan_framework: str = "", description: str = "") -> str:
         """获取详细日程生成提示词"""
-        return self.detailed_schedule_prompt.format(plan_framework=plan_framework, requirements=requirements)
+        return self.detailed_schedule_prompt.format(plan_framework=plan_framework, requirements=description)
 
 
 class LLMCaller:
@@ -221,12 +221,12 @@ class RolePlayDataGenerator:
         self.llm_caller = LLMCaller()
         self.generation_history = []
     
-    async def generate_schedule_plan(self, requirements: str = "") -> Dict[str, Any]:
+    async def generate_schedule_plan(self, description: str = "") -> Dict[str, Any]:
         """
         生成日程计划框架
         
         Args:
-            requirements: 用户要求
+            description: 生成描述，用于输入生成的要求和需求
             
         Returns:
             生成结果字典
@@ -236,7 +236,7 @@ class RolePlayDataGenerator:
         
         try:
             # 获取提示词
-            prompt = self.prompt_manager.get_schedule_plan_prompt(requirements)
+            prompt = self.prompt_manager.get_schedule_plan_prompt(description)
             
             # 调用LLM生成
             success, content = await self.llm_caller.call_llm(prompt)
@@ -250,7 +250,7 @@ class RolePlayDataGenerator:
                 "success": success,
                 "content": content if success else None,
                 "error": content if not success else None,
-                "requirements": requirements,
+                "description": description,
                 "generation_time": generation_time,
                 "generated_at": start_time.isoformat(),
                 "completed_at": end_time.isoformat()
@@ -267,18 +267,18 @@ class RolePlayDataGenerator:
                 "type": "schedule_plan",
                 "success": False,
                 "error": f"生成过程中发生错误: {str(e)}",
-                "requirements": requirements,
+                "description": description,
                 "generated_at": start_time.isoformat()
             }
     
     async def generate_detailed_schedule(self, plan_framework: str = "",
-                                       requirements: str = "") -> Dict[str, Any]:
+                                       description: str = "") -> Dict[str, Any]:
         """
         根据计划框架生成详细的5阶段日程
         
         Args:
             plan_framework: 计划框架（来自generate_schedule_plan的结果）
-            requirements: 用户补充要求
+            description: 生成描述，用于输入补充要求和需求
             
         Returns:
             生成结果字典
@@ -289,7 +289,7 @@ class RolePlayDataGenerator:
         try:
             # 获取提示词
             prompt = self.prompt_manager.get_detailed_schedule_prompt(
-                plan_framework, requirements
+                plan_framework, description
             )
             
             # 调用LLM生成
@@ -311,7 +311,7 @@ class RolePlayDataGenerator:
                 "phases_data": phases_data,
                 "error": content if not success else None,
                 "plan_framework": plan_framework[:500] + "..." if len(plan_framework) > 500 else plan_framework,
-                "requirements": requirements,
+                "description": description,
                 "generation_time": generation_time,
                 "generated_at": start_time.isoformat(),
                 "completed_at": end_time.isoformat()
@@ -329,7 +329,7 @@ class RolePlayDataGenerator:
                 "success": False,
                 "error": f"生成过程中发生错误: {str(e)}",
                 "plan_framework": plan_framework[:200] + "..." if len(plan_framework) > 200 else plan_framework,
-                "requirements": requirements,
+                "description": description,
                 "generated_at": start_time.isoformat()
             }
     
@@ -415,13 +415,13 @@ class RolePlayDataServer(StdioMCPServer):
         # 生成计划日程表工具
         self.register_tool(Tool(
             name="generate_schedule_plan",
-            description="生成日程计划框架。根据用户要求生成一个基础的日程规划，包含主要目标、关键活动等",
+            description="生成日程计划框架。根据用户描述生成一个基础的日程规划，包含主要目标、关键活动等",
             inputSchema=ToolInputSchema(
                 type="object",
                 properties={
-                    "requirements": {
+                    "description": {
                         "type": "string",
-                        "description": "用户的具体要求和需求描述",
+                        "description": "生成描述，用于输入生成的要求和需求",
                         "default": ""
                     }
                 }
@@ -440,9 +440,9 @@ class RolePlayDataServer(StdioMCPServer):
                         "description": "计划框架内容（通常来自generate_schedule_plan的结果）",
                         "default": ""
                     },
-                    "requirements": {
+                    "description": {
                         "type": "string",
-                        "description": "用户补充要求",
+                        "description": "生成描述，用于输入补充要求和需求",
                         "default": ""
                     }
                 }
@@ -494,15 +494,15 @@ class RolePlayDataServer(StdioMCPServer):
             logger.info(f"参数: {arguments}")
             
             if name == "generate_schedule_plan":
-                requirements = arguments.get("requirements", "")
-                return await self.generator.generate_schedule_plan(requirements)
+                description = arguments.get("description", "")
+                return await self.generator.generate_schedule_plan(description)
             
             elif name == "generate_detailed_schedule":
                 plan_framework = arguments.get("plan_framework", "")
-                requirements = arguments.get("requirements", "")
+                description = arguments.get("description", "")
                 
                 return await self.generator.generate_detailed_schedule(
-                    plan_framework, requirements
+                    plan_framework, description
                 )
             
             elif name == "get_generation_history":

@@ -43,7 +43,7 @@ async def test_simple_calls():
     print("\n📝 测试2: 生成简单计划")
     try:
         result = await tool_manager.call_tool("roleplay_generate_schedule_plan", {
-            "requirements": "简单一天安排"
+            "description": "简单一天安排"
         })
         if result.success:
             print("✅ 计划生成成功")
