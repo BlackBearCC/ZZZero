@@ -45,7 +45,8 @@ class AgentApp:
             'batch_enabled': False,
             'batch_csv_path': None,
             'batch_size': 20,
-            'concurrent_tasks': 5
+            'concurrent_tasks': 5,
+            'processing_mode': 'parallel'
         }
         
         # 批处理器
@@ -373,6 +374,15 @@ class AgentApp:
                                 label="启用批处理模式",
                                 value=False
                             )
+                            processing_mode = gr.Dropdown(
+                                choices=[
+                                    ("并行模式 - 快速高效", "parallel"),
+                                    ("遍历模式 - 顺序执行", "sequential")
+                                ],
+                                value="parallel",
+                                label="处理模式",
+                                info="并行模式：同时执行多个任务，速度快；遍历模式：逐个执行，可实时查看每个任务进度"
+                            )
                         
                         with gr.Row():
                             csv_file_upload = gr.File(
@@ -412,7 +422,7 @@ class AgentApp:
                             batch_size = gr.Slider(
                                 minimum=1,
                                 maximum=50,
-                                value=20,
+                                value=5,
                                 step=1,
                                 label="每批处理行数"
                             )
@@ -436,6 +446,10 @@ class AgentApp:
                         - 必须包含列头行
                         - 上传后可选择使用的字段
                         - 示例：character_name,description,duration_days,special_requirements
+                        
+                        **处理模式说明：**
+                        - **并行模式**：同时执行多个任务，速度快，适合独立任务
+                        - **遍历模式**：逐个执行任务，可实时查看每个任务进度，适合依赖性任务
                         """, visible=True)
                     
                     # 执行详情
@@ -457,13 +471,14 @@ class AgentApp:
                         auto_refresh = gr.Checkbox(label="自动刷新", value=True)
             
             # === 批处理配置处理 ===
-            async def on_batch_config_change(enabled, csv_file, batch_size_val, concurrent_tasks_val):
+            async def on_batch_config_change(enabled, csv_file, batch_size_val, concurrent_tasks_val, processing_mode_val):
                 """批处理配置变化处理"""
                 try:
                     # 更新配置
                     self.current_config['batch_enabled'] = enabled
                     self.current_config['batch_size'] = batch_size_val
                     self.current_config['concurrent_tasks'] = concurrent_tasks_val
+                    self.current_config['processing_mode'] = processing_mode_val
                     
                     if not self.batch_processor:
                         return ("<div style='color: red;'>❌ 批处理器未初始化</div>", 
@@ -482,7 +497,8 @@ class AgentApp:
                             enabled=True,
                             csv_file_path=csv_path,
                             batch_size=batch_size_val,
-                            concurrent_tasks=concurrent_tasks_val
+                            concurrent_tasks=concurrent_tasks_val,
+                            processing_mode=processing_mode_val
                         )
                         
                         if result['success']:
@@ -572,7 +588,10 @@ class AgentApp:
                     else:
                         # 关闭批处理模式
                         self.current_config['batch_csv_path'] = None
-                        result = self.batch_processor.configure_batch_mode(enabled=False)
+                        result = self.batch_processor.configure_batch_mode(
+                            enabled=False,
+                            processing_mode=processing_mode_val
+                        )
                         
                         status_html = """
                         <div style='color: #666; padding: 10px; border: 1px solid #ccc; border-radius: 4px; background-color: #f9f9f9;'>
@@ -625,7 +644,8 @@ class AgentApp:
                             enabled=True,
                             csv_file_path=self.current_config['batch_csv_path'],
                             batch_size=self.current_config['batch_size'],
-                            concurrent_tasks=self.current_config['concurrent_tasks']
+                            concurrent_tasks=self.current_config['concurrent_tasks'],
+                            processing_mode=self.current_config.get('processing_mode', 'parallel')
                         )
                         
                         return f"""
@@ -633,9 +653,10 @@ class AgentApp:
                             ✅ <strong>批处理模式已完全启用</strong><br/>
                             📋 已选择字段: {', '.join(selected_fields)}<br/>
                             📊 数据行数: {len(self.batch_processor.csv_data)}<br/>
-                            ⚙️ 每批处理: {self.current_config['batch_size']} 行<br/>
-                            🔄 并发数: {self.current_config['concurrent_tasks']}<br/>
-                            💡 现在可以在聊天框中发送批处理请求了！
+                                                            ⚙️ 每批处理: {self.current_config['batch_size']} 行<br/>
+                                🔄 并发数: {self.current_config['concurrent_tasks']}<br/>
+                                🚀 处理模式: {'并行模式' if self.current_config['processing_mode'] == 'parallel' else '遍历模式'}<br/>
+                                💡 现在可以在聊天框中发送批处理请求了！
                         </div>
                         """
                     else:
@@ -693,10 +714,10 @@ class AgentApp:
                 )
             
             # 绑定批处理配置变化事件
-            for component in [batch_enabled, csv_file_upload, batch_size, concurrent_tasks]:
+            for component in [batch_enabled, csv_file_upload, batch_size, concurrent_tasks, processing_mode]:
                 component.change(
                     on_batch_config_change,
-                    inputs=[batch_enabled, csv_file_upload, batch_size, concurrent_tasks],
+                    inputs=[batch_enabled, csv_file_upload, batch_size, concurrent_tasks, processing_mode],
                     outputs=[batch_status, csv_fields_section, csv_info_display, csv_preview_table, csv_fields_selection]
                 )
             
@@ -1318,47 +1339,105 @@ def hello_world():
         
         # 检查是否启用批处理模式
         if self.batch_processor and self.batch_processor.is_batch_mode_enabled():
-            # 批处理模式：处理批量请求
-            history.append({"role": "assistant", "content": "🔄 检测到批处理模式，正在处理批量任务..."})
+            # 批处理模式：流式处理批量请求
+            history.append({"role": "assistant", "content": "🔄 检测到批处理模式，正在初始化..."})
             
             try:
-                batch_result = await self.batch_processor.process_batch_request(message)
+                accumulated_content = "🔄 检测到批处理模式，正在初始化...\n\n"
+                execution_trace = []
                 
-                if batch_result.get('success'):
-                    # 格式化批处理结果
-                    summary = batch_result.get('execution_summary', {})
-                    batch_instruction = batch_result.get('batch_instruction', {})
+                # 使用流式批处理方法
+                async for progress_data in self.batch_processor.process_batch_request_with_progress(message):
+                    progress_type = progress_data.get("type", "")
+                    progress_content = progress_data.get("content", "")
                     
-                    result_content = f"""🎉 **批处理任务完成！**
-
-📋 **任务描述**: {batch_instruction.get('description', '批量处理任务')}
-🔧 **任务类型**: {batch_instruction.get('task_type', 'general_processing')}
-📝 **处理模板**: {batch_instruction.get('template', 'N/A')}
-
-📊 **执行统计**:
-- 总任务数: {summary.get('total_tasks', 0)}
-- 成功任务: {summary.get('successful_tasks', 0)}
-- 失败任务: {summary.get('failed_tasks', 0)}
-- 成功率: {summary.get('success_rate', '0%')}
-- 总耗时: {summary.get('total_execution_time', '0秒')}
-- 平均耗时: {summary.get('average_task_time', '0秒')}
-
-💡 **提示**: 详细结果已生成，您可以在执行详情中查看完整的批处理结果。"""
+                    if progress_type == "progress":
+                        # 初始化阶段
+                        accumulated_content = progress_content + "\n\n"
+                        
+                    elif progress_type == "instruction_generated":
+                        # 指令生成完成
+                        accumulated_content = progress_content + "\n\n"
+                        
+                    elif progress_type == "batch_start":
+                        # 批次开始
+                        accumulated_content += progress_content + "\n"
+                        
+                    elif progress_type == "batch_completed":
+                        # 批次完成
+                        accumulated_content += progress_content + "\n"
+                        
+                        # 添加进度信息到执行轨迹
+                        progress_info = progress_data.get("progress", {})
+                        execution_trace.append({
+                            "node": "batch_progress",
+                            "type": "progress",
+                            "duration": 0.0,
+                            "state": "success",
+                            "output": progress_info
+                        })
+                        
+                    elif progress_type == "sequential_start":
+                        # 顺序模式开始
+                        accumulated_content += progress_content + "\n\n"
+                        
+                    elif progress_type == "task_start":
+                        # 单个任务开始（顺序模式）
+                        accumulated_content += progress_content + "\n"
+                        
+                    elif progress_type == "task_completed":
+                        # 单个任务完成（顺序模式）
+                        accumulated_content += progress_content + "\n\n"
+                        
+                        # 添加任务结果到执行轨迹
+                        task_result = progress_data.get("result", {})
+                        execution_trace.append({
+                            "node": f"task_{task_result.get('row_index', 'unknown')}",
+                            "type": "task",
+                            "duration": task_result.get('execution_time', 0),
+                            "state": "success" if task_result.get('success') else "failed",
+                            "output": {
+                                "task_prompt": task_result.get('task_prompt', ''),
+                                "result_preview": str(task_result.get('result', ''))[:100] + "..." if task_result.get('result') else task_result.get('error', '')
+                            }
+                        })
+                        
+                    elif progress_type == "task_error":
+                        # 单个任务失败（顺序模式）
+                        accumulated_content += progress_content + "\n\n"
+                        
+                        # 添加错误到执行轨迹
+                        task_info = progress_data.get("task_info", {})
+                        execution_trace.append({
+                            "node": f"task_{task_info.get('task_index', 'unknown')}",
+                            "type": "task",
+                            "duration": 0.0,
+                            "state": "failed",
+                            "output": {
+                                "error": progress_data.get("error", ""),
+                                "task_prompt": task_info.get('task_prompt', '')[:50] + "..."
+                            }
+                        })
+                        
+                    elif progress_type == "final_summary":
+                        # 最终汇总
+                        accumulated_content += "\n" + progress_content
+                        
+                    elif progress_type == "error":
+                        # 错误
+                        accumulated_content += "\n" + progress_content
+                        
+                    # 应用关键词高亮并更新界面
+                    highlighted_content = self._highlight_agent_keywords(accumulated_content)
+                    history[-1]["content"] = highlighted_content
                     
-                    # 更新历史记录
-                    history[-1]["content"] = result_content
-                    
-                    # 返回批处理结果作为执行轨迹
-                    execution_trace = batch_result.get('detailed_results', [])
-                    
+                    # 流式更新界面
                     yield "", history, execution_trace, "", [], ""
-                    return
                     
-                else:
-                    error_msg = f"❌ 批处理执行失败: {batch_result.get('message', '未知错误')}"
-                    history[-1]["content"] = error_msg
-                    yield "", history, {}, "", [], ""
-                    return
+                    # 短暂延迟以便观察进度更新
+                    await asyncio.sleep(0.1)
+                
+                return
                     
             except Exception as e:
                 error_msg = f"❌ 批处理执行异常: {str(e)}"

@@ -2,6 +2,7 @@
 """
 系统级批处理器 - ReactAgent的通用批处理功能
 支持前端配置、CSV解析、LLM指令生成、并发Agent执行
+支持并行/遍历两种处理模式和实时进度展示
 """
 import os
 import csv
@@ -9,11 +10,18 @@ import json
 import asyncio
 import logging
 from datetime import datetime
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
+from enum import Enum
 
 logger = logging.getLogger(__name__)
+
+
+class ProcessingMode(Enum):
+    """处理模式枚举"""
+    PARALLEL = "parallel"      # 并行模式 - 快速高效
+    SEQUENTIAL = "sequential"  # 遍历模式 - 顺序执行
 
 
 @dataclass
@@ -24,6 +32,36 @@ class BatchConfig:
     batch_size: int = 20
     concurrent_tasks: int = 5
     max_rows: int = 1000  # 最大处理行数限制
+    processing_mode: ProcessingMode = ProcessingMode.PARALLEL  # 处理模式
+
+
+@dataclass
+class BatchProgress:
+    """批处理进度信息"""
+    total_tasks: int = 0
+    completed_tasks: int = 0
+    successful_tasks: int = 0
+    failed_tasks: int = 0
+    current_batch: int = 0
+    total_batches: int = 0
+    current_task_description: str = ""
+    start_time: Optional[datetime] = None
+    estimated_completion: Optional[datetime] = None
+    average_task_time: float = 0.0
+    
+    @property
+    def progress_percentage(self) -> float:
+        """计算进度百分比"""
+        if self.total_tasks == 0:
+            return 0.0
+        return (self.completed_tasks / self.total_tasks) * 100
+    
+    @property
+    def success_rate(self) -> float:
+        """计算成功率"""
+        if self.completed_tasks == 0:
+            return 0.0
+        return (self.successful_tasks / self.completed_tasks) * 100
 
 
 @dataclass
@@ -405,13 +443,22 @@ class BatchProcessor:
         self.instruction_generator = BatchInstructionGenerator(llm_caller)
         self.task_executor = ReactAgentTaskExecutor(mcp_tool_manager)
         self.current_batch_task = None
+        self.current_progress = BatchProgress()  # 当前进度状态
     
     def configure_batch_mode(self, enabled: bool, csv_file_path: str = None, 
-                           batch_size: int = 20, concurrent_tasks: int = 5) -> Dict[str, Any]:
+                           batch_size: int = 20, concurrent_tasks: int = 5,
+                           processing_mode: str = "parallel") -> Dict[str, Any]:
         """配置批处理模式"""
         self.config.enabled = enabled
         self.config.batch_size = batch_size
         self.config.concurrent_tasks = concurrent_tasks
+        
+        # 设置处理模式
+        try:
+            self.config.processing_mode = ProcessingMode(processing_mode)
+        except ValueError:
+            self.config.processing_mode = ProcessingMode.PARALLEL
+            logger.warning(f"无效的处理模式: {processing_mode}，使用默认并行模式")
         
         if enabled and csv_file_path:
             # 验证和解析CSV
@@ -429,7 +476,8 @@ class BatchProcessor:
                     "csv_structure": structure_info,
                     "config": {
                         "batch_size": batch_size,
-                        "concurrent_tasks": concurrent_tasks
+                        "concurrent_tasks": concurrent_tasks,
+                        "processing_mode": processing_mode
                     }
                 }
             else:
@@ -456,8 +504,72 @@ class BatchProcessor:
         """检查是否启用批处理模式"""
         return self.config.enabled and bool(self.csv_data)
     
+    async def process_batch_request_with_progress(self, user_message: str) -> AsyncIterator[Dict[str, Any]]:
+        """处理批处理请求并提供流式进度更新"""
+        if not self.is_batch_mode_enabled():
+            yield {
+                "type": "error",
+                "content": "❌ 批处理模式未启用或CSV数据未加载"
+            }
+            return
+        
+        try:
+            # 1. 生成批处理指令
+            yield {
+                "type": "progress",
+                "content": "🧠 正在分析任务需求并生成批处理指令...",
+                "stage": "instruction_generation"
+            }
+            
+            csv_structure = CSVDataManager.get_csv_structure_info(self.csv_data)
+            batch_instruction = await self.instruction_generator.generate_batch_instruction(
+                user_message, csv_structure
+            )
+            
+            logger.info(f"生成批处理指令: {batch_instruction.batch_description}")
+            
+            # 初始化进度
+            self.current_progress = BatchProgress(
+                total_tasks=len(self.csv_data),
+                start_time=datetime.now()
+            )
+            
+            yield {
+                "type": "instruction_generated",
+                "content": f"📋 **批处理指令已生成**\n\n"
+                          f"**任务类型**: {batch_instruction.task_type}\n"
+                          f"**任务描述**: {batch_instruction.batch_description}\n"
+                          f"**处理模板**: {batch_instruction.per_row_template}\n"
+                          f"**总任务数**: {self.current_progress.total_tasks}\n"
+                          f"**处理模式**: {'并行模式' if self.config.processing_mode == ProcessingMode.PARALLEL else '顺序模式'}\n\n"
+                          f"🚀 开始执行批处理任务...",
+                "instruction": batch_instruction
+            }
+            
+            # 2. 根据模式执行批处理任务
+            if self.config.processing_mode == ProcessingMode.PARALLEL:
+                async for progress_data in self._execute_batch_tasks_parallel(batch_instruction):
+                    yield progress_data
+            else:
+                async for progress_data in self._execute_batch_tasks_sequential(batch_instruction):
+                    yield progress_data
+            
+            # 3. 生成最终汇总
+            yield {
+                "type": "final_summary",
+                "content": self._generate_final_summary(),
+                "progress": self.current_progress
+            }
+            
+        except Exception as e:
+            logger.error(f"批处理执行失败: {e}")
+            yield {
+                "type": "error",
+                "content": f"❌ 批处理执行失败: {str(e)}"
+            }
+    
     async def process_batch_request(self, user_message: str) -> Dict[str, Any]:
-        """处理批处理请求"""
+        """处理批处理请求 - 兼容原有接口"""
         if not self.is_batch_mode_enabled():
             return {
                 "success": False,
@@ -497,8 +609,210 @@ class BatchProcessor:
                 "message": f"批处理执行失败: {str(e)}"
             }
     
+    async def _execute_batch_tasks_parallel(self, instruction: BatchInstruction) -> AsyncIterator[Dict[str, Any]]:
+        """并行模式执行批处理任务"""
+        all_results = []
+        
+        # 计算总批次数
+        total_batches = (len(self.csv_data) + self.config.batch_size - 1) // self.config.batch_size
+        self.current_progress.total_batches = total_batches
+        
+        # 分批处理
+        for batch_idx, batch_start in enumerate(range(0, len(self.csv_data), self.config.batch_size)):
+            batch_end = min(batch_start + self.config.batch_size, len(self.csv_data))
+            batch_data = self.csv_data[batch_start:batch_end]
+            
+            self.current_progress.current_batch = batch_idx + 1
+            
+            yield {
+                "type": "batch_start",
+                "content": f"📦 开始处理第 {batch_idx + 1}/{total_batches} 批次 (第{batch_start+1}-{batch_end}行)",
+                "batch_info": {
+                    "batch_index": batch_idx + 1,
+                    "total_batches": total_batches,
+                    "batch_start": batch_start + 1,
+                    "batch_end": batch_end,
+                    "batch_size": len(batch_data)
+                }
+            }
+            
+            # 并发执行当前批次
+            semaphore = asyncio.Semaphore(self.config.concurrent_tasks)
+            
+            async def execute_with_semaphore(row_data):
+                async with semaphore:
+                    # 生成具体的任务提示词
+                    task_prompt = self._generate_task_prompt(instruction.per_row_template, row_data)
+                    
+                    # 执行单个任务
+                    return await self.task_executor.execute_single_task(
+                        task_prompt, row_data, row_data.get('_row_index', 0)
+                    )
+            
+            # 并发执行当前批次的所有任务
+            batch_results = await asyncio.gather(
+                *[execute_with_semaphore(row_data) for row_data in batch_data],
+                return_exceptions=True
+            )
+            
+            # 处理结果并更新进度
+            for result in batch_results:
+                if isinstance(result, Exception):
+                    result_data = {
+                        "success": False,
+                        "error": str(result),
+                        "processed_at": datetime.now().isoformat()
+                    }
+                    self.current_progress.failed_tasks += 1
+                else:
+                    result_data = result
+                    if result.get('success', False):
+                        self.current_progress.successful_tasks += 1
+                    else:
+                        self.current_progress.failed_tasks += 1
+                
+                self.current_progress.completed_tasks += 1
+                all_results.append(result_data)
+                
+                # 更新平均耗时
+                if result_data.get('execution_time'):
+                    total_time = self.current_progress.average_task_time * (self.current_progress.completed_tasks - 1) + result_data.get('execution_time', 0)
+                    self.current_progress.average_task_time = total_time / self.current_progress.completed_tasks
+            
+            # 发送批次完成进度
+            yield {
+                "type": "batch_completed",
+                "content": f"✅ 第 {batch_idx + 1}/{total_batches} 批次完成 - "
+                          f"进度: {self.current_progress.progress_percentage:.1f}% "
+                          f"({self.current_progress.completed_tasks}/{self.current_progress.total_tasks})",
+                "progress": {
+                    "percentage": self.current_progress.progress_percentage,
+                    "completed": self.current_progress.completed_tasks,
+                    "total": self.current_progress.total_tasks,
+                    "successful": self.current_progress.successful_tasks,
+                    "failed": self.current_progress.failed_tasks,
+                    "success_rate": self.current_progress.success_rate,
+                    "average_time": self.current_progress.average_task_time
+                }
+            }
+        
+        # 保存结果供最终汇总使用
+        self.current_progress.results = all_results
+    
+    async def _execute_batch_tasks_sequential(self, instruction: BatchInstruction) -> AsyncIterator[Dict[str, Any]]:
+        """顺序模式执行批处理任务"""
+        all_results = []
+        self.current_progress.total_batches = 1
+        self.current_progress.current_batch = 1
+        
+        yield {
+            "type": "sequential_start",
+            "content": f"🔄 开始顺序处理 {len(self.csv_data)} 个任务..."
+        }
+        
+        # 顺序处理每个任务
+        for idx, row_data in enumerate(self.csv_data):
+            # 生成具体的任务提示词
+            task_prompt = self._generate_task_prompt(instruction.per_row_template, row_data)
+            row_index = row_data.get('_row_index', idx + 1)
+            
+            # 更新当前任务描述
+            task_preview = task_prompt[:50] + "..." if len(task_prompt) > 50 else task_prompt
+            self.current_progress.current_task_description = task_preview
+            
+            yield {
+                "type": "task_start",
+                "content": f"🔄 正在处理第 {idx + 1}/{len(self.csv_data)} 个任务\n"
+                          f"**任务内容**: {task_preview}\n"
+                          f"**进度**: {((idx) / len(self.csv_data) * 100):.1f}%",
+                "task_info": {
+                    "task_index": idx + 1,
+                    "total_tasks": len(self.csv_data),
+                    "task_prompt": task_prompt,
+                    "row_data": row_data
+                }
+            }
+            
+            # 执行单个任务
+            try:
+                result = await self.task_executor.execute_single_task(task_prompt, row_data, row_index)
+                
+                if result.get('success', False):
+                    self.current_progress.successful_tasks += 1
+                    status_icon = "✅"
+                else:
+                    self.current_progress.failed_tasks += 1
+                    status_icon = "❌"
+                
+                # 更新进度
+                self.current_progress.completed_tasks += 1
+                
+                # 更新平均耗时
+                if result.get('execution_time'):
+                    total_time = self.current_progress.average_task_time * (self.current_progress.completed_tasks - 1) + result.get('execution_time', 0)
+                    self.current_progress.average_task_time = total_time / self.current_progress.completed_tasks
+                
+                all_results.append(result)
+                
+                # 发送任务完成状态
+                result_preview = ""
+                if result.get('success') and result.get('result'):
+                    result_content = str(result.get('result', ''))
+                    result_preview = (result_content[:100] + "...") if len(result_content) > 100 else result_content
+                elif result.get('error'):
+                    result_preview = f"错误: {result.get('error', '')[:50]}..."
+                
+                yield {
+                    "type": "task_completed",
+                    "content": f"{status_icon} 第 {idx + 1}/{len(self.csv_data)} 个任务完成\n"
+                              f"**执行时间**: {result.get('execution_time', 0):.2f}秒\n"
+                              f"**结果预览**: {result_preview}\n"
+                              f"**总体进度**: {self.current_progress.progress_percentage:.1f}%",
+                    "result": result,
+                    "progress": {
+                        "percentage": self.current_progress.progress_percentage,
+                        "completed": self.current_progress.completed_tasks,
+                        "total": self.current_progress.total_tasks,
+                        "successful": self.current_progress.successful_tasks,
+                        "failed": self.current_progress.failed_tasks,
+                        "success_rate": self.current_progress.success_rate,
+                        "average_time": self.current_progress.average_task_time
+                    }
+                }
+                
+            except Exception as e:
+                # 处理异常
+                result = {
+                    "row_index": row_index,
+                    "success": False,
+                    "task_prompt": task_prompt,
+                    "error": str(e),
+                    "execution_time": 0.0,
+                    "processed_at": datetime.now().isoformat(),
+                    "row_data": row_data
+                }
+                
+                self.current_progress.failed_tasks += 1
+                self.current_progress.completed_tasks += 1
+                all_results.append(result)
+                
+                yield {
+                    "type": "task_error",
+                    "content": f"❌ 第 {idx + 1}/{len(self.csv_data)} 个任务失败\n"
+                              f"**错误**: {str(e)}\n"
+                              f"**进度**: {self.current_progress.progress_percentage:.1f}%",
+                    "error": str(e),
+                    "task_info": {
+                        "task_index": idx + 1,
+                        "task_prompt": task_prompt
+                    }
+                }
+        
+        # 保存结果供最终汇总使用
+        self.current_progress.results = all_results
+    
     async def _execute_batch_tasks(self, instruction: BatchInstruction) -> List[Dict[str, Any]]:
-        """执行批处理任务"""
+        """执行批处理任务 - 兼容原有接口（并行模式）"""
         all_results = []
         
         # 分批处理
@@ -574,6 +888,32 @@ class BatchProcessor:
             "completed_at": datetime.now().isoformat()
         }
     
+    def _generate_final_summary(self) -> str:
+        """生成最终汇总报告"""
+        progress = self.current_progress
+        end_time = datetime.now()
+        total_duration = (end_time - progress.start_time).total_seconds() if progress.start_time else 0
+        
+        summary = f"""🎉 **批处理任务完成！**
+
+📊 **执行统计**:
+- 总任务数: {progress.total_tasks}
+- 成功任务: {progress.successful_tasks}
+- 失败任务: {progress.failed_tasks}
+- 成功率: {progress.success_rate:.1f}%
+
+⏱️ **时间统计**:
+- 总耗时: {total_duration:.2f}秒
+- 平均耗时: {progress.average_task_time:.2f}秒/任务
+- 处理模式: {'并行模式' if self.config.processing_mode == ProcessingMode.PARALLEL else '顺序模式'}
+
+💡 **提示**: 详细结果已保存，您可以在执行详情中查看完整的批处理结果。"""
+
+        if progress.failed_tasks > 0:
+            summary += f"\n\n⚠️ **注意**: 有 {progress.failed_tasks} 个任务执行失败，请检查执行详情了解失败原因。"
+        
+        return summary
+    
     def update_field_selection(self, field_selection: Dict[str, bool]) -> Dict[str, Any]:
         """更新字段选择配置"""
         if not self.csv_structure:
@@ -607,7 +947,8 @@ class BatchProcessor:
             "csv_rows": len(self.csv_data),
             "csv_file": self.config.csv_file_path,
             "batch_size": self.config.batch_size,
-            "concurrent_tasks": self.config.concurrent_tasks
+            "concurrent_tasks": self.config.concurrent_tasks,
+            "processing_mode": self.config.processing_mode.value
         }
         
         # 如果有CSV结构信息，添加到状态中
