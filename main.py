@@ -46,21 +46,8 @@ def main():
         load_dotenv()
         print("✅ 环境变量加载完成")
         
-        # 提前启动MCP服务器
-        print("🔧 启动MCP服务器...")
-        try:
-            # 统一导入路径，避免单例失效
-            sys.path.insert(0, str(src_path))
-            from tools.mcp_manager import mcp_manager
-            print(f"🔍 启动时MCP管理器实例ID: {id(mcp_manager)}")
-            results = mcp_manager.start_all_servers()
-            for server_id, success in results.items():
-                if success:
-                    print(f"✅ MCP服务器启动成功: {server_id}")
-                else:
-                    print(f"❌ MCP服务器启动失败: {server_id}")
-        except Exception as e:
-            print(f"⚠️ MCP服务器启动异常: {e}")
+        # MCP服务器现在由MCPToolManager在应用初始化时启动
+        print("🔧 MCP服务器将在应用初始化时启动...")
         
         # 创建应用
         app = AgentApp(
@@ -109,15 +96,7 @@ def main():
         import traceback
         traceback.print_exc()
     finally:
-        # 清理MCP服务器
-        try:
-            from tools.mcp_manager import mcp_manager
-            print("🔧 正在停止MCP服务器...")
-            mcp_manager.stop_all_servers()
-            print("✅ MCP服务器已停止")
-        except Exception as e:
-            print(f"⚠️ 停止MCP服务器时发生异常: {e}")
-        
+        # MCP服务器清理现在由MCPToolManager处理
         print("👋 程序已退出")
 
 

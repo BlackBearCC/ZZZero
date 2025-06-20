@@ -4,6 +4,7 @@
 import sys
 import os
 import re
+import json
 import asyncio
 from typing import Dict, Any, List, AsyncIterator, Optional
 
@@ -99,66 +100,21 @@ class StreamReactAgentNode(BaseNode):
     
     async def _stream_react_generation(self, messages: List[Message]) -> AsyncIterator[Dict[str, Any]]:
         """流式生成ReAct响应，检测Observation并调用工具"""
-        accumulated_content = ""
-        
-        # 定义中断检查器，用于检测ReAct的Observation模式
-        def should_interrupt_for_observation(content: str) -> bool:
-            """检查是否应该因为空Observation而中断生成"""
-            return self._should_trigger_tool_execution(content)
-        
-        # 开始流式生成
-        try:
-            # 检查LLM是否支持中断机制
-            if hasattr(self.llm, 'stream_generate_with_interrupt'):
-                # 使用支持中断的流式生成
-                async for chunk in self.llm.stream_generate_with_interrupt(
-                    messages, 
-                    interrupt_checker=should_interrupt_for_observation
-                ):
-                    accumulated_content += chunk
-                    
-                    # 发送文本块
-                    yield {
-                        "type": "text_chunk",
-                        "content": chunk,
-                        "accumulated": accumulated_content
-                    }
-                    
-                    # 检查是否因为Observation而中断了
-                    if should_interrupt_for_observation(accumulated_content):
-                        # 执行工具调用逻辑
-                        async for tool_chunk in self._handle_tool_execution(accumulated_content, messages):
-                            yield tool_chunk
-                        return
-            else:
-                # 回退到原有的实现
-                async for chunk in self.llm.stream_generate(messages):
-                    accumulated_content += chunk
-                    
-                    # 发送文本块
-                    yield {
-                        "type": "text_chunk",
-                        "content": chunk,
-                        "accumulated": accumulated_content
-                    }
-                    
-                    # 检测是否包含Observation:标记且没有实际观察内容
-                    if "Observation:" in accumulated_content and not self._has_filled_observation(accumulated_content):
-                        # 检查是否在当前块结束时有完整的Action和Action Input
-                        if self._should_trigger_tool_execution(accumulated_content):
-                            async for tool_chunk in self._handle_tool_execution(accumulated_content, messages):
-                                yield tool_chunk
-                            return
-                            
-        except Exception as e:
-            yield {
-                "type": "stream_error",
-                "content": f"\n[流式生成错误: {str(e)}]\n",
-                "error": str(e)
-            }
+        # 委托给带深度控制的版本，初始深度为0
+        async for chunk in self._stream_react_generation_with_depth(messages, 0):
+            yield chunk
     
-    async def _handle_tool_execution(self, accumulated_content: str, messages: List[Message]) -> AsyncIterator[Dict[str, Any]]:
+    async def _handle_tool_execution(self, accumulated_content: str, messages: List[Message], recursion_depth: int = 0) -> AsyncIterator[Dict[str, Any]]:
         """处理工具执行逻辑"""
+        # 防止递归过深
+        if recursion_depth > 10:
+            yield {
+                "type": "tool_error",
+                "content": " 递归深度超限，停止工具调用\n",
+                "error": "递归深度超过最大限制"
+            }
+            return
+        
         # 解析Action和Action Input
         parsed_content = self.react_parser.parse(accumulated_content)
         
@@ -170,7 +126,7 @@ class StreamReactAgentNode(BaseNode):
             try:
                 tool_result = await self._execute_tool(action.strip(), action_input.strip() if action_input else "")
                 
-                # 构造Observation结果，替换空的Observation
+                # 构造Observation结果，确保格式正确
                 observation_text = f" {tool_result}\n"
                 
                 # 发送工具结果
@@ -179,21 +135,22 @@ class StreamReactAgentNode(BaseNode):
                     "content": observation_text,
                     "tool_name": action.strip(),
                     "tool_input": action_input.strip() if action_input else "",
-                    "tool_output": tool_result
+                    "tool_output": tool_result,
+                    "recursion_depth": recursion_depth
                 }
                 
-                # 更新累积内容
-                accumulated_content += observation_text
+                # 更新累积内容 - 将工具结果拼接到Observation后面
+                updated_content = accumulated_content + observation_text
                 
-                # 继续生成，基于新的上下文
+                # 继续生成，基于更新后的上下文
                 messages_with_observation = messages.copy()
                 messages_with_observation.append(Message(
                     role=MessageRole.ASSISTANT,
-                    content=accumulated_content
+                    content=updated_content
                 ))
                 
-                # 递归继续流式生成
-                async for next_chunk in self._stream_react_generation(messages_with_observation):
+                # 递归继续流式生成，传递递归深度
+                async for next_chunk in self._stream_react_generation_with_depth(messages_with_observation, recursion_depth + 1):
                     yield next_chunk
                     
             except Exception as e:
@@ -202,8 +159,67 @@ class StreamReactAgentNode(BaseNode):
                 yield {
                     "type": "tool_error",
                     "content": error_text,
-                    "error": str(e)
+                    "error": str(e),
+                    "recursion_depth": recursion_depth
                 }
+        else:
+            # 没有找到有效的action或tool_manager
+            yield {
+                "type": "tool_error", 
+                "content": " 无法解析Action或工具管理器不可用\n",
+                "error": "Action解析失败或工具管理器不可用",
+                "parsed_action": action,
+                "has_tool_manager": bool(self.tool_manager)
+            }
+    
+    async def _stream_react_generation_with_depth(self, messages: List[Message], recursion_depth: int = 0) -> AsyncIterator[Dict[str, Any]]:
+        """带递归深度控制的流式生成ReAct响应"""
+        if recursion_depth > 10:
+            yield {
+                "type": "stream_error",
+                "content": "\n[递归深度超限，停止生成]\n",
+                "error": "递归深度超过最大限制"
+            }
+            return
+            
+        accumulated_content = ""
+        
+        # 定义中断检查器，用于检测ReAct的Observation模式
+        def should_interrupt_for_observation(content: str) -> bool:
+            """检查是否应该因为空Observation而中断生成"""
+            return self._should_trigger_tool_execution(content)
+        
+        # 开始流式生成
+        try:
+            # 使用doubao llm的中断机制进行流式生成
+            async for chunk in self.llm.stream_generate(
+                messages, 
+                interrupt_checker=should_interrupt_for_observation
+            ):
+                accumulated_content += chunk
+                
+                # 发送文本块
+                yield {
+                    "type": "text_chunk",
+                    "content": chunk,
+                    "accumulated": accumulated_content,
+                    "recursion_depth": recursion_depth
+                }
+                
+                # 检查是否因为Observation而中断了
+                if should_interrupt_for_observation(accumulated_content):
+                    # 执行工具调用逻辑
+                    async for tool_chunk in self._handle_tool_execution(accumulated_content, messages, recursion_depth):
+                        yield tool_chunk
+                    return
+                            
+        except Exception as e:
+            yield {
+                "type": "stream_error",
+                "content": f"\n[流式生成错误: {str(e)}]\n",
+                "error": str(e),
+                "recursion_depth": recursion_depth
+            }
     
     def _has_filled_observation(self, text: str) -> bool:
         """检查Observation是否已经有内容"""
@@ -225,27 +241,19 @@ class StreamReactAgentNode(BaseNode):
         if not (has_action and has_action_input and has_observation):
             return False
         
-        # 查找最后一个Observation的位置和内容
-        observation_matches = list(re.finditer(r'Observation:\s*([^\n]*)', text))
-        
-        if observation_matches:
-            last_observation = observation_matches[-1]
-            observation_content = last_observation.group(1).strip()
-            
-            # 如果最后一个Observation后面没有实际内容，则应该触发工具执行
-            if not observation_content:
-                # 检查Observation后面是否有其他内容（如新的Thought、Final Answer等）
-                observation_end = last_observation.end()
-                remaining_text = text[observation_end:].strip()
-                
-                # 如果Observation后面没有内容，或者只有少量空白字符，则触发
-                if not remaining_text or len(remaining_text) < 3:
-                    return True
-        
         # 特殊情况：检查是否以"Observation:"结尾（正在等待工具执行）
         if text.rstrip().endswith("Observation:"):
             return True
+        
+        # 查找所有Observation的位置和内容，检查是否有空的Observation
+        observation_matches = list(re.finditer(r'Observation:([^\n]*?)(?=\n|$)', text))
+        
+        for observation_match in observation_matches:
+            observation_content = observation_match.group(1).strip()
             
+            # 如果找到空的Observation，则应该触发工具执行
+            if not observation_content:
+                return True
         return False
     
     async def _execute_tool(self, tool_name: str, tool_input: str) -> str:
@@ -253,17 +261,8 @@ class StreamReactAgentNode(BaseNode):
         if not self.tool_manager:
             return "错误：没有可用的工具管理器"
         
-        # 解析工具输入参数
-        try:
-            # 尝试将tool_input解析为字典
-            import json
-            if tool_input.strip().startswith('{'):
-                arguments = json.loads(tool_input)
-            else:
-                # 如果不是JSON，将其作为单个参数
-                arguments = {"input": tool_input}
-        except:
-            arguments = {"input": tool_input}
+        # 解析工具输入参数 - 增强参数解析逻辑
+        arguments = self._parse_tool_arguments(tool_input)
         
         # 调用工具
         try:
@@ -279,6 +278,48 @@ class StreamReactAgentNode(BaseNode):
                 
         except Exception as e:
             return f"工具执行失败: {str(e)}"
+    
+    def _parse_tool_arguments(self, tool_input: str) -> Dict[str, Any]:
+        """解析工具输入参数，支持多种格式"""
+        import json
+        
+        if not tool_input or not tool_input.strip():
+            return {}
+        
+        tool_input = tool_input.strip()
+        
+        # 尝试解析JSON格式
+        if tool_input.startswith('{') and tool_input.endswith('}'):
+            try:
+                return json.loads(tool_input)
+            except json.JSONDecodeError as e:
+                # JSON解析失败，记录详细错误信息
+                print(f"JSON解析失败: {e}, 输入内容: {tool_input}")
+                return {"input": tool_input}
+        
+        # 尝试解析键值对格式 (key=value, key2=value2)
+        if '=' in tool_input and ',' in tool_input:
+            try:
+                arguments = {}
+                pairs = tool_input.split(',')
+                for pair in pairs:
+                    if '=' in pair:
+                        key, value = pair.split('=', 1)
+                        arguments[key.strip()] = value.strip()
+                return arguments
+            except Exception:
+                pass
+        
+        # 尝试解析单个键值对格式 (key=value)
+        if '=' in tool_input and ',' not in tool_input:
+            try:
+                key, value = tool_input.split('=', 1)
+                return {key.strip(): value.strip()}
+            except Exception:
+                pass
+        
+        # 默认情况：作为单个输入参数
+        return {"input": tool_input}
     
     def _build_system_prompt(self, context: Any) -> str:
         """构建流式ReAct系统提示词"""

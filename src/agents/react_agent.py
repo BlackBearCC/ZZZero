@@ -235,7 +235,7 @@ class ReactAgent(BaseAgent):
             ],
             variables=context or {}
         )
-        
+        print(f"agent_context: {agent_context}")
         # 构建流式图
         graph = self.build_graph(use_stream=True)
         
@@ -285,7 +285,7 @@ class ReactAgent(BaseAgent):
 必须使用以下格式进行推理和行动：
 
 Question: 你需要回答的问题
-Thought: 你应该思考要做什么
+Thought: 分析Qyestion，你永远知道下一步要做什么
 Action: 要采取的行动，应该是 [{', '.join(tool_names)}] 中的一个
 Action Input: 行动的输入
 Observation: 行动的结果

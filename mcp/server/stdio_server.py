@@ -3,6 +3,7 @@
 """
 import asyncio
 import sys
+import os
 from typing import Dict, Any, Optional
 import logging
 
@@ -28,9 +29,8 @@ class StdioMCPServer(MCPServer):
             **kwargs: 其他配置参数
         """
         super().__init__(name, version, **kwargs)
-        self._stdin_reader = None
-        self._stdout_writer = None
         self._read_task = None
+        self._is_windows = os.name == 'nt'
     
     async def start(self):
         """启动服务器"""
@@ -38,25 +38,13 @@ class StdioMCPServer(MCPServer):
             raise RuntimeError("Server is already running")
         
         try:
-            # 设置标准输入输出
-            self._stdin_reader = asyncio.StreamReader()
-            protocol = asyncio.StreamReaderProtocol(self._stdin_reader)
-            
-            # 获取事件循环
-            loop = asyncio.get_event_loop()
-            
-            # 连接到标准输入
-            transport, _ = await loop.connect_read_pipe(
-                lambda: protocol, sys.stdin
-            )
-            
-            # 标准输出写入器
-            self._stdout_writer = sys.stdout
-            
             self._running = True
             
             # 启动消息读取任务
-            self._read_task = asyncio.create_task(self._read_messages())
+            if self._is_windows:
+                self._read_task = asyncio.create_task(self._read_messages_windows())
+            else:
+                self._read_task = asyncio.create_task(self._read_messages_unix())
             
             logger.info(f"Started MCP stdio server: {self.name}")
             
@@ -88,12 +76,61 @@ class StdioMCPServer(MCPServer):
         
         logger.info(f"Stopped MCP stdio server: {self.name}")
     
-    async def _read_messages(self):
-        """读取标准输入消息"""
+    async def _read_messages_windows(self):
+        """Windows系统的消息读取"""
         try:
             while self._running:
+                # 在Windows上使用线程池来读取stdin
+                try:
+                    line = await asyncio.get_event_loop().run_in_executor(
+                        None, sys.stdin.readline
+                    )
+                    
+                    if not line:
+                        # EOF reached
+                        break
+                    
+                    message = line.strip()
+                    if not message:
+                        continue
+                    
+                    # 处理消息
+                    response = await self.handle_message(message)
+                    
+                    # 发送响应（如果有）
+                    if response:
+                        await self._write_response(response)
+                        
+                except Exception as e:
+                    logger.error(f"Error reading message: {e}")
+                    break
+                    
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Error in Windows message reading: {e}")
+        finally:
+            if self._running:
+                await self.stop()
+    
+    async def _read_messages_unix(self):
+        """Unix系统的消息读取（原来的实现）"""
+        try:
+            # 设置标准输入输出
+            stdin_reader = asyncio.StreamReader()
+            protocol = asyncio.StreamReaderProtocol(stdin_reader)
+            
+            # 获取事件循环
+            loop = asyncio.get_event_loop()
+            
+            # 连接到标准输入
+            transport, _ = await loop.connect_read_pipe(
+                lambda: protocol, sys.stdin
+            )
+            
+            while self._running:
                 # 读取一行
-                line = await self._stdin_reader.readline()
+                line = await stdin_reader.readline()
                 
                 if not line:
                     # EOF reached
@@ -113,7 +150,7 @@ class StdioMCPServer(MCPServer):
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.error(f"Error reading messages: {e}")
+            logger.error(f"Error in Unix message reading: {e}")
         finally:
             if self._running:
                 await self.stop()
@@ -121,9 +158,9 @@ class StdioMCPServer(MCPServer):
     async def _write_response(self, response: str):
         """写入响应到标准输出"""
         try:
-            if self._stdout_writer:
-                self._stdout_writer.write(response + '\n')
-                self._stdout_writer.flush()
+            # 直接写入到stdout
+            sys.stdout.write(response + '\n')
+            sys.stdout.flush()
         except Exception as e:
             logger.error(f"Error writing response: {e}")
     

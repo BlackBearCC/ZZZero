@@ -16,7 +16,7 @@ from core.types import AgentType, ToolConfig, LLMConfig, TaskResult
 from agents.react_agent import ReactAgent
 from llm.base import LLMFactory
 
-from tools.mcp_tools import MCPToolManager
+from tools.mcp_tools_direct import MCPToolManagerDirect as MCPToolManager
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -218,15 +218,14 @@ class AgentApp:
                         initial_choices = []
                         default_enabled = []
                         try:
-                            from tools.mcp_manager import mcp_manager
-                            servers = mcp_manager.list_servers()
-                            for server in servers:
-                                if 'name' in server and 'id' in server:
-                                    choice = (f"{server['name']} ({server['id']})", server['id'])
+                            if self.tool_manager:
+                                servers_status = self.tool_manager.get_servers_status()
+                                for server_id, server_info in servers_status.items():
+                                    choice = (f"{server_info['name']} ({server_id})", server_id)
                                     initial_choices.append(choice)
                                     # 默认勾选csv、chromadb和filemanager
-                                    if server['id'] in ['csv', 'chromadb', 'filemanager']:
-                                        default_enabled.append(server['id'])
+                                    if server_id in ['csv', 'chromadb', 'filemanager']:
+                                        default_enabled.append(server_id)
                         except Exception as e:
                             print(f"初始化MCP服务器失败: {e}")
                         
@@ -545,10 +544,12 @@ class AgentApp:
         import gradio as gr
         
         try:
-            from tools.mcp_manager import mcp_manager
+            if not self.tool_manager:
+                error_html = "<div style='color: red;'>❌ 工具管理器未初始化</div>"
+                return error_html, gr.update(choices=[])
             
-            # 使用正确的方法获取服务器列表
-            servers_dict = mcp_manager.list_servers()
+            # 使用工具管理器获取服务器状态
+            servers_dict = self.tool_manager.get_servers_status()
             
             # 转换为列表格式以兼容后续代码
             servers = []
@@ -668,14 +669,11 @@ class AgentApp:
                 self.tool_manager.set_enabled_servers(enabled_servers)
                 logger.info(f"已更新启用的MCP服务器: {enabled_servers}")
             
-            # 获取最新的服务器状态
-            from tools.mcp_manager import mcp_manager
-            
             # 更新配置中的enabled_mcp_servers
             self.current_config['enabled_mcp_servers'] = enabled_servers
             
-            # 获取所有服务器
-            servers_dict = mcp_manager.list_servers()
+            # 获取所有服务器状态
+            servers_dict = self.tool_manager.get_servers_status() if self.tool_manager else {}
             if not servers_dict:
                 status_html, _ = await self._refresh_mcp_servers()
                 return status_html
@@ -718,8 +716,6 @@ class AgentApp:
         try:
             if not name or not url:
                 return name, url, "<div style='color: red;'>❌ 请填写服务器名称和URL</div>", gr.update()
-            
-            from tools.mcp_manager import mcp_manager
             
             # 生成服务器ID
             server_id = f"remote_{name.lower().replace(' ', '_')}"
