@@ -167,6 +167,24 @@ class DoubaoLLM(BaseLLMProvider):
                     except json.JSONDecodeError:
                         continue
                         
+    async def call_llm(self, prompt: str, max_tokens: int = 1000, temperature: float = 0.7) -> tuple[bool, str]:
+        """统一LLM调用接口，用于批处理器"""
+        try:
+            # 将prompt转换为Message格式
+            messages = [Message(role=MessageRole.USER, content=prompt)]
+            
+            # 调用generate方法
+            response = await self.generate(
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature
+            )
+            
+            return True, response.content
+            
+        except Exception as e:
+            return False, str(e)
+    
     def count_tokens(self, text: str) -> int:
         """估算token数量"""
         # 中文大约1.5个字符一个token，英文大约4个字符一个token

@@ -390,10 +390,18 @@ class AgentApp:
                                 label="CSV文件信息"
                             )
                             
+                            # 数据预览表格
+                            csv_preview_table = gr.DataFrame(
+                                value=[],
+                                label="📊 数据预览（前5行）",
+                                interactive=False,
+                                wrap=True
+                            )
+                            
                             csv_fields_selection = gr.CheckboxGroup(
                                 choices=[],
                                 value=[],
-                                label="选择要在批处理中使用的字段",
+                                label="选择要在批处理中使用的字段（勾选需要的字段）",
                                 interactive=True
                             )
                             
@@ -489,26 +497,37 @@ class AgentApp:
                                 <p><strong>编码:</strong> {csv_structure.get('detected_encoding', 'unknown')}</p>
                                 <p><strong>行数:</strong> {result.get('csv_rows', 0)}</p>
                                 <p><strong>列数:</strong> {len(columns)}</p>
-                                <details>
-                                    <summary><strong>数据预览</strong></summary>
-                                    <table style='width: 100%; border-collapse: collapse; margin-top: 10px;'>
-                                        <tr style='background-color: #e0e0e0;'>
-                                            {''.join(f'<th style="border: 1px solid #ccc; padding: 4px;">{col}</th>' for col in columns[:5])}
-                                        </tr>
-                                        <tr>
-                                            {''.join(f'<td style="border: 1px solid #ccc; padding: 4px; font-size: 0.9em;">{sample_data.get(col, [""])[0]}</td>' for col in columns[:5])}
-                                        </tr>
-                                    </table>
-                                </details>
+                                <p><strong>💡 提示:</strong> 请查看下方的数据预览表格，了解每个字段的内容，然后选择需要在批处理中使用的字段。</p>
                             </div>
                             """
                             
-                            # 生成字段选择选项（显示列名和类型）
+                            # 生成数据预览表格
+                            preview_data = []
+                            max_preview_rows = min(5, len(self.batch_processor.csv_data) if self.batch_processor else 0)
+                            
+                            if self.batch_processor and self.batch_processor.csv_data:
+                                for i in range(max_preview_rows):
+                                    row_data = []
+                                    for col in columns:
+                                        cell_value = self.batch_processor.csv_data[i].get(col, '')
+                                        # 限制单元格内容长度，避免界面过宽
+                                        if isinstance(cell_value, str) and len(cell_value) > 50:
+                                            cell_value = cell_value[:47] + "..."
+                                        row_data.append(str(cell_value))
+                                    preview_data.append(row_data)
+                            
+                            # 生成字段选择选项（显示列名、类型和示例数据）
                             field_choices = []
                             default_selected = []
                             for col in columns:
                                 col_type = column_types.get(col, 'unknown')
-                                choice_label = f"{col} ({col_type})"
+                                # 获取该列的示例数据
+                                sample_values = sample_data.get(col, [''])
+                                sample_preview = sample_values[0] if sample_values else ''
+                                if len(str(sample_preview)) > 20:
+                                    sample_preview = str(sample_preview)[:17] + "..."
+                                
+                                choice_label = f"{col} ({col_type}) - 例: {sample_preview}"
                                 field_choices.append((choice_label, col))
                                 default_selected.append(col)  # 默认全选
                             
@@ -519,13 +538,14 @@ class AgentApp:
                                 📊 数据行数: {result.get('csv_rows', 0)}<br/>
                                 🔤 编码: {csv_structure.get('detected_encoding', 'unknown')}<br/>
                                 📋 字段数: {len(columns)}<br/>
-                                ⚙️ 请选择要使用的字段，然后更新配置
+                                ⚙️ 请查看数据预览，选择需要的字段，然后点击"更新字段选择"
                             </div>
                             """
                             
                             return (status_html, 
                                     gr.update(visible=True), 
                                     csv_info_html, 
+                                    gr.update(value=preview_data, headers=columns),
                                     gr.update(choices=field_choices, value=default_selected))
                         else:
                             status_html = f"""
@@ -538,6 +558,7 @@ class AgentApp:
                             return (status_html, 
                                     gr.update(visible=False), 
                                     "<div>CSV解析失败</div>", 
+                                    gr.update(value=[], headers=[]),
                                     gr.update(choices=[], value=[]))
                             
                     elif enabled and not csv_file:
@@ -550,6 +571,7 @@ class AgentApp:
                         return (status_html, 
                                 gr.update(visible=False), 
                                 "<div>等待CSV文件...</div>", 
+                                gr.update(value=[], headers=[]),
                                 gr.update(choices=[], value=[]))
                     else:
                         # 关闭批处理模式
@@ -565,6 +587,7 @@ class AgentApp:
                         return (status_html, 
                                 gr.update(visible=False), 
                                 "<div>批处理模式已关闭</div>", 
+                                gr.update(value=[], headers=[]),
                                 gr.update(choices=[], value=[]))
                     
                 except Exception as e:
@@ -577,7 +600,8 @@ class AgentApp:
                     return (error_html, 
                             gr.update(visible=False), 
                             f"<div>错误: {str(e)}</div>", 
-                                                         gr.update(choices=[], value=[]))
+                            gr.update(value=[], headers=[]),
+                            gr.update(choices=[], value=[]))
             
             async def on_fields_update(selected_fields):
                 """更新字段选择"""
@@ -677,7 +701,7 @@ class AgentApp:
                 component.change(
                     on_batch_config_change,
                     inputs=[batch_enabled, csv_file_upload, batch_size, concurrent_tasks],
-                    outputs=[batch_status, csv_fields_section, csv_info_display, csv_fields_selection]
+                    outputs=[batch_status, csv_fields_section, csv_info_display, csv_preview_table, csv_fields_selection]
                 )
             
             # 绑定字段选择更新事件
