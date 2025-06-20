@@ -111,10 +111,13 @@ class ChromaDBManager:
                 ef = self.embedding_functions['default']
                 logger.warning(f"嵌入函数 '{embedding_function}' 不可用，使用默认函数")
             
+            # 处理metadata - 某些版本的ChromaDB不接受空的metadata
+            collection_metadata = metadata or {"created_by": "mcp_server"}
+            
             collection = self.client.create_collection(
                 name=name,
                 embedding_function=ef,
-                metadata=metadata or {}
+                metadata=collection_metadata
             )
             
             self._collections_cache[name] = collection
@@ -634,8 +637,13 @@ class ChromaDBCRUDServer(StdioMCPServer):
         """处理工具调用"""
         try:
             if name == "create_collection":
+                # 支持两种参数名称：name 和 collection_name（向后兼容）
+                collection_name = arguments.get("name") or arguments.get("collection_name")
+                if not collection_name:
+                    raise ValueError("缺少必需参数：name 或 collection_name")
+                
                 result = self.db.create_collection(
-                    arguments["name"],
+                    collection_name,
                     arguments.get("embedding_function", "default"),
                     arguments.get("metadata")
                 )

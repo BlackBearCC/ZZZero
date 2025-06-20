@@ -318,8 +318,22 @@ class StreamReactAgentNode(BaseNode):
             except Exception:
                 pass
         
+        # 智能参数映射：当输入是纯文本时，根据常见模式进行参数映射
+        # 这对于自然语言输入很有用，比如 "班级信息" -> {"name": "班级信息"}
+        if not any(char in tool_input for char in ['=', '{', '}', ',']):
+            # 纯文本输入，尝试智能映射
+            return self._smart_parameter_mapping(tool_input)
+        
         # 默认情况：作为单个输入参数
         return {"input": tool_input}
+    
+    def _smart_parameter_mapping(self, tool_input: str) -> Dict[str, Any]:
+        """智能参数映射 - 根据输入内容推断合适的参数名"""
+        # 常见的参数映射模式
+        # 这里可以根据具体工具的需求进行扩展
+        
+        # 对于集合/表名等，通常使用 name 参数
+        return {"name": tool_input}
     
     def _build_system_prompt(self, context: Any) -> str:
         """构建流式ReAct系统提示词"""
