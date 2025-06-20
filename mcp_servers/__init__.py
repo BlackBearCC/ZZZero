@@ -5,10 +5,12 @@ MCP服务器包
 
 from .csv_crud_server import CSVCRUDServer
 from .chromadb_crud_server import ChromaDBCRUDServer
+from .python_executor_server import PythonExecutorServer
 
 __all__ = [
     'CSVCRUDServer',
-    'ChromaDBCRUDServer'
+    'ChromaDBCRUDServer',
+    'PythonExecutorServer'
 ]
 
 __version__ = "0.1.0" 

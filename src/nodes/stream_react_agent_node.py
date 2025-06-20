@@ -36,10 +36,10 @@ class StreamReactAgentNode(BaseNode):
         # 创建正则解析器用于提取Action和Action Input
         self.react_parser = RegexParser({
             'action': r'Action:\s*([^\n]+)',
-            'action_input': r'Action Input:\s*([^\n]+)', 
+            'action_input': r'Action Input:\s*(.*?)(?=\nObservation:|$)', 
             'thought': r'Thought:\s*([^\n]+)',
             'observation': r'Observation:\s*([^\n]+)'
-        })
+        }, flags=re.DOTALL)
         
     async def execute(self, input_data: NodeInput) -> NodeOutput:
         """执行流式ReAct推理逻辑"""
@@ -280,60 +280,14 @@ class StreamReactAgentNode(BaseNode):
             return f"工具执行失败: {str(e)}"
     
     def _parse_tool_arguments(self, tool_input: str) -> Dict[str, Any]:
-        """解析工具输入参数，支持多种格式"""
-        import json
-        
+        """解析工具输入参数 - 超级简化版本"""
         if not tool_input or not tool_input.strip():
             return {}
         
-        tool_input = tool_input.strip()
-        
-        # 尝试解析JSON格式
-        if tool_input.startswith('{') and tool_input.endswith('}'):
-            try:
-                return json.loads(tool_input)
-            except json.JSONDecodeError as e:
-                # JSON解析失败，记录详细错误信息
-                print(f"JSON解析失败: {e}, 输入内容: {tool_input}")
-                return {"input": tool_input}
-        
-        # 尝试解析键值对格式 (key=value, key2=value2)
-        if '=' in tool_input and ',' in tool_input:
-            try:
-                arguments = {}
-                pairs = tool_input.split(',')
-                for pair in pairs:
-                    if '=' in pair:
-                        key, value = pair.split('=', 1)
-                        arguments[key.strip()] = value.strip()
-                return arguments
-            except Exception:
-                pass
-        
-        # 尝试解析单个键值对格式 (key=value)
-        if '=' in tool_input and ',' not in tool_input:
-            try:
-                key, value = tool_input.split('=', 1)
-                return {key.strip(): value.strip()}
-            except Exception:
-                pass
-        
-        # 智能参数映射：当输入是纯文本时，根据常见模式进行参数映射
-        # 这对于自然语言输入很有用，比如 "班级信息" -> {"name": "班级信息"}
-        if not any(char in tool_input for char in ['=', '{', '}', ',']):
-            # 纯文本输入，尝试智能映射
-            return self._smart_parameter_mapping(tool_input)
-        
-        # 默认情况：作为单个输入参数
-        return {"input": tool_input}
+        # 就这么简单，直接返回input参数
+        return {"input": tool_input.strip()}
     
-    def _smart_parameter_mapping(self, tool_input: str) -> Dict[str, Any]:
-        """智能参数映射 - 根据输入内容推断合适的参数名"""
-        # 常见的参数映射模式
-        # 这里可以根据具体工具的需求进行扩展
-        
-        # 对于集合/表名等，通常使用 name 参数
-        return {"name": tool_input}
+# 移除了不必要的修复和映射函数
     
     def _build_system_prompt(self, context: Any) -> str:
         """构建流式ReAct系统提示词"""

@@ -247,8 +247,26 @@ class ReactAgent(BaseAgent):
             parameters={}
         )
         
-        # 直接执行流式节点
-        stream_node = graph.nodes["agent"]
+        # 找到流式节点 - 根据图的构建方式确定节点名称
+        stream_node = None
+        if "agent" in graph.nodes:
+            stream_node = graph.nodes["agent"]
+        elif "chat" in graph.nodes:
+            stream_node = graph.nodes["chat"]
+        else:
+            # 获取第一个节点作为备选
+            if graph.nodes:
+                stream_node = list(graph.nodes.values())[0]
+        
+        if not stream_node:
+            # 如果没有找到节点，返回错误
+            yield {
+                "type": "error",
+                "content": "无法找到执行节点",
+                "task_id": task_id,
+                "metadata": {"error": "No execution node found"}
+            }
+            return
         
         # 如果是流式节点，直接调用其流式方法
         if hasattr(stream_node, '_stream_react_generation'):

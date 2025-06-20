@@ -128,8 +128,29 @@ class MCPToolManager:
             tool_key = f"chromadb_{tool.name}"
             self.all_available_tools[tool_key] = tool
         
-        # 默认启用CSV服务器
-        self.set_enabled_servers(["csv"])
+        # 注册Python执行器服务器
+        python_config = MCPServerConfig(
+            name="Python代码执行服务器",
+            description="安全的Python代码执行环境"
+        )
+        self.servers["python"] = python_config
+        
+        # 注册Python执行器工具
+        python_tools = [
+            MCPTool("execute_python", "执行Python代码", "python"),
+            MCPTool("install_python_package", "安装Python包", "python"),
+            MCPTool("list_installed_packages", "列出已安装的包", "python"),
+            MCPTool("get_execution_history", "获取执行历史", "python"),
+            MCPTool("clear_execution_history", "清空执行历史", "python"),
+            MCPTool("check_code_safety", "检查代码安全性", "python"),
+        ]
+        
+        for tool in python_tools:
+            tool_key = f"python_{tool.name}"
+            self.all_available_tools[tool_key] = tool
+        
+        # 默认启用CSV和Python服务器
+        self.set_enabled_servers(["csv", "python"])
     
     async def initialize(self):
         """初始化工具管理器"""
@@ -176,6 +197,18 @@ class MCPToolManager:
                     return True
                 except ImportError as e:
                     logger.warning(f"ChromaDB服务器启动失败，可能缺少依赖: {e}")
+                    return False
+                    
+            elif server_id == "python":
+                # 直接导入并实例化Python执行器服务器
+                try:
+                    from mcp_servers.python_executor_server import PythonExecutorServer
+                    server_instance = PythonExecutorServer("./workspace/python_executor")
+                    self.server_instances[server_id] = server_instance
+                    logger.info(f"✅ MCP服务器启动成功: {config.name}")
+                    return True
+                except Exception as e:
+                    logger.error(f"Python执行器服务器启动失败: {e}")
                     return False
             else:
                 logger.error(f"未知服务器类型: {server_id}")

@@ -11,6 +11,7 @@
 - **批量任务处理**：支持并行/串行批量任务执行
 - **多LLM支持**：支持OpenAI、Anthropic、豆包等多种LLM
 - **强大的解析器**：支持JSON、工具调用、结构化输出等多种解析方式
+- **Python代码执行**：安全的Python代码执行环境，支持自动依赖管理
 
 ## ✨ 新功能
 
@@ -36,6 +37,15 @@
 - **实时状态监控**：查看每个节点的执行状态、耗时和输出预览
 - **流程图展示**：使用Mermaid自动生成执行流程图
 - **性能指标**：显示详细的执行指标和统计信息
+
+### Python执行器MCP服务器
+
+- **安全代码执行**：在隔离的虚拟环境中执行Python代码
+- **自动依赖管理**：智能检测并安装代码所需的Python包
+- **安全检查机制**：自动检测危险函数和模块，防止恶意代码执行
+- **执行历史记录**：记录所有代码执行历史，便于调试和审计
+- **包管理功能**：支持包安装、列表查看等操作
+- **超时控制**：防止代码无限循环或长时间运行
 
 ## 📁 项目结构
 
@@ -65,6 +75,12 @@ ZZZero/
 │   ├── prompts/           # 提示模板
 │   └── web/               # Web界面
 │       └── app.py         # Gradio应用
+├── mcp_servers/          # MCP服务器实现
+│   ├── csv_crud_server.py # CSV数据操作服务器
+│   ├── chromadb_crud_server.py # 向量数据库服务器
+│   └── python_executor_server.py # Python代码执行服务器
+├── examples/              # 使用示例
+│   └── 
 ├── tests/                 # 测试文件
 ├── config/                # 配置文件
 ├── main.py               # 主入口
@@ -213,6 +229,51 @@ parallel_search = ParallelNode(
     timeout=10.0,  # 10秒超时
     max_workers=3  # 最多3个并行任务
 )
+```
+
+### 使用Python执行器
+
+```python
+from src.tools.mcp_tools import MCPToolManager
+from src.nodes.stream_react_agent_node import StreamReactAgentNode
+
+# 创建工具管理器并启用Python执行器
+tool_manager = MCPToolManager()
+tool_manager.set_enabled_servers(["python"])
+await tool_manager.initialize()
+
+# 创建React Agent
+agent = StreamReactAgentNode(
+    model_name="deepseek-chat",
+    tool_manager=tool_manager,
+    max_iterations=5
+)
+
+# 使用Agent执行Python代码
+input_data = {
+    "messages": [
+        {
+            "role": "user",
+            "content": "请帮我计算斐波那契数列的前10项，并用Python实现"
+        }
+    ]
+}
+
+async for chunk in agent.stream(input_data):
+    if chunk.get("type") == "tool_result":
+        result = chunk.get("result", {})
+        if "stdout" in result:
+            print(f"执行结果: {result['stdout']}")
+```
+
+### 运行Python执行器示例
+
+```bash
+# 演示模式 - 运行预设的演示用例
+python examples/python_executor_example.py --mode demo
+
+# 交互模式 - 与Python执行器进行交互
+python examples/python_executor_example.py --mode interactive
 ```
 
 ## 🔧 核心概念
