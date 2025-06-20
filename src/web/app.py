@@ -16,7 +16,7 @@ from core.types import AgentType, ToolConfig, LLMConfig, TaskResult
 from agents.react_agent import ReactAgent
 from llm.base import LLMFactory
 
-from tools.mcp_tools_direct import MCPToolManagerDirect as MCPToolManager
+from tools.mcp_tools import MCPToolManager 
 
 # 配置日志
 logger = logging.getLogger(__name__)

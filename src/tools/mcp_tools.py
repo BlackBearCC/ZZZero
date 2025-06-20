@@ -1,24 +1,21 @@
-#!/usr/bin/env python3
 """
-简化版MCP工具管理器 - 直接管理服务器进程和工具调用
+MCP工具管理器 - 直接调用服务器实例版本
 """
 import asyncio
-import logging
 import json
-import subprocess
+import logging
+import os
+from dataclasses import dataclass
+from typing import Dict, List, Any, Optional, Set
+from pathlib import Path
+
 import sys
 import os
-import time
-import atexit
-from pathlib import Path
-from typing import Dict, List, Any, Optional
-from dataclasses import dataclass
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from tools.base import ToolManager
 from core.base import BaseTool
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass
 class ToolResult:
@@ -28,16 +25,11 @@ class ToolResult:
     error: Optional[str] = None
     tool_name: Optional[str] = None
 
-
 @dataclass
 class MCPServerConfig:
     """MCP服务器配置"""
     name: str
-    command: List[str]
-    working_dir: Optional[str] = None
-    env: Optional[Dict[str, str]] = None
     description: str = ""
-
 
 @dataclass
 class MCPTool:
@@ -47,155 +39,117 @@ class MCPTool:
     server_id: str
     schema: Optional[Dict[str, Any]] = None
 
-
 class MCPBaseTool(BaseTool):
-    """MCP工具的BaseTool适配器"""
+    """MCP工具基类"""
     
     def __init__(self, mcp_tool: MCPTool, tool_manager: 'MCPToolManager'):
-        """
-        初始化MCP工具适配器
-        
-        Args:
-            mcp_tool: MCP工具信息
-            tool_manager: MCP工具管理器引用
-        """
-        # 构建参数描述
-        parameters = {
-            "data": {
-                "type": "object", 
-                "description": "工具执行参数",
-                "required": False
-            }
-        }
-        
         super().__init__(
-            name=f"{mcp_tool.server_id}_{mcp_tool.name}",
-            description=f"[{mcp_tool.server_id}] {mcp_tool.description}",
-            parameters=parameters
+            name=mcp_tool.name,
+            description=mcp_tool.description,
+            parameters=mcp_tool.schema or {}
         )
-        
         self.mcp_tool = mcp_tool
         self.tool_manager = tool_manager
     
     async def execute(self, **kwargs) -> Any:
         """执行MCP工具"""
-        return await self.tool_manager._call_mcp_tool(self.mcp_tool, kwargs)
+        return await self.tool_manager.execute_tool(self.mcp_tool.name, kwargs)
 
-
-class MCPToolManager(ToolManager):
-    """统一的MCP工具管理器 - 管理服务器进程和工具调用"""
+class MCPToolManager:
+    """MCP工具管理器 - 直接调用服务器实例"""
     
     def __init__(self):
-        """初始化MCP工具管理器"""
-        super().__init__()
         
-        # 服务器管理
+        # 服务器实例（直接实例化，不使用子进程）
+        self.server_instances: Dict[str, Any] = {}
+        
+        # 服务器配置
         self.servers: Dict[str, MCPServerConfig] = {}
-        self.processes: Dict[str, subprocess.Popen] = {}
-        self.project_root = Path(__file__).parent.parent.parent
         
-        # 工具管理
+        # 工具注册
+        self.tools: Dict[str, MCPBaseTool] = {}
         self.all_available_tools: Dict[str, MCPTool] = {}
-        self.enabled_servers: set = set()
+        
+        # 启用状态
+        self.enabled_servers: Set[str] = set()
+        self.enabled_tools: Set[str] = set()
         
         # 注册服务器和工具
         self._register_servers_and_tools()
         
-        # 注册退出清理
-        atexit.register(self._cleanup_on_exit)
-        
-        logger.info("MCP工具管理器初始化完成")
+        logger.info("MCP工具管理器（直接调用版）初始化完成")
     
     def _register_servers_and_tools(self):
-        """注册服务器配置和工具定义"""
-        python_exe = sys.executable
+        """注册服务器配置和工具"""
         
-        # CSV服务器
-        csv_server_path = self.project_root / "mcp_servers" / "csv_crud_server.py"
-        if csv_server_path.exists():
-            self.servers["csv"] = MCPServerConfig(
-                name="CSV CRUD服务器",
-                command=[python_exe, str(csv_server_path)],
-                working_dir=str(self.project_root),
-                description="CSV文件数据库CRUD操作服务器"
-            )
-            
-            # 注册CSV工具
-            csv_tools = [
-                MCPTool("create_table", "创建CSV表", "csv"),
-                MCPTool("insert_records", "插入记录", "csv"), 
-                MCPTool("query_records", "查询记录", "csv"),
-                MCPTool("update_records", "更新记录", "csv"),
-                MCPTool("delete_records", "删除记录", "csv"),
-                MCPTool("list_tables", "列出所有表", "csv"),
-                MCPTool("get_table_info", "获取表信息", "csv"),
-                MCPTool("drop_table", "删除表", "csv"),
-            ]
-            for tool in csv_tools:
-                tool_key = f"{tool.server_id}_{tool.name}"
-                self.all_available_tools[tool_key] = tool
-                # 创建BaseTool适配器并注册
-                base_tool = MCPBaseTool(tool, self)
-                self.register_tool(base_tool)
+        # 注册CSV服务器
+        csv_config = MCPServerConfig(
+            name="CSV CRUD服务器",
+            description="CSV文件数据库CRUD操作服务器"
+        )
+        self.servers["csv"] = csv_config
         
-        # ChromaDB服务器
-        chroma_server_path = self.project_root / "mcp_servers" / "chromadb_crud_server.py"
-        if chroma_server_path.exists():
-            self.servers["chromadb"] = MCPServerConfig(
-                name="ChromaDB CRUD服务器",
-                command=[python_exe, str(chroma_server_path)],
-                working_dir=str(self.project_root),
-                description="ChromaDB向量数据库操作服务器"
-            )
-            
-            # 注册ChromaDB工具
-            chroma_tools = [
-                MCPTool("create_collection", "创建集合", "chromadb"),
-                MCPTool("add_documents", "添加文档", "chromadb"),
-                MCPTool("query_documents", "查询文档", "chromadb"),
-                MCPTool("update_documents", "更新文档", "chromadb"),
-                MCPTool("delete_documents", "删除文档", "chromadb"),
-                MCPTool("list_collections", "列出所有集合", "chromadb"),
-                MCPTool("get_collection_info", "获取集合信息", "chromadb"),
-                MCPTool("delete_collection", "删除集合", "chromadb"),
-            ]
-            for tool in chroma_tools:
-                tool_key = f"{tool.server_id}_{tool.name}"
-                self.all_available_tools[tool_key] = tool
-                # 创建BaseTool适配器并注册
-                base_tool = MCPBaseTool(tool, self)
-                self.register_tool(base_tool)
+        # 注册CSV工具
+        csv_tools = [
+            MCPTool("create_table", "创建CSV表", "csv"),
+            MCPTool("insert_records", "插入记录", "csv"),
+            MCPTool("query_records", "查询记录", "csv"),
+            MCPTool("update_records", "更新记录", "csv"),
+            MCPTool("delete_records", "删除记录", "csv"),
+            MCPTool("get_table_info", "获取表信息", "csv"),
+            MCPTool("list_tables", "列出所有表", "csv"),
+            MCPTool("drop_table", "删除表", "csv"),
+        ]
+        
+        for tool in csv_tools:
+            tool_key = f"csv_{tool.name}"
+            self.all_available_tools[tool_key] = tool
+        
+        # 注册ChromaDB服务器
+        chromadb_config = MCPServerConfig(
+            name="ChromaDB CRUD服务器",
+            description="ChromaDB向量数据库操作服务器"
+        )
+        self.servers["chromadb"] = chromadb_config
+        
+        # 注册ChromaDB工具
+        chromadb_tools = [
+            MCPTool("create_collection", "创建集合", "chromadb"),
+            MCPTool("add_documents", "添加文档", "chromadb"),
+            MCPTool("query_documents", "查询文档", "chromadb"),
+            MCPTool("update_documents", "更新文档", "chromadb"),
+            MCPTool("delete_documents", "删除文档", "chromadb"),
+            MCPTool("get_collection_info", "获取集合信息", "chromadb"),
+            MCPTool("list_collections", "列出所有集合", "chromadb"),
+            MCPTool("delete_collection", "删除集合", "chromadb"),
+        ]
+        
+        for tool in chromadb_tools:
+            tool_key = f"chromadb_{tool.name}"
+            self.all_available_tools[tool_key] = tool
         
         # 默认启用CSV服务器
         self.set_enabled_servers(["csv"])
     
     async def initialize(self):
-        """初始化工具管理器 - 启动MCP服务器"""
+        """初始化工具管理器"""
         logger.info("开始启动MCP服务器...")
-        results = {}
         
-        for server_id in self.servers:
-            try:
-                results[server_id] = await self._start_server(server_id)
-            except Exception as e:
-                logger.error(f"启动服务器失败 {server_id}: {e}")
-                results[server_id] = False
+        # 启动启用的服务器
+        for server_id in self.enabled_servers:
+            await self._start_server(server_id)
         
-        running_count = sum(results.values())
-        total_count = len(results)
-        logger.info(f"MCP服务器启动完成：{running_count}/{total_count} 个服务器运行中")
-        
-        # 更新启用的工具
+        logger.info(f"MCP服务器启动完成：{len(self.server_instances)}/{len(self.enabled_servers)} 个服务器运行中")
         self._update_enabled_tools()
     
     async def _start_server(self, server_id: str) -> bool:
-        """启动MCP服务器"""
+        """启动MCP服务器实例"""
         if server_id not in self.servers:
             logger.error(f"未知服务器: {server_id}")
             return False
         
         # 如果已经在运行，跳过
-        if self._is_server_running(server_id):
+        if server_id in self.server_instances:
             logger.info(f"MCP服务器已在运行: {self.servers[server_id].name}")
             return True
         
@@ -203,79 +157,28 @@ class MCPToolManager(ToolManager):
         
         try:
             logger.info(f"启动MCP服务器: {config.name}")
-            logger.info(f"启动命令: {' '.join(config.command)}")
-            logger.info(f"工作目录: {config.working_dir}")
             
-            # 启动进程
-            process = subprocess.Popen(
-                config.command,
-                cwd=config.working_dir,
-                env={**os.environ, **(config.env or {})},
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                stdin=subprocess.PIPE,
-                text=True,
-                bufsize=0
-            )
-            
-            # 等待进程启动
-            await asyncio.sleep(0.5)
-            
-            # 检查进程是否还在运行
-            poll_result = process.poll()
-            if poll_result is None:
-                self.processes[server_id] = process
-                logger.info(f"✅ MCP服务器启动成功: {config.name} (PID: {process.pid})")
-                
-                # 尝试发送一个测试请求来验证服务器是否正常工作
-                try:
-                    test_request = {
-                        "jsonrpc": "2.0",
-                        "method": "initialize",
-                        "params": {
-                            "protocol_version": "2024-11-05",
-                            "client_info": {
-                                "name": "mcp-tool-manager",
-                                "version": "1.0.0"
-                            },
-                            "capabilities": {}
-                        },
-                        "id": 1
-                    }
-                    
-                    request_line = json.dumps(test_request) + '\n'
-                    process.stdin.write(request_line)
-                    process.stdin.flush()
-                    
-                    # 等待响应
-                    await asyncio.sleep(0.3)
-                    
-                    # 尝试读取响应（非阻塞）
-                    import select
-                    if hasattr(select, 'select'):  # Unix系统
-                        ready, _, _ = select.select([process.stdout], [], [], 0)
-                        if ready:
-                            response = process.stdout.readline()
-                            if response:
-                                logger.info(f"服务器 {server_id} 初始化响应: {response.strip()}")
-                            else:
-                                logger.warning(f"服务器 {server_id} 初始化无响应")
-                    else:  # Windows系统
-                        logger.info(f"Windows系统，跳过初始化测试")
-                        
-                except Exception as e:
-                    logger.warning(f"服务器 {server_id} 初始化测试失败: {e}")
-                
+            if server_id == "csv":
+                # 直接导入并实例化CSV服务器
+                from mcp_servers.csv_crud_server import CSVCRUDServer
+                server_instance = CSVCRUDServer("./workspace/output")
+                self.server_instances[server_id] = server_instance
+                logger.info(f"✅ MCP服务器启动成功: {config.name}")
                 return True
+                
+            elif server_id == "chromadb":
+                # 直接导入并实例化ChromaDB服务器
+                try:
+                    from mcp_servers.chromadb_crud_server import ChromaDBCRUDServer
+                    server_instance = ChromaDBCRUDServer("./workspace/vectordb")
+                    self.server_instances[server_id] = server_instance
+                    logger.info(f"✅ MCP服务器启动成功: {config.name}")
+                    return True
+                except ImportError as e:
+                    logger.warning(f"ChromaDB服务器启动失败，可能缺少依赖: {e}")
+                    return False
             else:
-                # 进程已退出，获取错误信息
-                stdout, stderr = process.communicate()
-                logger.error(f"❌ MCP服务器启动失败: {config.name}")
-                logger.error(f"退出码: {poll_result}")
-                if stdout:
-                    logger.error(f"stdout: {stdout}")
-                if stderr:
-                    logger.error(f"stderr: {stderr}")
+                logger.error(f"未知服务器类型: {server_id}")
                 return False
                 
         except Exception as e:
@@ -284,11 +187,7 @@ class MCPToolManager(ToolManager):
     
     def _is_server_running(self, server_id: str) -> bool:
         """检查服务器是否运行"""
-        if server_id not in self.processes:
-            return False
-        
-        process = self.processes[server_id]
-        return process.poll() is None
+        return server_id in self.server_instances
     
     def set_enabled_servers(self, server_ids: List[str]):
         """设置启用的服务器"""
@@ -309,69 +208,25 @@ class MCPToolManager(ToolManager):
         logger.info(f"工具暴露更新：{enabled_count}/{total_count} 个工具可用")
     
     async def _call_mcp_tool(self, tool: MCPTool, arguments: Dict[str, Any]) -> Any:
-        """调用MCP工具 - 真实的JSON-RPC通信"""
-        # 添加详细调试信息
-        logger.info(f"准备调用工具: {tool.name}, 服务器: {tool.server_id}")
-        logger.info(f"当前运行的服务器进程: {list(self.processes.keys())}")
-        
-        # 检查服务器是否在进程列表中
-        if tool.server_id not in self.processes:
-            logger.error(f"服务器 {tool.server_id} 不在进程列表中")
-            logger.error(f"可用进程: {list(self.processes.keys())}")
-            raise RuntimeError(f"MCP服务器 {tool.server_id} 未运行 - 进程不存在")
-        
-        # 检查进程状态
-        process = self.processes[tool.server_id]
-        poll_result = process.poll()
-        logger.info(f"服务器 {tool.server_id} 进程状态: poll()={poll_result} (None表示运行中)")
-        
+        """调用MCP工具 - 直接调用服务器实例方法"""
         if not self._is_server_running(tool.server_id):
-            logger.error(f"服务器 {tool.server_id} 进程已退出，退出码: {poll_result}")
-            raise RuntimeError(f"MCP服务器 {tool.server_id} 未运行 - 进程已退出")
+            raise RuntimeError(f"MCP服务器 {tool.server_id} 未运行")
         
-        # 构造MCP工具调用请求
-        request = {
-            "jsonrpc": "2.0",
-            "id": int(time.time() * 1000),
-            "method": "tools/call",
-            "params": {
-                "name": tool.name,
-                "arguments": arguments
-            }
-        }
-        
-        logger.info(f"发送JSON-RPC请求: {json.dumps(request, ensure_ascii=False)}")
+        server_instance = self.server_instances[tool.server_id]
         
         try:
-            # 发送请求
-            request_line = json.dumps(request) + '\n'
-            process.stdin.write(request_line)
-            process.stdin.flush()
-            logger.info("请求已发送，等待响应...")
+            logger.info(f"直接调用工具: {tool.name}, 服务器: {tool.server_id}")
+            logger.info(f"参数: {arguments}")
             
-            # 读取响应
-            response_line = process.stdout.readline()
-            if not response_line:
-                logger.error("MCP服务器无响应")
-                raise RuntimeError("MCP服务器无响应")
+            # 直接调用服务器的_call_tool方法
+            result = await server_instance._call_tool(tool.name, arguments, None)
             
-            logger.info(f"收到响应: {response_line.strip()}")
-            response = json.loads(response_line.strip())
-            
-            # 检查响应
-            if "error" in response:
-                logger.error(f"MCP工具调用错误: {response['error']}")
-                raise RuntimeError(f"MCP工具调用错误: {response['error']}")
-            
-            # 返回工具调用结果，提取content字段
-            result = response.get("result", {})
             logger.info(f"工具调用成功，原始结果: {result}")
             
+            # 提取文本内容
             if isinstance(result, dict) and "content" in result:
-                # 如果结果包含content字段，提取文本内容
                 content = result["content"]
                 if isinstance(content, list) and len(content) > 0:
-                    # 提取第一个content项的文本
                     first_content = content[0]
                     if isinstance(first_content, dict) and "text" in first_content:
                         extracted_text = first_content["text"]
@@ -474,63 +329,44 @@ class MCPToolManager(ToolManager):
     
     async def cleanup(self):
         """清理资源"""
-        logger.info("正在停止所有MCP服务器...")
-        for server_id in list(self.processes.keys()):
-            await self._stop_server(server_id)
-        logger.info("MCP工具管理器已清理")
-    
-    def cleanup_sync(self):
-        """同步清理资源"""
-        logger.info("正在同步停止所有MCP服务器...")
-        for server_id in list(self.processes.keys()):
-            if server_id in self.processes:
-                try:
-                    process = self.processes[server_id]
-                    process.terminate()
-                    process.wait(timeout=5)
-                except Exception as e:
-                    logger.warning(f"停止服务器 {server_id} 时出错: {e}")
-                    try:
-                        process.kill()
-                    except:
-                        pass
-                finally:
-                    if server_id in self.processes:
-                        del self.processes[server_id]
+        logger.info("正在清理MCP服务器实例...")
+        
+        # 清理服务器实例
+        for server_id in list(self.server_instances.keys()):
+            try:
+                server_instance = self.server_instances[server_id]
+                # 如果服务器有cleanup方法，调用它
+                if hasattr(server_instance, 'cleanup'):
+                    await server_instance.cleanup()
+                del self.server_instances[server_id]
+                logger.info(f"服务器实例已清理: {server_id}")
+            except Exception as e:
+                logger.warning(f"清理服务器实例 {server_id} 时出错: {e}")
         
         # 清理内部状态
         self.enabled_tools.clear()
         self.enabled_servers.clear()
         self.tools.clear()
         self.all_available_tools.clear()
-        logger.info("MCP工具管理器同步清理完成")
+        
+        logger.info("MCP工具管理器已清理")
     
-    async def _stop_server(self, server_id: str):
-        """停止MCP服务器"""
-        if server_id in self.processes:
+    def cleanup_sync(self):
+        """同步清理资源"""
+        logger.info("正在同步清理MCP服务器实例...")
+        
+        # 清理服务器实例
+        for server_id in list(self.server_instances.keys()):
             try:
-                process = self.processes[server_id]
-                process.terminate()
-                
-                # 等待进程结束
-                try:
-                    await asyncio.wait_for(asyncio.create_task(
-                        asyncio.to_thread(process.wait)
-                    ), timeout=5.0)
-                except asyncio.TimeoutError:
-                    process.kill()
-                    await asyncio.to_thread(process.wait)
-                
-                del self.processes[server_id]
-                logger.info(f"MCP服务器已停止: {self.servers[server_id].name}")
+                del self.server_instances[server_id]
+                logger.info(f"服务器实例已清理: {server_id}")
             except Exception as e:
-                logger.error(f"停止MCP服务器失败: {e}")
-    
-    def _cleanup_on_exit(self):
-        """程序退出时的清理函数"""
-        try:
-            for server_id in list(self.processes.keys()):
-                if server_id in self.processes:
-                    self.processes[server_id].terminate()
-        except:
-            pass 
+                logger.warning(f"清理服务器实例 {server_id} 时出错: {e}")
+        
+        # 清理内部状态
+        self.enabled_tools.clear()
+        self.enabled_servers.clear()
+        self.tools.clear()
+        self.all_available_tools.clear()
+        
+        logger.info("MCP工具管理器同步清理完成") 

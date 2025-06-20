@@ -109,7 +109,7 @@ python main.py
 ```python
 from src.llm.factory import LLMFactory
 from src.agents.react_agent import ReactAgent
-from src.tools.mcp_tools import MCPToolManager
+
 from src.core.types import LLMConfig
 
 # 创建LLM
