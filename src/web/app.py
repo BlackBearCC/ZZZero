@@ -41,8 +41,15 @@ class AgentApp:
             'agent_type': 'react',
             'max_iterations': 5,
             'available_tools': [],
-            'enabled_mcp_servers': []
+            'enabled_mcp_servers': [],
+            'batch_enabled': False,
+            'batch_csv_path': None,
+            'batch_size': 20,
+            'concurrent_tasks': 5
         }
+        
+        # 批处理器
+        self.batch_processor = None
         
         # 工作空间配置
         self.workspace_config = {
@@ -92,6 +99,15 @@ class AgentApp:
             
             # 同时设置current_agent以兼容其他方法
             self.current_agent = self.agent
+            
+            # 创建批处理器（如果还没有）
+            if not self.batch_processor:
+                from core.batch_processor import BatchProcessor
+                self.batch_processor = BatchProcessor(
+                    llm_caller=self.llm,
+                    mcp_tool_manager=self.tool_manager
+                )
+                logger.info("批处理器初始化成功")
             
             logger.info("Agent配置更新成功")
             
@@ -350,22 +366,68 @@ class AgentApp:
                         )
                         send_btn = gr.Button("发送", variant="primary", scale=1)
                     
-                    # 批量任务
-                    with gr.Accordion("📋 批量任务", open=False):
-                        batch_input = gr.Textbox(
-                            placeholder="每行一个任务...",
-                            lines=5,
-                            label="批量任务列表"
+                    # 批处理配置
+                    with gr.Accordion("📊 批处理配置", open=False):
+                        with gr.Row():
+                            batch_enabled = gr.Checkbox(
+                                label="启用批处理模式",
+                                value=False
+                            )
+                        
+                        with gr.Row():
+                            csv_file_upload = gr.File(
+                                label="上传CSV文件",
+                                file_types=[".csv"],
+                                file_count="single"
+                            )
+                        
+                        # CSV字段选择区域
+                        csv_fields_section = gr.Column(visible=False)
+                        with csv_fields_section:
+                            gr.Markdown("### 📋 CSV字段选择")
+                            csv_info_display = gr.HTML(
+                                value="<div>等待CSV文件解析...</div>",
+                                label="CSV文件信息"
+                            )
+                            
+                            csv_fields_selection = gr.CheckboxGroup(
+                                choices=[],
+                                value=[],
+                                label="选择要在批处理中使用的字段",
+                                interactive=True
+                            )
+                            
+                            fields_update_btn = gr.Button("更新字段选择", variant="secondary")
+                        
+                        with gr.Row():
+                            batch_size = gr.Slider(
+                                minimum=5,
+                                maximum=50,
+                                value=20,
+                                step=5,
+                                label="每批处理行数"
+                            )
+                            concurrent_tasks = gr.Slider(
+                                minimum=1,
+                                maximum=10,
+                                value=5,
+                                step=1,
+                                label="并发任务数"
+                            )
+                        
+                        batch_status = gr.HTML(
+                            value="<div style='color: #666;'>📋 批处理模式未启用</div>",
+                            label="批处理状态"
                         )
-                        batch_parallel = gr.Checkbox(
-                            label="并行执行",
-                            value=True
-                        )
-                        batch_btn = gr.Button("执行批量任务")
-                        batch_results = gr.Dataframe(
-                            headers=["任务", "状态", "结果", "耗时"],
-                            label="批量任务结果"
-                        )
+                        
+                        # CSV格式说明
+                        gr.Markdown("""
+                        **CSV格式说明：**
+                        - 支持多种编码格式（UTF-8、GBK、GB2312等）
+                        - 必须包含列头行
+                        - 上传后可选择使用的字段
+                        - 示例：character_name,description,duration_days,special_requirements
+                        """, visible=True)
                     
                     # 执行详情
                     with gr.Accordion("📊 执行详情", open=False):
@@ -384,6 +446,193 @@ class AgentApp:
                         flow_diagram = gr.HTML(label="执行流程图")
                         # 自动刷新
                         auto_refresh = gr.Checkbox(label="自动刷新", value=True)
+            
+            # === 批处理配置处理 ===
+            async def on_batch_config_change(enabled, csv_file, batch_size_val, concurrent_tasks_val):
+                """批处理配置变化处理"""
+                try:
+                    # 更新配置
+                    self.current_config['batch_enabled'] = enabled
+                    self.current_config['batch_size'] = batch_size_val
+                    self.current_config['concurrent_tasks'] = concurrent_tasks_val
+                    
+                    if not self.batch_processor:
+                        return ("<div style='color: red;'>❌ 批处理器未初始化</div>", 
+                                gr.update(visible=False), 
+                                "<div>批处理器未初始化</div>", 
+                                gr.update(choices=[], value=[]))
+                    
+                    if enabled and csv_file:
+                        # 保存CSV文件路径
+                        csv_path = csv_file.name if csv_file else None
+                        self.current_config['batch_csv_path'] = csv_path
+                        
+                        # 配置批处理模式
+                        result = self.batch_processor.configure_batch_mode(
+                            enabled=True,
+                            csv_file_path=csv_path,
+                            batch_size=batch_size_val,
+                            concurrent_tasks=concurrent_tasks_val
+                        )
+                        
+                        if result['success']:
+                            csv_structure = result.get('csv_structure', {})
+                            columns = csv_structure.get('columns', [])
+                            column_types = csv_structure.get('column_types', {})
+                            sample_data = csv_structure.get('sample_data', {})
+                            
+                            # 生成CSV信息HTML
+                            csv_info_html = f"""
+                            <div style='font-family: monospace; padding: 10px; border: 1px solid #ddd; border-radius: 4px; background-color: #f9f9f9;'>
+                                <h4>📊 CSV文件解析成功</h4>
+                                <p><strong>文件:</strong> {csv_path.split('/')[-1] if csv_path else 'unknown'}</p>
+                                <p><strong>编码:</strong> {csv_structure.get('detected_encoding', 'unknown')}</p>
+                                <p><strong>行数:</strong> {result.get('csv_rows', 0)}</p>
+                                <p><strong>列数:</strong> {len(columns)}</p>
+                                <details>
+                                    <summary><strong>数据预览</strong></summary>
+                                    <table style='width: 100%; border-collapse: collapse; margin-top: 10px;'>
+                                        <tr style='background-color: #e0e0e0;'>
+                                            {''.join(f'<th style="border: 1px solid #ccc; padding: 4px;">{col}</th>' for col in columns[:5])}
+                                        </tr>
+                                        <tr>
+                                            {''.join(f'<td style="border: 1px solid #ccc; padding: 4px; font-size: 0.9em;">{sample_data.get(col, [""])[0]}</td>' for col in columns[:5])}
+                                        </tr>
+                                    </table>
+                                </details>
+                            </div>
+                            """
+                            
+                            # 生成字段选择选项（显示列名和类型）
+                            field_choices = []
+                            default_selected = []
+                            for col in columns:
+                                col_type = column_types.get(col, 'unknown')
+                                choice_label = f"{col} ({col_type})"
+                                field_choices.append((choice_label, col))
+                                default_selected.append(col)  # 默认全选
+                            
+                            status_html = f"""
+                            <div style='color: green; padding: 10px; border: 1px solid #4CAF50; border-radius: 4px; background-color: #f1f8e9;'>
+                                ✅ <strong>CSV文件解析成功</strong><br/>
+                                📄 文件: {csv_path.split('/')[-1] if csv_path else 'unknown'}<br/>
+                                📊 数据行数: {result.get('csv_rows', 0)}<br/>
+                                🔤 编码: {csv_structure.get('detected_encoding', 'unknown')}<br/>
+                                📋 字段数: {len(columns)}<br/>
+                                ⚙️ 请选择要使用的字段，然后更新配置
+                            </div>
+                            """
+                            
+                            return (status_html, 
+                                    gr.update(visible=True), 
+                                    csv_info_html, 
+                                    gr.update(choices=field_choices, value=default_selected))
+                        else:
+                            status_html = f"""
+                            <div style='color: red; padding: 10px; border: 1px solid #f44336; border-radius: 4px; background-color: #ffebee;'>
+                                ❌ <strong>批处理模式启用失败</strong><br/>
+                                {result.get('message', '未知错误')}
+                            </div>
+                            """
+                            
+                            return (status_html, 
+                                    gr.update(visible=False), 
+                                    "<div>CSV解析失败</div>", 
+                                    gr.update(choices=[], value=[]))
+                            
+                    elif enabled and not csv_file:
+                        status_html = """
+                        <div style='color: orange; padding: 10px; border: 1px solid #ff9800; border-radius: 4px; background-color: #fff3e0;'>
+                            ⚠️ <strong>请上传CSV文件以启用批处理模式</strong>
+                        </div>
+                        """
+                        
+                        return (status_html, 
+                                gr.update(visible=False), 
+                                "<div>等待CSV文件...</div>", 
+                                gr.update(choices=[], value=[]))
+                    else:
+                        # 关闭批处理模式
+                        self.current_config['batch_csv_path'] = None
+                        result = self.batch_processor.configure_batch_mode(enabled=False)
+                        
+                        status_html = """
+                        <div style='color: #666; padding: 10px; border: 1px solid #ccc; border-radius: 4px; background-color: #f9f9f9;'>
+                            📋 批处理模式已关闭
+                        </div>
+                        """
+                        
+                        return (status_html, 
+                                gr.update(visible=False), 
+                                "<div>批处理模式已关闭</div>", 
+                                gr.update(choices=[], value=[]))
+                    
+                except Exception as e:
+                    error_html = f"""
+                    <div style='color: red; padding: 10px; border: 1px solid #f44336; border-radius: 4px; background-color: #ffebee;'>
+                        ❌ <strong>批处理配置失败</strong><br/>
+                        {str(e)}
+                    </div>
+                    """
+                    return (error_html, 
+                            gr.update(visible=False), 
+                            f"<div>错误: {str(e)}</div>", 
+                                                         gr.update(choices=[], value=[]))
+            
+            async def on_fields_update(selected_fields):
+                """更新字段选择"""
+                try:
+                    if not self.batch_processor:
+                        return "<div style='color: red;'>❌ 批处理器未初始化</div>"
+                    
+                    if not selected_fields:
+                        return """
+                        <div style='color: orange; padding: 10px; border: 1px solid #ff9800; border-radius: 4px; background-color: #fff3e0;'>
+                            ⚠️ 请至少选择一个字段
+                        </div>
+                        """
+                    
+                    # 构建字段选择映射
+                    all_fields = self.batch_processor.csv_structure.get('columns', [])
+                    field_selection = {field: field in selected_fields for field in all_fields}
+                    
+                    # 更新字段选择
+                    result = self.batch_processor.update_field_selection(field_selection)
+                    
+                    if result['success']:
+                        # 最终启用批处理模式
+                        final_result = self.batch_processor.configure_batch_mode(
+                            enabled=True,
+                            csv_file_path=self.current_config['batch_csv_path'],
+                            batch_size=self.current_config['batch_size'],
+                            concurrent_tasks=self.current_config['concurrent_tasks']
+                        )
+                        
+                        return f"""
+                        <div style='color: green; padding: 10px; border: 1px solid #4CAF50; border-radius: 4px; background-color: #f1f8e9;'>
+                            ✅ <strong>批处理模式已完全启用</strong><br/>
+                            📋 已选择字段: {', '.join(selected_fields)}<br/>
+                            📊 数据行数: {len(self.batch_processor.csv_data)}<br/>
+                            ⚙️ 每批处理: {self.current_config['batch_size']} 行<br/>
+                            🔄 并发数: {self.current_config['concurrent_tasks']}<br/>
+                            💡 现在可以在聊天框中发送批处理请求了！
+                        </div>
+                        """
+                    else:
+                        return f"""
+                        <div style='color: red; padding: 10px; border: 1px solid #f44336; border-radius: 4px; background-color: #ffebee;'>
+                            ❌ <strong>字段选择更新失败</strong><br/>
+                            {result.get('message', '未知错误')}
+                        </div>
+                        """
+                        
+                except Exception as e:
+                    return f"""
+                    <div style='color: red; padding: 10px; border: 1px solid #f44336; border-radius: 4px; background-color: #ffebee;'>
+                        ❌ <strong>字段选择更新失败</strong><br/>
+                        {str(e)}
+                    </div>
+                    """
             
             # === 配置变化自动应用 ===
             async def on_config_change(*args):
@@ -422,6 +671,21 @@ class AgentApp:
                     inputs=[llm_provider, model_name, temperature, agent_type, max_iterations, available_tools, enabled_mcp_servers],
                     outputs=[config_status]
                 )
+            
+            # 绑定批处理配置变化事件
+            for component in [batch_enabled, csv_file_upload, batch_size, concurrent_tasks]:
+                component.change(
+                    on_batch_config_change,
+                    inputs=[batch_enabled, csv_file_upload, batch_size, concurrent_tasks],
+                    outputs=[batch_status, csv_fields_section, csv_info_display, csv_fields_selection]
+                )
+            
+            # 绑定字段选择更新事件
+            fields_update_btn.click(
+                on_fields_update,
+                inputs=[csv_fields_selection],
+                outputs=[batch_status]
+            )
             
             # MCP服务器相关事件
             refresh_mcp_btn.click(
@@ -574,11 +838,7 @@ def hello_world():
                 show_progress=False  # 禁用进度条以支持流式输出
             )
             
-            batch_btn.click(
-                self._batch_execute,
-                inputs=[batch_input, batch_parallel],
-                outputs=[batch_results]
-            )
+
             
             # 添加自定义CSS
             app.css = """
@@ -1036,6 +1296,57 @@ def hello_world():
         # 添加用户消息
         history.append({"role": "user", "content": message})
         
+        # 检查是否启用批处理模式
+        if self.batch_processor and self.batch_processor.is_batch_mode_enabled():
+            # 批处理模式：处理批量请求
+            history.append({"role": "assistant", "content": "🔄 检测到批处理模式，正在处理批量任务..."})
+            
+            try:
+                batch_result = await self.batch_processor.process_batch_request(message)
+                
+                if batch_result.get('success'):
+                    # 格式化批处理结果
+                    summary = batch_result.get('execution_summary', {})
+                    batch_instruction = batch_result.get('batch_instruction', {})
+                    
+                    result_content = f"""🎉 **批处理任务完成！**
+
+📋 **任务描述**: {batch_instruction.get('description', '批量处理任务')}
+🔧 **任务类型**: {batch_instruction.get('task_type', 'general_processing')}
+📝 **处理模板**: {batch_instruction.get('template', 'N/A')}
+
+📊 **执行统计**:
+- 总任务数: {summary.get('total_tasks', 0)}
+- 成功任务: {summary.get('successful_tasks', 0)}
+- 失败任务: {summary.get('failed_tasks', 0)}
+- 成功率: {summary.get('success_rate', '0%')}
+- 总耗时: {summary.get('total_execution_time', '0秒')}
+- 平均耗时: {summary.get('average_task_time', '0秒')}
+
+💡 **提示**: 详细结果已生成，您可以在执行详情中查看完整的批处理结果。"""
+                    
+                    # 更新历史记录
+                    history[-1]["content"] = result_content
+                    
+                    # 返回批处理结果作为执行轨迹
+                    execution_trace = batch_result.get('detailed_results', [])
+                    
+                    yield "", history, execution_trace, "", [], ""
+                    return
+                    
+                else:
+                    error_msg = f"❌ 批处理执行失败: {batch_result.get('message', '未知错误')}"
+                    history[-1]["content"] = error_msg
+                    yield "", history, {}, "", [], ""
+                    return
+                    
+            except Exception as e:
+                error_msg = f"❌ 批处理执行异常: {str(e)}"
+                history[-1]["content"] = error_msg
+                yield "", history, {}, "", [], ""
+                return
+        
+        # 正常单次处理模式
         # 添加空的助手消息用于流式更新
         history.append({"role": "assistant", "content": ""})
         
@@ -1262,44 +1573,7 @@ def hello_world():
         
         return html
     
-    async def _batch_execute(self, batch_input: str, parallel: bool):
-        """执行批量任务"""
-        if not self.current_agent:
-            return [["", "错误", "请先配置Agent！", ""]]
-        
-        tasks = [line.strip() for line in batch_input.split('\n') if line.strip()]
-        results = []
-        
-        if parallel:
-            # 并行执行
-            async_tasks = [self.current_agent.run(task) for task in tasks]
-            task_results = await asyncio.gather(*async_tasks, return_exceptions=True)
-            
-            for task, result in zip(tasks, task_results):
-                if isinstance(result, Exception):
-                    results.append([task, "失败", str(result), ""])
-                else:
-                    results.append([
-                        task,
-                        "成功" if result.success else "失败",
-                        result.result or result.error,
-                        f"{result.duration:.2f}s" if result.duration else ""
-                    ])
-        else:
-            # 串行执行
-            for task in tasks:
-                try:
-                    result = await self.current_agent.run(task)
-                    results.append([
-                        task,
-                        "成功" if result.success else "失败",
-                        result.result or result.error,
-                        f"{result.duration:.2f}s" if result.duration else ""
-                    ])
-                except Exception as e:
-                    results.append([task, "失败", str(e), ""])
-        
-        return results
+
     
     def launch(self, **kwargs):
         """启动应用"""

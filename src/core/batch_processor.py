@@ -40,57 +40,166 @@ class CSVDataManager:
     """CSV数据管理器"""
     
     @staticmethod
-    def validate_and_parse_csv(file_path: str) -> tuple[bool, str, List[Dict[str, Any]]]:
-        """验证并解析CSV文件"""
+    def detect_encoding(file_path: str) -> str:
+        """检测文件编码"""
         try:
-            if not os.path.exists(file_path):
-                return False, f"文件不存在: {file_path}", []
-            
-            # 读取CSV数据
-            csv_data = []
-            with open(file_path, 'r', encoding='utf-8-sig') as f:
-                reader = csv.DictReader(f)
+            import chardet
+            with open(file_path, 'rb') as f:
+                raw_data = f.read(10000)  # 读取前10KB用于检测
+                result = chardet.detect(raw_data)
+                detected_encoding = result.get('encoding', 'utf-8')
+                confidence = result.get('confidence', 0)
                 
-                # 获取列名
-                fieldnames = reader.fieldnames
-                if not fieldnames:
-                    return False, "CSV文件没有列头", []
-                
-                # 读取数据行
-                for index, row in enumerate(reader):
-                    # 添加行索引
-                    row['_row_index'] = index + 1
-                    csv_data.append(row)
-                
-                if not csv_data:
-                    return False, "CSV文件没有数据行", []
-            
-            return True, f"成功解析{len(csv_data)}行数据，列: {list(fieldnames)}", csv_data
-            
+                # 如果置信度太低，使用默认编码
+                if confidence < 0.5:
+                    detected_encoding = 'utf-8'
+                    
+                logger.info(f"检测到文件编码: {detected_encoding} (置信度: {confidence:.2f})")
+                return detected_encoding
+        except ImportError:
+            logger.warning("chardet未安装，使用utf-8编码")
+            return 'utf-8'
         except Exception as e:
-            return False, f"CSV解析错误: {str(e)}", []
+            logger.warning(f"编码检测失败: {e}，使用utf-8编码")
+            return 'utf-8'
     
     @staticmethod
-    def get_csv_structure_info(csv_data: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def validate_and_parse_csv(file_path: str) -> tuple[bool, str, List[Dict[str, Any]], Dict[str, Any]]:
+        """验证并解析CSV文件，返回数据和文件结构信息"""
+        try:
+            if not os.path.exists(file_path):
+                return False, f"文件不存在: {file_path}", [], {}
+            
+            # 检测编码
+            detected_encoding = CSVDataManager.detect_encoding(file_path)
+            
+            # 尝试多种编码读取CSV
+            csv_data = []
+            fieldnames = []
+            successful_encoding = None
+            
+            encodings_to_try = [
+                detected_encoding, 
+                'utf-8-sig', 
+                'utf-8', 
+                'gbk', 
+                'gb2312', 
+                'gb18030',
+                'big5',
+                'latin1',
+                'cp1252'
+            ]
+            
+            # 去重并保持顺序
+            encodings_to_try = list(dict.fromkeys(encodings_to_try))
+            
+            for encoding in encodings_to_try:
+                try:
+                    with open(file_path, 'r', encoding=encoding) as f:
+                        reader = csv.DictReader(f)
+                        
+                        # 获取列名
+                        fieldnames = reader.fieldnames
+                        if not fieldnames:
+                            continue
+                        
+                        # 读取数据行
+                        csv_data = []
+                        for index, row in enumerate(reader):
+                            # 清理数据中的BOM和特殊字符
+                            cleaned_row = {}
+                            for key, value in row.items():
+                                # 清理列名中的BOM
+                                clean_key = key.replace('\ufeff', '').strip() if key else ''
+                                # 清理值中的特殊字符
+                                clean_value = value.strip() if value else ''
+                                cleaned_row[clean_key] = clean_value
+                            
+                            # 添加行索引
+                            cleaned_row['_row_index'] = index + 1
+                            csv_data.append(cleaned_row)
+                        
+                        successful_encoding = encoding
+                        break
+                        
+                except (UnicodeDecodeError, UnicodeError):
+                    continue
+                except Exception as e:
+                    logger.warning(f"使用编码 {encoding} 读取失败: {e}")
+                    continue
+            
+            if not successful_encoding:
+                return False, "无法使用任何编码解析CSV文件", [], {}
+            
+            if not fieldnames:
+                return False, "CSV文件没有列头", [], {}
+            
+            if not csv_data:
+                return False, "CSV文件没有数据行", [], {}
+            
+            # 清理列名中的BOM和特殊字符
+            clean_fieldnames = [col.replace('\ufeff', '').strip() for col in fieldnames]
+            
+            # 生成文件结构信息
+            structure_info = CSVDataManager.get_csv_structure_info(csv_data, clean_fieldnames)
+            structure_info['detected_encoding'] = successful_encoding
+            structure_info['file_size'] = os.path.getsize(file_path)
+            
+            success_msg = f"成功解析{len(csv_data)}行数据，使用编码: {successful_encoding}，列: {clean_fieldnames}"
+            logger.info(success_msg)
+            
+            return True, success_msg, csv_data, structure_info
+            
+        except Exception as e:
+            error_msg = f"CSV解析错误: {str(e)}"
+            logger.error(error_msg)
+            return False, error_msg, [], {}
+    
+    @staticmethod
+    def get_csv_structure_info(csv_data: List[Dict[str, Any]], fieldnames: List[str] = None) -> Dict[str, Any]:
         """获取CSV结构信息用于LLM分析"""
         if not csv_data:
             return {}
         
         # 获取列信息
         sample_row = csv_data[0]
-        columns = [col for col in sample_row.keys() if not col.startswith('_')]
+        if fieldnames:
+            columns = fieldnames
+        else:
+            columns = [col for col in sample_row.keys() if not col.startswith('_')]
         
-        # 获取数据样例
+        # 获取数据样例和数据类型分析
         sample_data = {}
+        column_types = {}
         for col in columns:
-            values = [row.get(col, '') for row in csv_data[:3]]  # 取前3行作为样例
+            values = [row.get(col, '') for row in csv_data[:5]]  # 取前5行作为样例
             sample_data[col] = values
+            
+            # 简单的数据类型推断
+            non_empty_values = [v for v in values if v and str(v).strip()]
+            if non_empty_values:
+                # 检查是否为数字
+                try:
+                    float(non_empty_values[0])
+                    column_types[col] = 'numeric'
+                except ValueError:
+                    # 检查是否为日期
+                    if any(keyword in str(non_empty_values[0]).lower() for keyword in ['日期', 'date', '时间', 'time']):
+                        column_types[col] = 'datetime'
+                    else:
+                        column_types[col] = 'text'
+            else:
+                column_types[col] = 'unknown'
         
         return {
             "total_rows": len(csv_data),
             "columns": columns,
+            "column_types": column_types,
             "sample_data": sample_data,
-            "first_row_example": {col: csv_data[0].get(col, '') for col in columns}
+            "first_row_example": {col: csv_data[0].get(col, '') for col in columns},
+            # 添加字段选择的默认配置
+            "field_selection": {col: True for col in columns},  # 默认全选
+            "field_descriptions": {col: f"{col} - {column_types.get(col, 'unknown')}" for col in columns}
         }
 
 
@@ -291,6 +400,7 @@ class BatchProcessor:
     def __init__(self, llm_caller=None, mcp_tool_manager=None):
         self.config = BatchConfig()
         self.csv_data: List[Dict[str, Any]] = []
+        self.csv_structure: Dict[str, Any] = {}  # 存储CSV结构信息
         self.instruction_generator = BatchInstructionGenerator(llm_caller)
         self.task_executor = ReactAgentTaskExecutor(mcp_tool_manager)
         self.current_batch_task = None
@@ -304,16 +414,18 @@ class BatchProcessor:
         
         if enabled and csv_file_path:
             # 验证和解析CSV
-            success, message, csv_data = CSVDataManager.validate_and_parse_csv(csv_file_path)
+            success, message, csv_data, structure_info = CSVDataManager.validate_and_parse_csv(csv_file_path)
             
             if success:
                 self.config.csv_file_path = csv_file_path
                 self.csv_data = csv_data
+                self.csv_structure = structure_info
                 
                 return {
                     "success": True,
                     "message": f"批处理模式已启用: {message}",
                     "csv_rows": len(csv_data),
+                    "csv_structure": structure_info,
                     "config": {
                         "batch_size": batch_size,
                         "concurrent_tasks": concurrent_tasks
@@ -461,13 +573,51 @@ class BatchProcessor:
             "completed_at": datetime.now().isoformat()
         }
     
+    def update_field_selection(self, field_selection: Dict[str, bool]) -> Dict[str, Any]:
+        """更新字段选择配置"""
+        if not self.csv_structure:
+            return {"success": False, "message": "没有加载CSV结构信息"}
+        
+        # 验证字段选择
+        available_fields = set(self.csv_structure.get("columns", []))
+        selected_fields = set(field for field, selected in field_selection.items() if selected)
+        
+        if not selected_fields:
+            return {"success": False, "message": "至少需要选择一个字段"}
+        
+        invalid_fields = selected_fields - available_fields
+        if invalid_fields:
+            return {"success": False, "message": f"无效字段: {invalid_fields}"}
+        
+        # 更新字段选择
+        self.csv_structure["field_selection"] = field_selection
+        
+        return {
+            "success": True,
+            "message": f"已更新字段选择，选中 {len(selected_fields)} 个字段",
+            "selected_fields": list(selected_fields)
+        }
+    
     def get_batch_status(self) -> Dict[str, Any]:
         """获取批处理状态"""
-        return {
+        status = {
             "enabled": self.config.enabled,
             "csv_loaded": bool(self.csv_data),
             "csv_rows": len(self.csv_data),
             "csv_file": self.config.csv_file_path,
             "batch_size": self.config.batch_size,
             "concurrent_tasks": self.config.concurrent_tasks
-        } 
+        }
+        
+        # 如果有CSV结构信息，添加到状态中
+        if self.csv_structure:
+            status.update({
+                "csv_structure": self.csv_structure,
+                "available_fields": self.csv_structure.get("columns", []),
+                "selected_fields": [
+                    field for field, selected in self.csv_structure.get("field_selection", {}).items() 
+                    if selected
+                ]
+            })
+        
+        return status 

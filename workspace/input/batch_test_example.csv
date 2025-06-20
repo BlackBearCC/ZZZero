@@ -1,0 +1,4 @@
+character_name,character_type,description,duration_days,special_requirements
+张三,古代学者,古代私塾先生，博学多才，性格温和,3,需要安排教学时间和私人读书时间
+李四,现代程序员,资深全栈开发工程师，工作效率高,5,工作日程要包含编程项目和技术学习
+王五,商人,精明的商贩，经常需要出差谈生意,7,需要灵活安排出差和会客时间 
