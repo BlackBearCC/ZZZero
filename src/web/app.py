@@ -161,7 +161,40 @@ class AgentApp:
             
     def create_interface(self) -> gr.Blocks:
         """创建Gradio界面"""
-        with gr.Blocks(title=self.title, theme=gr.themes.Soft()) as app:
+        with gr.Blocks(title=self.title, theme=gr.themes.Soft(), head="""
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+        <script>
+            document.addEventListener('DOMContentLoaded', function() {
+                // 初始化highlight.js
+                hljs.highlightAll();
+                
+                // 监听DOM变化以高亮新添加的代码块
+                const observer = new MutationObserver(function(mutations) {
+                    mutations.forEach(function(mutation) {
+                        mutation.addedNodes.forEach(function(node) {
+                            if (node.nodeType === 1) {
+                                // 查找新添加的代码块
+                                const codeBlocks = node.querySelectorAll('pre code, code');
+                                codeBlocks.forEach(function(block) {
+                                    if (!block.classList.contains('hljs')) {
+                                        hljs.highlightElement(block);
+                                    }
+                                });
+                            }
+                        });
+                    });
+                });
+                
+                observer.observe(document.body, {
+                    childList: true,
+                    subtree: true
+                });
+            });
+        </script>
+        """) as app:
             # 标题
             gr.Markdown(f"# {self.title}")
             gr.Markdown(f"{self.description}")
@@ -301,7 +334,9 @@ class AgentApp:
                         height=500,
                         show_label=False,
                         elem_classes=["chat-window"],
-                        type="messages"
+                        type="messages",
+                        render_markdown=True,
+                        sanitize_html=False  # 允许HTML渲染以支持高亮
                     )
                     
                     # 输入区域
@@ -441,11 +476,48 @@ class AgentApp:
                         if info.get('enabled', False):
                             default_enabled.append(server_id)
                     
-                    # 返回状态HTML和更新后的CheckboxGroup
+                    # 返回状态HTML和更新后的CheckboxGroup，以及演示消息
                     import gradio as gr
+                    demo_messages = [
+                        {
+                            "role": "assistant", 
+                            "content": """🎉 欢迎使用 ZZZero AI Agent！
+
+**样式演示**：
+
+<span class="agent-keyword-question">Question:</span> 这是一个问题示例
+<span class="agent-keyword-thought">Thought:</span> 这是思考过程
+<span class="agent-keyword-action">Action:</span> 这是执行的动作
+<span class="agent-keyword-action-input">Action Input:</span> 这是动作输入
+<span class="agent-keyword-observation">Observation:</span> 这是观察结果
+<span class="agent-keyword-final-answer">Final Answer:</span> 这是最终答案
+
+**代码块示例**：
+
+```python
+def hello_world():
+    print("Hello, World!")
+    return {"status": "success"}
+```
+
+```json
+{
+  "name": "ZZZero Agent",
+  "version": "1.0.0",
+  "features": ["markdown", "syntax_highlighting", "keyword_highlighting"]
+}
+```
+
+内联代码：`print("Hello")`
+
+现在可以开始对话了！"""
+                        }
+                    ]
+                    
                     return (
                         status_html,
-                        gr.update(choices=choices, value=default_enabled)
+                        gr.update(choices=choices, value=default_enabled),
+                        demo_messages
                     )
                     
                 except Exception as e:
@@ -454,12 +526,13 @@ class AgentApp:
                     import gradio as gr
                     return (
                         f"❌ 初始化失败: {str(e)}",
-                        gr.update(choices=[], value=[])
+                        gr.update(choices=[], value=[]),
+                        []
                     )
             
             app.load(
                 on_load,
-                outputs=[mcp_servers_status, enabled_mcp_servers]
+                outputs=[mcp_servers_status, enabled_mcp_servers, chatbot]
             )
             
             # MCP服务器勾选变化事件
@@ -534,6 +607,167 @@ class AgentApp:
                 font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
                 height: 100vh;
                 overflow-y: auto;
+            }
+            
+            /* 代码块样式 - 黑色背景 */
+            .chat-window pre {
+                background-color: #0d1117 !important;
+                color: #e6edf3 !important;
+                border-radius: 8px !important;
+                padding: 16px !important;
+                margin: 12px 0 !important;
+                border: 1px solid #30363d !important;
+                overflow-x: auto !important;
+                font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'source-code-pro', monospace !important;
+                font-size: 14px !important;
+                line-height: 1.5 !important;
+                position: relative !important;
+            }
+            
+            .chat-window pre code {
+                background-color: transparent !important;
+                color: inherit !important;
+                padding: 0 !important;
+                border-radius: 0 !important;
+                font-family: inherit !important;
+                font-size: inherit !important;
+            }
+            
+            /* 内联代码样式 */
+            .chat-window code:not(pre code) {
+                background-color: #f6f8fa !important;
+                color: #d73a49 !important;
+                padding: 2px 4px !important;
+                border-radius: 3px !important;
+                font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'source-code-pro', monospace !important;
+                font-size: 85% !important;
+                border: 1px solid #e1e4e8 !important;
+            }
+            
+            /* 确保代码块在聊天消息中正确显示 */
+            .chat-window .message {
+                overflow: visible !important;
+            }
+            
+            .chat-window .message pre {
+                white-space: pre !important;
+                word-wrap: normal !important;
+            }
+            
+            /* Agent关键词高亮样式 */
+            .chat-window .bot .message-content {
+                position: relative;
+            }
+            
+            /* Question 样式 - 蓝色 */
+            .chat-window .agent-keyword-question {
+                color: #0066cc !important;
+                font-weight: bold !important;
+                font-size: 16px !important;
+                background-color: rgba(0, 102, 204, 0.1) !important;
+                padding: 2px 6px !important;
+                border-radius: 4px !important;
+                border-left: 4px solid #0066cc !important;
+                padding-left: 8px !important;
+                display: inline-block !important;
+                margin: 2px 0 !important;
+            }
+            
+            /* Thought 样式 - 绿色 */
+            .chat-window .agent-keyword-thought {
+                color: #22c55e !important;
+                font-weight: bold !important;
+                font-size: 16px !important;
+                background-color: rgba(34, 197, 94, 0.1) !important;
+                padding: 2px 6px !important;
+                border-radius: 4px !important;
+                border-left: 4px solid #22c55e !important;
+                padding-left: 8px !important;
+                display: inline-block !important;
+                margin: 2px 0 !important;
+            }
+            
+            /* Action 样式 - 橙色 */
+            .chat-window .agent-keyword-action {
+                color: #f59e0b !important;
+                font-weight: bold !important;
+                font-size: 16px !important;
+                background-color: rgba(245, 158, 11, 0.1) !important;
+                padding: 2px 6px !important;
+                border-radius: 4px !important;
+                border-left: 4px solid #f59e0b !important;
+                padding-left: 8px !important;
+                display: inline-block !important;
+                margin: 2px 0 !important;
+            }
+            
+            /* Action Input 样式 - 紫色 */
+            .chat-window .agent-keyword-action-input {
+                color: #8b5cf6 !important;
+                font-weight: bold !important;
+                font-size: 16px !important;
+                background-color: rgba(139, 92, 246, 0.1) !important;
+                padding: 2px 6px !important;
+                border-radius: 4px !important;
+                border-left: 4px solid #8b5cf6 !important;
+                padding-left: 8px !important;
+                display: inline-block !important;
+                margin: 2px 0 !important;
+            }
+            
+            /* Observation 样式 - 青色 */
+            .chat-window .agent-keyword-observation {
+                color: #06b6d4 !important;
+                font-weight: bold !important;
+                font-size: 16px !important;
+                background-color: rgba(6, 182, 212, 0.1) !important;
+                padding: 2px 6px !important;
+                border-radius: 4px !important;
+                border-left: 4px solid #06b6d4 !important;
+                padding-left: 8px !important;
+                display: inline-block !important;
+                margin: 2px 0 !important;
+            }
+            
+            /* Final Answer 样式 - 红色 */
+            .chat-window .agent-keyword-final-answer {
+                color: #dc2626 !important;
+                font-weight: bold !important;
+                font-size: 16px !important;
+                background-color: rgba(220, 38, 38, 0.1) !important;
+                padding: 2px 6px !important;
+                border-radius: 4px !important;
+                border-left: 4px solid #dc2626 !important;
+                padding-left: 8px !important;
+                display: inline-block !important;
+                margin: 2px 0 !important;
+            }
+            
+            /* highlight.js 深色主题适配 */
+            .chat-window .hljs {
+                background: #0d1117 !important;
+                color: #e6edf3 !important;
+            }
+            
+            /* 语言标签样式 */
+            .chat-window pre::before {
+                content: attr(data-language);
+                position: absolute;
+                top: 8px;
+                right: 12px;
+                background: rgba(255, 255, 255, 0.1);
+                color: #e6edf3;
+                padding: 2px 6px;
+                border-radius: 3px;
+                font-size: 11px;
+                text-transform: uppercase;
+                font-weight: bold;
+            }
+            
+            /* 让消息内容可以正确显示HTML */
+            .chat-window .message-content {
+                white-space: pre-wrap;
+                word-wrap: break-word;
             }
             """
             
@@ -735,6 +969,46 @@ class AgentApp:
             error_html = f"<div style='color: red;'>❌ 添加远程服务器失败: {str(e)}</div>"
             return name, url, error_html, gr.update()
     
+    def _highlight_agent_keywords(self, text: str) -> str:
+        """为Agent关键词添加高亮样式，避免处理代码块内容"""
+        import re
+        
+        # 先提取所有代码块，避免在代码块内进行关键词替换
+        code_blocks = []
+        code_pattern = r'```[\s\S]*?```|`[^`]+`'
+        
+        def preserve_code(match):
+            code_blocks.append(match.group())
+            return f"__CODE_BLOCK_{len(code_blocks) - 1}__"
+        
+        # 暂时替换所有代码块
+        text_without_code = re.sub(code_pattern, preserve_code, text)
+        
+        # 定义关键词及其对应的CSS类
+        keywords = {
+            r'\bQuestion\s*:': 'agent-keyword-question',
+            r'\bThought\s*:': 'agent-keyword-thought', 
+            r'\bAction\s*:': 'agent-keyword-action',
+            r'\bAction\s+Input\s*:': 'agent-keyword-action-input',
+            r'\bObservation\s*:': 'agent-keyword-observation',
+            r'\bFinal\s+Answer\s*:': 'agent-keyword-final-answer'
+        }
+        
+        # 对每个关键词进行替换（只在非代码块区域）
+        for pattern, css_class in keywords.items():
+            text_without_code = re.sub(
+                pattern,
+                lambda m: f'<span class="{css_class}">{m.group()}</span>',
+                text_without_code,
+                flags=re.IGNORECASE
+            )
+        
+        # 恢复代码块
+        for i, code_block in enumerate(code_blocks):
+            text_without_code = text_without_code.replace(f"__CODE_BLOCK_{i}__", code_block)
+        
+        return text_without_code
+    
     async def _stream_chat(self, message: str, history: List[Dict[str, str]]):
         """流式处理聊天消息，支持打字机效果"""
         # 如果没有Agent，尝试创建一个默认的
@@ -779,8 +1053,11 @@ class AgentApp:
                     # 文本块 - 打字机效果
                     accumulated_response += chunk_content
                     
+                    # 应用关键词高亮
+                    highlighted_content = self._highlight_agent_keywords(accumulated_response)
+                    
                     # 更新历史记录中的最后一条助手消息
-                    history[-1]["content"] = accumulated_response
+                    history[-1]["content"] = highlighted_content
                     
                     # 返回更新的历史记录实现打字机效果
                     yield "", history, {}, "", [], ""
@@ -795,7 +1072,8 @@ class AgentApp:
                     tool_output = chunk_data.get("metadata", {}).get("tool_output", "")
                     
                     accumulated_response += chunk_content
-                    history[-1]["content"] = accumulated_response
+                    highlighted_content = self._highlight_agent_keywords(accumulated_response)
+                    history[-1]["content"] = highlighted_content
                     
                     # 记录工具调用
                     tool_calls_made.append({
@@ -823,7 +1101,8 @@ class AgentApp:
                     # 工具执行错误
                     error_msg = chunk_data.get("metadata", {}).get("error", "")
                     accumulated_response += chunk_content
-                    history[-1]["content"] = accumulated_response
+                    highlighted_content = self._highlight_agent_keywords(accumulated_response)
+                    history[-1]["content"] = highlighted_content
                     
                     execution_trace.append({
                         "node": "tool_error",
@@ -837,7 +1116,8 @@ class AgentApp:
                     
                 elif chunk_type == "final_result":
                     # 最终结果（回退模式）
-                    history[-1]["content"] = chunk_content
+                    highlighted_content = self._highlight_agent_keywords(chunk_content)
+                    history[-1]["content"] = highlighted_content
                     yield "", history, {}, "", [], ""
             
             # 生成最终指标
