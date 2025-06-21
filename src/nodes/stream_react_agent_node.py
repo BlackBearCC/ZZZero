@@ -349,8 +349,8 @@ class StreamReactAgentNode(BaseNode):
         analysis_parts.append(random.choice(robot_comments))
         
         # 6. 实际工具结果（简化显示）
-        if len(tool_result) > 300:
-            display_result = tool_result[:300] + "...[结果已截断]"
+        if len(tool_result) > 3000:
+            display_result = tool_result[:3000] + "...[结果已截断]"
         else:
             display_result = tool_result
             
