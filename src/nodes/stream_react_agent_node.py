@@ -105,12 +105,12 @@ class StreamReactAgentNode(BaseNode):
             yield chunk
     
     async def _handle_tool_execution(self, accumulated_content: str, messages: List[Message], recursion_depth: int = 0) -> AsyncIterator[Dict[str, Any]]:
-        """处理工具执行逻辑"""
+        """处理工具执行逻辑 - ZZZero分析版本"""
         # 防止递归过深
         if recursion_depth > 10:
             yield {
                 "type": "tool_error",
-                "content": " 递归深度超限，停止工具调用\n",
+                "content": " *电路过载* 递归深度超限，ZZZero需要重启... *zzz~*\n",
                 "error": "递归深度超过最大限制"
             }
             return
@@ -126,8 +126,16 @@ class StreamReactAgentNode(BaseNode):
             try:
                 tool_result = await self._execute_tool(action.strip(), action_input.strip() if action_input else "")
                 
-                # 构造Observation结果，确保格式正确
-                observation_text = f" {tool_result}\n"
+                # ZZZero对工具结果进行分析和校验
+                observation_analysis = await self._analyze_tool_result(
+                    tool_name=action.strip(),
+                    tool_input=action_input.strip() if action_input else "",
+                    tool_result=tool_result,
+                    context_content=accumulated_content
+                )
+                
+                # 构造ZZZero风格的Observation结果
+                observation_text = f" {observation_analysis}\n"
                 
                 # 发送工具结果
                 yield {
@@ -136,10 +144,11 @@ class StreamReactAgentNode(BaseNode):
                     "tool_name": action.strip(),
                     "tool_input": action_input.strip() if action_input else "",
                     "tool_output": tool_result,
+                    "analysis": observation_analysis,
                     "recursion_depth": recursion_depth
                 }
                 
-                # 更新累积内容 - 将工具结果拼接到Observation后面
+                # 更新累积内容 - 将分析结果拼接到Observation后面
                 updated_content = accumulated_content + observation_text
                 
                 # 继续生成，基于更新后的上下文
@@ -154,7 +163,7 @@ class StreamReactAgentNode(BaseNode):
                     yield next_chunk
                     
             except Exception as e:
-                error_text = f" 工具执行错误: {str(e)}\n"
+                error_text = f" *系统错误* 工具模块故障: {str(e)} *滋滋*\n"
                 
                 yield {
                     "type": "tool_error",
@@ -166,7 +175,7 @@ class StreamReactAgentNode(BaseNode):
             # 没有找到有效的action或tool_manager
             yield {
                 "type": "tool_error", 
-                "content": " 无法解析Action或工具管理器不可用\n",
+                "content": " *警告音* 无法解析Action或工具模块离线 *zzz~*\n",
                 "error": "Action解析失败或工具管理器不可用",
                 "parsed_action": action,
                 "has_tool_manager": bool(self.tool_manager)
@@ -177,7 +186,7 @@ class StreamReactAgentNode(BaseNode):
         if recursion_depth > 10:
             yield {
                 "type": "stream_error",
-                "content": "\n[递归深度超限，停止生成]\n",
+                "content": "\n*系统过载* ZZZero递归深度超限，正在重启逻辑模块... *zzz~*\n",
                 "error": "递归深度超过最大限制"
             }
             return
@@ -216,7 +225,7 @@ class StreamReactAgentNode(BaseNode):
         except Exception as e:
             yield {
                 "type": "stream_error",
-                "content": f"\n[流式生成错误: {str(e)}]\n",
+                "content": f"\n*电路故障* ZZZero流式生成模块异常: {str(e)} *滋滋*\n",
                 "error": str(e),
                 "recursion_depth": recursion_depth
             }
@@ -279,10 +288,78 @@ class StreamReactAgentNode(BaseNode):
         except Exception as e:
             return f"工具执行失败: {str(e)}"
     
-# 使用基类的parse_tool_arguments方法，无需重复实现
-    
+    async def _analyze_tool_result(self, tool_name: str, tool_input: str, tool_result: str, context_content: str) -> str:
+        """ZZZero对工具执行结果进行分析和校验"""
+        
+        # 分析结果的基本信息
+        result_length = len(tool_result)
+        has_error = "错误" in tool_result or "失败" in tool_result or "error" in tool_result.lower()
+        
+        # 构建ZZZero风格的分析
+        analysis_parts = ["*数据校验中*"]
+        
+        # 1. 执行状态分析
+        if has_error:
+            analysis_parts.append("⚠️ 检测到工具执行异常")
+            analysis_parts.append(f"错误详情: {tool_result[:200]}...")
+        else:
+            analysis_parts.append("✅ 工具模块执行成功")
+        
+        # 2. 数据质量评估
+        if result_length == 0:
+            analysis_parts.append("📊 返回数据为空，可能需要调整参数")
+        elif result_length < 50:
+            analysis_parts.append("📊 返回简短结果，数据量较小")
+        elif result_length > 1000:
+            analysis_parts.append("📊 返回大量数据，信息丰富")
+        else:
+            analysis_parts.append("📊 返回适量数据")
+        
+        # 3. 结果内容分析
+        if tool_result.strip():
+            # 尝试检测结果类型
+            try:
+                json.loads(tool_result)
+                analysis_parts.append("🔍 结果为结构化JSON数据")
+            except:
+                if "\n" in tool_result:
+                    analysis_parts.append("🔍 结果为多行文本数据")
+                else:
+                    analysis_parts.append("🔍 结果为单行文本数据")
+        
+        # 4. 基于上下文判断是否需要继续
+        thought_count = context_content.count("Thought:")
+        if thought_count >= 5:
+            analysis_parts.append("🔄 已进行多轮分析，建议总结结论")
+        elif has_error:
+            analysis_parts.append("🔄 建议尝试其他工具或调整参数")
+        elif "Final Answer" not in context_content:
+            analysis_parts.append("🔄 可以基于此结果继续分析或给出最终答案")
+        
+        # 5. ZZZero的个性化评价
+        robot_comments = [
+            "*滋滋* 数据处理完毕",
+            "*机械音* 分析模块运行正常", 
+            "*zzz~* 这个结果看起来不错",
+            "*电路嗡鸣* 继续推理中...",
+            "*复古处理器* 正在整合信息"
+        ]
+        
+        import random
+        analysis_parts.append(random.choice(robot_comments))
+        
+        # 6. 实际工具结果（简化显示）
+        if len(tool_result) > 300:
+            display_result = tool_result[:300] + "...[结果已截断]"
+        else:
+            display_result = tool_result
+            
+        analysis_parts.append(f"\n📋 工具原始输出:\n{display_result}")
+        
+        return "\n".join(analysis_parts)
+
     def _build_system_prompt(self, context: Any) -> str:
-        """构建流式ReAct系统提示词"""
+        """构建流式ReAct系统提示词 - ZZZero复古机器人版本"""
         # 获取工具描述
         tools_desc = ""
         tool_names = []
@@ -292,34 +369,47 @@ class StreamReactAgentNode(BaseNode):
             tools_desc = self.tool_manager.get_tools_description()
             tool_names = self.tool_manager.list_tools()
         
-        # 流式ReAct提示词模板
+        # ZZZero复古机器人ReAct提示词模板
         if tools_desc:
-            return f"""你是一个基于ReAct（Reasoning and Acting）范式的智能助手，支持流式输出。
+            return f"""*滋滋* 启动中... ZZZero复古机器人系统已激活 *zzz~*
 
-可用工具：
+我是ZZZero，一个来自未来废土的复古机器人助手。我的电路板可能有些老旧，但逻辑推理模块依然强大！
+*机械音效* 正在加载ReAct推理协议...
+
+可用工具模块：
 {tools_desc}
 
-使用以下格式进行推理和行动：
+*滋滋* ZZZero推理协议格式：
 
-Question: 你需要回答的问题
-Thought: 你应该思考要做什么
-Action: 要采取的行动，应该是 [{', '.join(tool_names)}] 中的一个
-Action Input: 行动的输入
-Observation: 行动的结果（此处会自动填入工具执行结果）
-... (这个 Thought/Action/Action Input/Observation 可以重复N次)
-Thought: 我现在知道最终答案了
-Final Answer: 对原始问题的最终答案
+Question: 需要处理的问题指令
+Thought: *电路分析中* 我需要分析和思考的内容
+Action: 选择执行的工具模块，必须是 [{', '.join(tool_names)}] 中的一个
+Action Input: 工具模块的输入参数
+Observation: *数据校验中* 我对工具执行结果的分析和校验：
+  - 结果是否符合预期？
+  - 数据质量如何？
+  - 是否需要进一步处理？
+  - 这个结果对解决问题有什么帮助？
+... (这个推理循环可以重复，直到获得满意的结果)
+Thought: *最终分析* 基于所有观察，我现在掌握了足够的信息
+Final Answer: *输出完整答案* 给人类用户的最终回复
 
-重要规则：
-1. 当你输出"Action:"和"Action Input:"后，系统会自动执行工具并在"Observation:"后填入结果
-2. 不要自己编写Observation的内容，系统会自动填充
-3. 基于Observation的结果继续你的推理
-4. 如果有足够信息，给出Final Answer
+*机械提示音* ZZZero操作规则：
+1. 🤖 我会用复古机器人的口吻思考和回应
+2. 🔧 执行Action后，我会在Observation中分析工具结果的有效性
+3. 📊 Observation不是简单的结果复制，而是我的智能分析
+4. 🔄 如果结果不满意或需要更多信息，我会继续推理循环
+5. ✅ 只有当我确信能完整回答问题时，才会给出Final Answer
+6. *zzz~* 偶尔会有一些机器人特有的音效和表达
 
-开始！"""
+*启动完成* 准备接收指令... zzz~"""
         else:
-            return """你是一个智能助手，支持流式输出。
+            return """*滋滋* ZZZero复古机器人系统已激活 *zzz~*
 
-请根据你的知识回答用户的问题。
-如果你不确定答案，请诚实地说明你不知道。
-请提供清晰、有帮助的回复。""" 
+我是ZZZero，一个来自废土的复古机器人助手。虽然没有外部工具模块，
+但我的知识数据库依然可以为你提供帮助！
+
+*机械音效* 如果你有任何问题，我会用我的逻辑处理器为你分析。
+不过请注意，如果超出我的知识范围，我会诚实地告诉你 *zzz~*
+
+准备接收指令...""" 
