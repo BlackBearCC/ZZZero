@@ -169,18 +169,34 @@ class MCPToolManager:
             tool_key = f"roleplay_{tool.name}"
             self.all_available_tools[tool_key] = tool
         
-        # 默认启用CSV、Python和角色扮演服务器
-        self.set_enabled_servers(["csv", "python", "roleplay"])
+        # 默认启用所有已注册的服务器
+        self.set_enabled_servers(["csv", "chromadb", "python", "roleplay"])
     
     async def initialize(self):
         """初始化工具管理器"""
         logger.info("开始启动MCP服务器...")
         
         # 启动启用的服务器
+        started_servers = []
+        failed_servers = []
+        
         for server_id in self.enabled_servers:
-            await self._start_server(server_id)
+            success = await self._start_server(server_id)
+            if success:
+                started_servers.append(server_id)
+            else:
+                failed_servers.append(server_id)
         
         logger.info(f"MCP服务器启动完成：{len(self.server_instances)}/{len(self.enabled_servers)} 个服务器运行中")
+        
+        if failed_servers:
+            logger.warning(f"以下服务器启动失败: {failed_servers}")
+            # 从启用列表中移除启动失败的服务器
+            self.enabled_servers = self.enabled_servers - set(failed_servers)
+        
+        if started_servers:
+            logger.info(f"成功启动的服务器: {started_servers}")
+        
         self._update_enabled_tools()
     
     async def _start_server(self, server_id: str) -> bool:
@@ -217,6 +233,10 @@ class MCPToolManager:
                     return True
                 except ImportError as e:
                     logger.warning(f"ChromaDB服务器启动失败，可能缺少依赖: {e}")
+                    logger.warning(f"可以运行以下命令安装依赖: pip install chromadb")
+                    return False
+                except Exception as e:
+                    logger.error(f"ChromaDB服务器启动失败: {e}")
                     return False
                     
             elif server_id == "python":
@@ -349,6 +369,30 @@ class MCPToolManager:
         
         return "\n".join(descriptions)
     
+    def check_server_dependencies(self, server_id: str) -> Dict[str, Any]:
+        """检查服务器依赖"""
+        if server_id == "chromadb":
+            try:
+                import chromadb
+                return {"status": "ok", "message": "ChromaDB已安装"}
+            except ImportError:
+                return {
+                    "status": "missing", 
+                    "message": "ChromaDB未安装",
+                    "install_command": "pip install chromadb"
+                }
+        elif server_id == "python":
+            # Python执行器一般无额外依赖
+            return {"status": "ok", "message": "Python执行器可用"}
+        elif server_id == "csv":
+            # CSV服务器无额外依赖
+            return {"status": "ok", "message": "CSV服务器可用"}
+        elif server_id == "roleplay":
+            # 角色扮演服务器无额外依赖
+            return {"status": "ok", "message": "角色扮演服务器可用"}
+        else:
+            return {"status": "unknown", "message": "未知服务器类型"}
+
     def get_servers_status(self) -> Dict[str, Dict[str, Any]]:
         """获取所有服务器状态"""
         servers_status = {}
@@ -362,13 +406,17 @@ class MCPToolManager:
                                if tool_name in self.all_available_tools and 
                                self.all_available_tools[tool_name].server_id == server_id])
             
+            # 检查依赖
+            deps_info = self.check_server_dependencies(server_id)
+            
             servers_status[server_id] = {
                 'name': config.name,
                 'description': config.description,
                 'running': is_running,
                 'enabled': server_id in self.enabled_servers,
                 'total_tools': total_tools,
-                'enabled_tools': enabled_tools
+                'enabled_tools': enabled_tools,
+                'dependencies': deps_info
             }
         
         return servers_status

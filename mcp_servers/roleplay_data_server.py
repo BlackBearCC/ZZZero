@@ -56,77 +56,151 @@ class PromptManager:
     """提示词管理器 - 管理预置的标准提示词模板"""
     
     def __init__(self):
-        self.schedule_plan_prompt = """你是一个专业的日程规划助手。请为用户生成一个合理的日程计划框架。
+        self.schedule_plan_prompt = """你是一个专业的角色扮演日程规划助手。请为指定角色生成一个合理的日程计划框架。
 
-用户要求：{requirements}
+【角色设定】
+{character_description}
 
-请按照以下格式生成日程计划：
-1. 计划标题
-2. 计划日期/时间范围
-3. 主要目标
-4. 关键活动列表（每个活动包含：活动名称、预计时长、重要性级别）
-5. 注意事项
+【任务描述】
+{requirements}
+
+【参考选项库】
+参考地点类型：
+- 居住场所：卧室、客厅、厨房、阳台、花园、书房、工作室
+- 工作场所：办公室、会议室、实验室、工厂、商店、餐厅、学校
+- 休闲场所：公园、咖啡厅、图书馆、健身房、电影院、商场、海边
+- 社交场所：朋友家、社区中心、俱乐部、聚会场所、宴会厅
+- 户外场所：山林、湖泊、城市广场、街道、景区、运动场
+
+参考天气类型：
+- 晴朗：阳光明媚、微风徐徐、万里无云、温暖舒适
+- 阴天：多云、凉爽、微风、适合户外活动
+- 雨天：小雨、中雨、大雨、雷雨、毛毛雨、阵雨
+- 特殊天气：雪天、雾天、沙尘、炎热、寒冷
+
+参考情绪氛围：
+- 积极情绪：兴奋、愉悦、专注、充满活力、满足、平静
+- 中性情绪：平常、淡定、思考、观察、等待、准备
+- 挑战情绪：紧张、忙碌、压力、期待、不安、困惑
+
+请按照以下格式生成日程计划框架：
+1. **角色日程标题**（结合角色特点和任务描述）
+2. **计划时间范围**（具体日期或时间段）
+3. **角色当前状态**（基于角色设定的心理状态和生活状况）
+4. **主要目标**（符合角色性格和任务要求的核心目标）
+5. **关键活动概览**（使用markdown表格格式）
+
+对于关键活动概览，请使用以下markdown表格格式：
+
+```table
+| 活动名称 | 预计时长 | 重要性级别 | 适合时间段 | 背景原因/目的 |
+|---------|---------|-----------|-----------|-------------|
+| 示例活动1 | 30分钟 | 高 | 上午 | 活动的具体原因和目标 |
+| 示例活动2 | 1小时 | 中 | 下午 | 活动的具体原因和目标 |
+```
+
+6. **角色生活节奏特点**（基于角色设定的作息习惯和生活方式）
+7. **特殊注意事项**（角色的限制条件、偏好、禁忌等）
 
 要求：
-- 时间安排要合理，考虑人的作息规律
-- 活动之间要有适当的休息时间
-- 重要活动安排在精力最佳的时段
-- 预留一定的弹性时间
+- 严格按照角色设定中的性格特点、生活方式来制定计划
+- 时间安排要符合角色的个人特质和生活习惯
+- 考虑角色的工作性质、社交需求、个人爱好
+- 活动安排要有明确的背景原因和目的
+- 预留符合角色性格的弹性时间和休息方式
+- **重要：必须使用```table```代码块格式来展示关键活动概览表格**
 - 使用中文回复"""
         
-        self.detailed_schedule_prompt = """你是一个专业的日程细化专家。根据提供的计划框架，生成详细的5阶段日程安排。
+        self.detailed_schedule_prompt = """你是一个专业的角色扮演日程细化专家。根据提供的计划框架，为指定角色生成详细的5阶段日程安排。
 
-计划框架：
+【重要说明】
+本详细日程将作为最终执行资料使用，必须详细说明所有相关的背景和计划内容。每个活动安排都要让用户理解其背景原因和目的。
+
+【角色设定】
+{character_description}
+
+【计划框架】
 {plan_framework}
 
-用户补充要求：{requirements}
+【补充要求】
+{requirements}
 
 请按照以下5个时间阶段生成详细日程：
 
 **上午阶段（06:00-11:00）**：
-- 具体活动安排（精确到30分钟时间段）
-- 活动内容描述
-- 所需资源/工具
-- 注意事项
+使用以下markdown表格格式展示活动安排：
+
+```table
+| 时间段 | 活动名称 | 地点 | 天气情况 | 情绪氛围 | 活动内容详述 | 角色行为细节 | 所需资源/工具 | 注意事项 |
+|--------|---------|-----|---------|---------|-------------|-------------|-------------|---------|
+| 06:00-06:30 | 晨起活动 | 卧室 | 晴朗微风 | 平静清醒 | 活动的背景原因和目的 | 符合性格的具体表现 | 所需物品 | 特殊考虑 |
+| 06:30-07:00 | 下一活动 | 相应地点 | 天气状况 | 情绪状态 | 详细描述 | 行为细节 | 需要资源 | 注意要点 |
+```
 
 **中午阶段（11:00-14:00）**：
-- 具体活动安排
-- 活动内容描述
-- 所需资源/工具
-- 注意事项
+使用以下markdown表格格式展示活动安排：
+
+```table
+| 时间段 | 活动名称 | 地点 | 天气情况 | 情绪氛围 | 活动内容详述 | 角色行为细节 | 所需资源/工具 | 注意事项 |
+|--------|---------|-----|---------|---------|-------------|-------------|-------------|---------|
+| 11:00-11:30 | 午间活动 | 相应地点 | 天气状况 | 情绪状态 | 从上午活动的自然过渡及详述 | 午餐时间的个人习惯体现 | 需要资源 | 休息调整的个性化需求 |
+```
 
 **下午阶段（14:00-18:00）**：
-- 具体活动安排
-- 活动内容描述
-- 所需资源/工具
-- 注意事项
+使用以下markdown表格格式展示活动安排：
+
+```table
+| 时间段 | 活动名称 | 地点 | 天气情况 | 情绪氛围 | 活动内容详述 | 角色行为细节 | 所需资源/工具 | 注意事项 |
+|--------|---------|-----|---------|---------|-------------|-------------|-------------|---------|
+| 14:00-14:30 | 下午活动 | 适合场所 | 下午特征 | 专注状态 | 背景原因和目的详述 | 工作/学习风格体现 | 需要资源 | 避免疲劳的策略 |
+```
 
 **晚上阶段（18:00-23:00）**：
-- 具体活动安排
-- 活动内容描述
-- 所需资源/工具
-- 注意事项
+使用以下markdown表格格式展示活动安排：
+
+```table
+| 时间段 | 活动名称 | 地点 | 天气情况 | 情绪氛围 | 活动内容详述 | 角色行为细节 | 所需资源/工具 | 注意事项 |
+|--------|---------|-----|---------|---------|-------------|-------------|-------------|---------|
+| 18:00-18:30 | 晚间活动 | 休闲场所 | 夜晚氛围 | 心境转换 | 背景原因和目的详述 | 个人爱好和放松方式 | 需要资源 | 对睡眠质量的影响 |
+```
 
 **夜间阶段（23:00-06:00）**：
-- 具体活动安排
-- 活动内容描述
-- 所需资源/工具
-- 注意事项
+使用以下markdown表格格式展示活动安排：
 
-要求：
-- 时间安排要精确具体
-- 活动内容要详细可执行
-- 考虑活动之间的衔接
-- 包含必要的休息时间
+```table
+| 时间段 | 活动名称 | 地点 | 环境氛围 | 情绪状态 | 活动内容详述 | 角色行为细节 | 所需资源/工具 | 注意事项 |
+|--------|---------|-----|---------|---------|-------------|-------------|-------------|---------|
+| 23:00-23:30 | 睡前准备 | 睡眠环境 | 夜间设置 | 心理调节 | 睡前仪式的个性化体现 | 睡眠习惯和晨起风格 | 需要资源 | 保证睡眠质量的措施 |
+```
+
+生成要求：
+1. **地点选择要合理且符合角色需要**，可参考地点类型库，也可根据角色特质创造新地点
+2. **天气安排要符合季节特点和情节需要**，要与活动性质相匹配
+3. **情绪氛围要贴合活动性质和角色当前状态**，体现角色的心理变化过程
+4. **严格按照角色设定中描述的性格特点、生活方式来安排活动**
+5. **每个活动都要说明背景原因和目的**，让用户理解为什么要这样安排
+6. **安排符合角色个人特质的具体活动**，包含日常生活的细节体现
+7. **考虑工作日和休息日的不同节奏**，体现角色的时间管理方式
+8. **地点选择要符合角色的个人特质和当前阶段主题**
+9. **活动之间要有自然的衔接和过渡**，体现真实生活的连贯性
+10. **时间安排要精确具体**，便于实际执行和跟踪
+- **重要：必须使用```table```代码块格式来展示每个阶段的活动安排表格**
 - 使用中文回复"""
     
-    def get_schedule_plan_prompt(self, description: str = "") -> str:
+    def get_schedule_plan_prompt(self, character_description: str = "", requirements: str = "") -> str:
         """获取日程计划生成提示词"""
-        return self.schedule_plan_prompt.format(requirements=description)
+        return self.schedule_plan_prompt.format(
+            character_description=character_description or "未指定角色，请按通用需求处理",
+            requirements=requirements or "生成标准的日程计划"
+        )
     
-    def get_detailed_schedule_prompt(self, plan_framework: str = "", description: str = "") -> str:
+    def get_detailed_schedule_prompt(self, character_description: str = "", plan_framework: str = "", requirements: str = "") -> str:
         """获取详细日程生成提示词"""
-        return self.detailed_schedule_prompt.format(plan_framework=plan_framework, requirements=description)
+        return self.detailed_schedule_prompt.format(
+            character_description=character_description or "未指定角色，请按通用需求处理",
+            plan_framework=plan_framework or "未提供计划框架",
+            requirements=requirements or "生成标准的详细日程"
+        )
 
 
 class LLMCaller:
@@ -221,12 +295,13 @@ class RolePlayDataGenerator:
         self.llm_caller = LLMCaller()
         self.generation_history = []
     
-    async def generate_schedule_plan(self, description: str = "") -> Dict[str, Any]:
+    async def generate_schedule_plan(self, character_description: str = "", requirements: str = "") -> Dict[str, Any]:
         """
         生成日程计划框架
         
         Args:
-            description: 生成描述，用于输入生成的要求和需求
+            character_description: 角色设定描述，包含角色的性格特点、生活方式等
+            requirements: 任务要求描述，用于输入生成的要求和需求
             
         Returns:
             生成结果字典
@@ -236,7 +311,7 @@ class RolePlayDataGenerator:
         
         try:
             # 获取提示词
-            prompt = self.prompt_manager.get_schedule_plan_prompt(description)
+            prompt = self.prompt_manager.get_schedule_plan_prompt(character_description, requirements)
             
             # 调用LLM生成
             success, content = await self.llm_caller.call_llm(prompt)
@@ -250,7 +325,8 @@ class RolePlayDataGenerator:
                 "success": success,
                 "content": content if success else None,
                 "error": content if not success else None,
-                "description": description,
+                "character_description": character_description[:200] + "..." if len(character_description) > 200 else character_description,
+                "requirements": requirements,
                 "generation_time": generation_time,
                 "generated_at": start_time.isoformat(),
                 "completed_at": end_time.isoformat()
@@ -267,18 +343,21 @@ class RolePlayDataGenerator:
                 "type": "schedule_plan",
                 "success": False,
                 "error": f"生成过程中发生错误: {str(e)}",
-                "description": description,
+                "character_description": character_description[:200] + "..." if len(character_description) > 200 else character_description,
+                "requirements": requirements,
                 "generated_at": start_time.isoformat()
             }
     
-    async def generate_detailed_schedule(self, plan_framework: str = "",
-                                       description: str = "") -> Dict[str, Any]:
+    async def generate_detailed_schedule(self, character_description: str = "", 
+                                       plan_framework: str = "",
+                                       requirements: str = "") -> Dict[str, Any]:
         """
         根据计划框架生成详细的5阶段日程
         
         Args:
+            character_description: 角色设定描述，包含角色的性格特点、生活方式等
             plan_framework: 计划框架（来自generate_schedule_plan的结果）
-            description: 生成描述，用于输入补充要求和需求
+            requirements: 补充要求描述，用于输入补充要求和需求
             
         Returns:
             生成结果字典
@@ -289,12 +368,12 @@ class RolePlayDataGenerator:
         try:
             # 获取提示词
             prompt = self.prompt_manager.get_detailed_schedule_prompt(
-                plan_framework, description
+                character_description, plan_framework, requirements
             )
             
             # 调用LLM生成
             success, content = await self.llm_caller.call_llm(
-                prompt, max_tokens=3000, temperature=0.6
+                prompt, max_tokens=4000, temperature=0.6  # 增加max_tokens以支持更详细的输出
             )
             
             end_time = datetime.now()
@@ -310,8 +389,9 @@ class RolePlayDataGenerator:
                 "content": content if success else None,
                 "phases_data": phases_data,
                 "error": content if not success else None,
+                "character_description": character_description[:200] + "..." if len(character_description) > 200 else character_description,
                 "plan_framework": plan_framework[:500] + "..." if len(plan_framework) > 500 else plan_framework,
-                "description": description,
+                "requirements": requirements,
                 "generation_time": generation_time,
                 "generated_at": start_time.isoformat(),
                 "completed_at": end_time.isoformat()
@@ -328,8 +408,9 @@ class RolePlayDataGenerator:
                 "type": "detailed_schedule",
                 "success": False,
                 "error": f"生成过程中发生错误: {str(e)}",
+                "character_description": character_description[:200] + "..." if len(character_description) > 200 else character_description,
                 "plan_framework": plan_framework[:200] + "..." if len(plan_framework) > 200 else plan_framework,
-                "description": description,
+                "requirements": requirements,
                 "generated_at": start_time.isoformat()
             }
     
@@ -415,13 +496,18 @@ class RolePlayDataServer(StdioMCPServer):
         # 生成计划日程表工具
         self.register_tool(Tool(
             name="generate_schedule_plan",
-            description="生成日程计划框架。根据用户描述生成一个基础的日程规划，包含主要目标、关键活动等",
+            description="为指定角色生成日程计划框架。根据角色设定和任务描述生成一个基础的日程规划，包含主要目标、关键活动等",
             inputSchema=ToolInputSchema(
                 type="object",
                 properties={
-                    "description": {
+                    "character_description": {
                         "type": "string",
-                        "description": "生成描述，用于输入生成的要求和需求",
+                        "description": "角色设定描述，包含角色的性格特点、生活方式、工作性质、个人爱好等详细信息",
+                        "default": ""
+                    },
+                    "requirements": {
+                        "type": "string",
+                        "description": "任务要求描述，说明希望生成什么样的日程计划，有什么特殊要求等",
                         "default": ""
                     }
                 }
@@ -431,18 +517,23 @@ class RolePlayDataServer(StdioMCPServer):
         # 生成详细日程工具
         self.register_tool(Tool(
             name="generate_detailed_schedule",
-            description="根据计划框架生成详细的5阶段日程安排（上午、中午、下午、晚上、夜间）",
+            description="根据角色设定和计划框架生成详细的5阶段日程安排（上午、中午、下午、晚上、夜间），包含地点、天气、情绪氛围等丰富细节",
             inputSchema=ToolInputSchema(
                 type="object",
                 properties={
+                    "character_description": {
+                        "type": "string",
+                        "description": "角色设定描述，包含角色的性格特点、生活方式、工作性质、个人爱好等详细信息",
+                        "default": ""
+                    },
                     "plan_framework": {
                         "type": "string",
                         "description": "计划框架内容（通常来自generate_schedule_plan的结果）",
                         "default": ""
                     },
-                    "description": {
+                    "requirements": {
                         "type": "string",
-                        "description": "生成描述，用于输入补充要求和需求",
+                        "description": "补充要求描述，用于输入额外的细化要求和特殊需求",
                         "default": ""
                     }
                 }
@@ -494,15 +585,17 @@ class RolePlayDataServer(StdioMCPServer):
             logger.info(f"参数: {arguments}")
             
             if name == "generate_schedule_plan":
-                description = arguments.get("description", "")
-                return await self.generator.generate_schedule_plan(description)
+                character_description = arguments.get("character_description", "")
+                requirements = arguments.get("requirements", "")
+                return await self.generator.generate_schedule_plan(character_description, requirements)
             
             elif name == "generate_detailed_schedule":
+                character_description = arguments.get("character_description", "")
                 plan_framework = arguments.get("plan_framework", "")
-                description = arguments.get("description", "")
+                requirements = arguments.get("requirements", "")
                 
                 return await self.generator.generate_detailed_schedule(
-                    plan_framework, description
+                    character_description, plan_framework, requirements
                 )
             
             elif name == "get_generation_history":

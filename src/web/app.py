@@ -41,7 +41,7 @@ class AgentApp:
             'agent_type': 'react',
             'max_iterations': 5,
             'available_tools': [],
-            'enabled_mcp_servers': [],
+            'enabled_mcp_servers': ['csv', 'chromadb', 'python', 'roleplay'],
             'batch_enabled': False,
             'batch_csv_path': None,
             'batch_size': 20,
@@ -86,7 +86,7 @@ class AgentApp:
                 await self.llm.initialize()
             
             # 更新工具管理器的启用服务器（仅在工具管理器存在时）
-            enabled_servers = self.current_config.get('enabled_mcp_servers', ['csv', 'chromadb', 'filemanager'])  # 默认启用
+            enabled_servers = self.current_config.get('enabled_mcp_servers', ['csv', 'chromadb', 'python', 'roleplay'])  # 默认启用
             if self.tool_manager:
                 self.tool_manager.set_enabled_servers(enabled_servers)
             
@@ -273,8 +273,8 @@ class AgentApp:
                                 for server_id, server_info in servers_status.items():
                                     choice = (f"{server_info['name']} ({server_id})", server_id)
                                     initial_choices.append(choice)
-                                    # 默认勾选csv、chromadb和filemanager
-                                    if server_id in ['csv', 'chromadb', 'filemanager']:
+                                    # 默认勾选已注册的服务器
+                                    if server_id in ['csv', 'chromadb', 'python', 'roleplay']:
                                         default_enabled.append(server_id)
                         except Exception as e:
                             print(f"初始化MCP服务器失败: {e}")
@@ -354,6 +354,16 @@ class AgentApp:
                         type="messages",
                         render_markdown=True,
                         sanitize_html=False  # 允许HTML渲染以支持高亮
+                    )
+                    
+                    # 动态表格显示区域
+                    dynamic_table = gr.DataFrame(
+                        value=[],
+                        headers=None,
+                        label="📊 表格数据",
+                        interactive=False,
+                        wrap=True,
+                        visible=False  # 默认隐藏
                     )
                     
                     # 输入区域
@@ -761,10 +771,18 @@ class AgentApp:
                             status_icon = "🟢" if info['running'] else "🔴"
                             enable_icon = "✅" if info.get('enabled', False) else "⚪"
                             
+                            # 依赖状态图标
+                            deps_info = info.get('dependencies', {})
+                            deps_status = deps_info.get('status', 'unknown')
+                            deps_icon = {"ok": "✅", "missing": "❌", "unknown": "❓"}.get(deps_status, "❓")
+                            
                             status_html += f"<div style='margin: 8px 0; padding: 8px; border: 1px solid #ddd; border-radius: 4px;'>"
-                            status_html += f"<strong>{status_icon} {enable_icon} {info['name']}</strong><br/>"
+                            status_html += f"<strong>{status_icon} {enable_icon} {deps_icon} {info['name']}</strong><br/>"
                             status_html += f"<small>ID: {server_id} | 状态: {'运行中' if info['running'] else '未运行'}</small><br/>"
                             status_html += f"<small>工具: {info.get('enabled_tools', 0)}/{info.get('total_tools', 0)} 个可用</small><br/>"
+                            status_html += f"<small>依赖: {deps_info.get('message', '未知')}</small><br/>"
+                            if deps_status == "missing" and "install_command" in deps_info:
+                                status_html += f"<small style='color: #ff6600;'>安装: {deps_info['install_command']}</small><br/>"
                             status_html += f"<small>{info['description']}</small>"
                             status_html += "</div>"
                     
@@ -777,8 +795,8 @@ class AgentApp:
                     for server_id, info in servers_status.items():
                         label = f"{info['name']} ({server_id})"
                         choices.append((label, server_id))
-                        # 默认勾选已启用的服务器
-                        if info.get('enabled', False):
+                        # 默认勾选已启用的服务器，或者如果是注册的服务器就默认启用
+                        if info.get('enabled', False) or server_id in ['csv', 'chromadb', 'python', 'roleplay']:
                             default_enabled.append(server_id)
                     
                     # 返回状态HTML和更新后的CheckboxGroup，以及演示消息
@@ -822,7 +840,8 @@ def hello_world():
                     return (
                         status_html,
                         gr.update(choices=choices, value=default_enabled),
-                        demo_messages
+                        demo_messages,
+                        gr.update(value=[], headers=None, visible=False)  # 初始隐藏表格
                     )
                     
                 except Exception as e:
@@ -832,12 +851,13 @@ def hello_world():
                     return (
                         f"❌ 初始化失败: {str(e)}",
                         gr.update(choices=[], value=[]),
-                        []
+                        [],
+                        gr.update(value=[], headers=None, visible=False)
                     )
             
             app.load(
                 on_load,
-                outputs=[mcp_servers_status, enabled_mcp_servers, chatbot]
+                outputs=[mcp_servers_status, enabled_mcp_servers, chatbot, dynamic_table]
             )
             
             # MCP服务器勾选变化事件
@@ -868,14 +888,14 @@ def hello_world():
             msg_input.submit(
                 self._stream_chat,
                 inputs=[msg_input, chatbot],
-                outputs=[msg_input, chatbot, execution_trace, metrics_display, node_status, flow_diagram],
+                outputs=[msg_input, chatbot, dynamic_table, execution_trace, metrics_display, node_status, flow_diagram],
                 show_progress=False  # 禁用进度条以支持流式输出
             )
             
             send_btn.click(
                 self._stream_chat,
                 inputs=[msg_input, chatbot],
-                outputs=[msg_input, chatbot, execution_trace, metrics_display, node_status, flow_diagram],
+                outputs=[msg_input, chatbot, dynamic_table, execution_trace, metrics_display, node_status, flow_diagram],
                 show_progress=False  # 禁用进度条以支持流式输出
             )
             
@@ -1070,6 +1090,66 @@ def hello_world():
                 white-space: pre-wrap;
                 word-wrap: break-word;
             }
+            
+            /* Markdown表格样式 */
+            .chat-window .markdown-table-container {
+                margin: 15px 0 !important;
+                padding: 10px !important;
+                border-radius: 8px !important;
+                background-color: #f9f9f9 !important;
+                border: 1px solid #e0e0e0 !important;
+                overflow-x: auto !important;
+            }
+            
+            .chat-window .markdown-table {
+                width: 100% !important;
+                border-collapse: collapse !important;
+                border: 1px solid #ddd !important;
+                font-size: 14px !important;
+                background-color: white !important;
+                border-radius: 4px !important;
+                overflow: hidden !important;
+            }
+            
+            .chat-window .markdown-table th {
+                background-color: #f5f5f5 !important;
+                border: 1px solid #ddd !important;
+                padding: 12px 8px !important;
+                text-align: left !important;
+                font-weight: bold !important;
+                color: #333 !important;
+                font-size: 13px !important;
+            }
+            
+            .chat-window .markdown-table td {
+                border: 1px solid #ddd !important;
+                padding: 10px 8px !important;
+                vertical-align: top !important;
+                line-height: 1.4 !important;
+                font-size: 13px !important;
+                color: #555 !important;
+            }
+            
+            .chat-window .markdown-table tr:nth-child(even) {
+                background-color: #fafafa !important;
+            }
+            
+            .chat-window .markdown-table tr:hover {
+                background-color: #f0f8ff !important;
+            }
+            
+            /* 表格响应式设计 */
+            @media (max-width: 768px) {
+                .chat-window .markdown-table-container {
+                    font-size: 12px !important;
+                }
+                
+                .chat-window .markdown-table th,
+                .chat-window .markdown-table td {
+                    padding: 6px 4px !important;
+                    font-size: 11px !important;
+                }
+            }
             """
             
         return app
@@ -1109,10 +1189,19 @@ def hello_world():
                     status_icon = "🟢" if server['connected'] else "🔴"
                     type_icon = {"local_stdio": "💻", "remote_http": "🌐", "local_http": "🏠"}.get(server['type'], "❓")
                     
+                    # 获取原始服务器信息以显示依赖状态
+                    original_info = servers_dict.get(server['id'], {})
+                    deps_info = original_info.get('dependencies', {})
+                    deps_status = deps_info.get('status', 'unknown')
+                    deps_icon = {"ok": "✅", "missing": "❌", "unknown": "❓"}.get(deps_status, "❓")
+                    
                     status_html += f"<div style='margin: 8px 0; padding: 8px; border: 1px solid #ddd; border-radius: 4px;'>"
-                    status_html += f"<strong>{status_icon} {type_icon} {server['name']}</strong><br/>"
+                    status_html += f"<strong>{status_icon} {type_icon} {deps_icon} {server['name']}</strong><br/>"
                     status_html += f"<small>ID: {server['id']} | 类型: {server['type']}</small><br/>"
                     status_html += f"<small>状态: {'已连接' if server['connected'] else '未连接'}</small><br/>"
+                    status_html += f"<small>依赖: {deps_info.get('message', '未知')}</small><br/>"
+                    if deps_status == "missing" and "install_command" in deps_info:
+                        status_html += f"<small style='color: #ff6600;'>安装: {deps_info['install_command']}</small><br/>"
                     status_html += f"<small>{server['description']}</small>"
                     status_html += "</div>"
             
@@ -1270,20 +1359,88 @@ def hello_world():
             error_html = f"<div style='color: red;'>❌ 添加远程服务器失败: {str(e)}</div>"
             return name, url, error_html, gr.update()
     
-    def _highlight_agent_keywords(self, text: str) -> str:
-        """为Agent关键词添加高亮样式，避免处理代码块内容"""
+    def _extract_tables_from_text(self, text: str) -> tuple:
+        """从文本中提取表格数据，返回(处理后的文本, 表格数据列表)"""
         import re
         
+        tables_data = []
+        
+        def parse_table_content(table_content):
+            """解析表格内容为DataFrame格式"""
+            lines = [line.strip() for line in table_content.split('\n') if line.strip()]
+            
+            if len(lines) < 3:  # 至少需要表头、分隔线、数据行
+                return None
+            
+            # 解析表头
+            header_line = lines[0]
+            if not header_line.startswith('|') or not header_line.endswith('|'):
+                return None
+            
+            headers = [h.strip() for h in header_line.split('|')[1:-1]]
+            
+            # 解析数据行
+            data_rows = []
+            for line in lines[2:]:  # 跳过表头和分隔线
+                if line.startswith('|') and line.endswith('|'):
+                    row_data = [cell.strip() for cell in line.split('|')[1:-1]]
+                    if len(row_data) == len(headers):  # 确保列数匹配
+                        data_rows.append(row_data)
+            
+            if not data_rows:
+                return None
+                
+            return {
+                'headers': headers,
+                'data': data_rows
+            }
+        
+        # 1. 处理 ```table 代码块格式
+        table_block_pattern = r'```table\s*\n([\s\S]*?)\n```'
+        
+        def extract_table_block(match):
+            table_content = match.group(1).strip()
+            table_data = parse_table_content(table_content)
+            if table_data:
+                tables_data.append(table_data)
+                return f"\n📊 **表格 {len(tables_data)}**\n\n"  # 用占位符替换
+            return match.group(0)
+        
+        text = re.sub(table_block_pattern, extract_table_block, text, flags=re.MULTILINE)
+        
+        # 2. 处理普通markdown表格格式
+        table_pattern = r'((?:^\|.*\|[ \t]*$\n?){3,})'  # 至少3行
+        
+        def extract_markdown_table(match):
+            table_content = match.group(1).strip()
+            table_data = parse_table_content(table_content)
+            if table_data:
+                tables_data.append(table_data)
+                return f"\n📊 **表格 {len(tables_data)}**\n\n"  # 用占位符替换
+            return match.group(0)
+        
+        text = re.sub(table_pattern, extract_markdown_table, text, flags=re.MULTILINE)
+        
+        return text, tables_data
+
+    def _highlight_agent_keywords(self, text: str) -> tuple:
+        """为Agent关键词添加高亮样式，同时提取表格数据，返回(处理后的文本, 表格数据列表)"""
+        import re
+        
+        # 首先提取表格数据
+        text, tables_data = self._extract_tables_from_text(text)
+        
         # 先提取所有代码块，避免在代码块内进行关键词替换
-        code_blocks = []
-        code_pattern = r'```[\s\S]*?```|`[^`]+`'
+        preserved_blocks = []
+        # 匹配代码块等
+        preserve_pattern = r'```[\s\S]*?```|`[^`]+`'
         
-        def preserve_code(match):
-            code_blocks.append(match.group())
-            return f"__CODE_BLOCK_{len(code_blocks) - 1}__"
+        def preserve_block(match):
+            preserved_blocks.append(match.group())
+            return f"__PRESERVED_BLOCK_{len(preserved_blocks) - 1}__"
         
-        # 暂时替换所有代码块
-        text_without_code = re.sub(code_pattern, preserve_code, text)
+        # 暂时替换所有需要保护的块
+        text_without_blocks = re.sub(preserve_pattern, preserve_block, text)
         
         # 定义关键词及其对应的CSS类
         keywords = {
@@ -1295,20 +1452,38 @@ def hello_world():
             r'\bFinal\s+Answer\s*:': 'agent-keyword-final-answer'
         }
         
-        # 对每个关键词进行替换（只在非代码块区域）
+        # 对每个关键词进行替换（只在非保护块区域）
         for pattern, css_class in keywords.items():
-            text_without_code = re.sub(
+            text_without_blocks = re.sub(
                 pattern,
                 lambda m: f'<span class="{css_class}">{m.group()}</span>',
-                text_without_code,
+                text_without_blocks,
                 flags=re.IGNORECASE
             )
         
-        # 恢复代码块
-        for i, code_block in enumerate(code_blocks):
-            text_without_code = text_without_code.replace(f"__CODE_BLOCK_{i}__", code_block)
+        # 恢复保护的块
+        for i, block in enumerate(preserved_blocks):
+            text_without_blocks = text_without_blocks.replace(f"__PRESERVED_BLOCK_{i}__", block)
         
-        return text_without_code
+        return text_without_blocks, tables_data
+    
+    def _prepare_table_update(self, tables_data: list) -> "gr.update":
+        """准备表格更新"""
+        import gradio as gr
+        
+        if not tables_data:
+            return gr.update(value=[], headers=None, visible=False)
+        
+        # 如果有多个表格，合并显示最后一个或者最重要的一个
+        # 这里选择显示最后一个表格
+        last_table = tables_data[-1]
+        
+        return gr.update(
+            value=last_table['data'],
+            headers=last_table['headers'],
+            visible=True,
+            label=f"📊 表格数据 ({len(tables_data)} 个表格)" if len(tables_data) > 1 else "📊 表格数据"
+        )
     
     async def _stream_chat(self, message: str, history: List[Dict[str, str]]):
         """流式处理聊天消息，支持打字机效果"""
@@ -1331,7 +1506,8 @@ def hello_world():
                 print(f"创建默认Agent失败: {e}")
                 history.append({"role": "user", "content": message})
                 history.append({"role": "assistant", "content": "抱歉，系统初始化中，请稍后再试。"})
-                yield "", history, {}, "", [], ""
+                empty_table_update = self._prepare_table_update([])
+                yield "", history, empty_table_update, {}, "", [], ""
                 return
         
         # 添加用户消息
@@ -1428,11 +1604,14 @@ def hello_world():
                         accumulated_content += "\n" + progress_content
                         
                     # 应用关键词高亮并更新界面
-                    highlighted_content = self._highlight_agent_keywords(accumulated_content)
+                    highlighted_content, tables_data = self._highlight_agent_keywords(accumulated_content)
                     history[-1]["content"] = highlighted_content
                     
+                    # 准备表格数据
+                    table_update = self._prepare_table_update(tables_data)
+                    
                     # 流式更新界面
-                    yield "", history, execution_trace, "", [], ""
+                    yield "", history, table_update, execution_trace, "", [], ""
                     
                     # 短暂延迟以便观察进度更新
                     await asyncio.sleep(0.1)
@@ -1442,7 +1621,8 @@ def hello_world():
             except Exception as e:
                 error_msg = f"❌ 批处理执行异常: {str(e)}"
                 history[-1]["content"] = error_msg
-                yield "", history, {}, "", [], ""
+                empty_table_update = self._prepare_table_update([])
+                yield "", history, empty_table_update, {}, "", [], ""
                 return
         
         # 正常单次处理模式
@@ -1463,14 +1643,17 @@ def hello_world():
                     # 文本块 - 打字机效果
                     accumulated_response += chunk_content
                     
-                    # 应用关键词高亮
-                    highlighted_content = self._highlight_agent_keywords(accumulated_response)
+                    # 应用关键词高亮并提取表格数据
+                    highlighted_content, tables_data = self._highlight_agent_keywords(accumulated_response)
                     
                     # 更新历史记录中的最后一条助手消息
                     history[-1]["content"] = highlighted_content
                     
+                    # 准备表格数据
+                    table_update = self._prepare_table_update(tables_data)
+                    
                     # 返回更新的历史记录实现打字机效果
-                    yield "", history, {}, "", [], ""
+                    yield "", history, table_update, {}, "", [], ""
                     
                     # 短暂延迟实现打字机效果
                     await asyncio.sleep(0.02)  # 20ms延迟
@@ -1482,8 +1665,11 @@ def hello_world():
                     tool_output = chunk_data.get("metadata", {}).get("tool_output", "")
                     
                     accumulated_response += chunk_content
-                    highlighted_content = self._highlight_agent_keywords(accumulated_response)
+                    highlighted_content, tables_data = self._highlight_agent_keywords(accumulated_response)
                     history[-1]["content"] = highlighted_content
+                    
+                    # 准备表格数据
+                    table_update = self._prepare_table_update(tables_data)
                     
                     # 记录工具调用
                     tool_calls_made.append({
@@ -1505,14 +1691,17 @@ def hello_world():
                         }
                     })
                     
-                    yield "", history, execution_trace, "", [], ""
+                    yield "", history, table_update, execution_trace, "", [], ""
                     
                 elif chunk_type == "tool_error":
                     # 工具执行错误
                     error_msg = chunk_data.get("metadata", {}).get("error", "")
                     accumulated_response += chunk_content
-                    highlighted_content = self._highlight_agent_keywords(accumulated_response)
+                    highlighted_content, tables_data = self._highlight_agent_keywords(accumulated_response)
                     history[-1]["content"] = highlighted_content
+                    
+                    # 准备表格数据
+                    table_update = self._prepare_table_update(tables_data)
                     
                     execution_trace.append({
                         "node": "tool_error",
@@ -1522,13 +1711,17 @@ def hello_world():
                         "output": {"error": error_msg}
                     })
                     
-                    yield "", history, execution_trace, "", [], ""
+                    yield "", history, table_update, execution_trace, "", [], ""
                     
                 elif chunk_type == "final_result":
                     # 最终结果（回退模式）
-                    highlighted_content = self._highlight_agent_keywords(chunk_content)
+                    highlighted_content, tables_data = self._highlight_agent_keywords(chunk_content)
                     history[-1]["content"] = highlighted_content
-                    yield "", history, {}, "", [], ""
+                    
+                    # 准备表格数据
+                    table_update = self._prepare_table_update(tables_data)
+                    
+                    yield "", history, table_update, {}, "", [], ""
             
             # 生成最终指标
             metrics_text = self._format_stream_metrics(tool_calls_made, accumulated_response)
@@ -1540,14 +1733,19 @@ def hello_world():
             flow_diagram = self._generate_flow_diagram(execution_trace)
             
             # 最终输出
-            yield "", history, execution_trace, metrics_text, node_status, flow_diagram
+            final_highlighted_content, final_tables_data = self._highlight_agent_keywords(accumulated_response)
+            history[-1]["content"] = final_highlighted_content
+            final_table_update = self._prepare_table_update(final_tables_data)
+            
+            yield "", history, final_table_update, execution_trace, metrics_text, node_status, flow_diagram
             
         except Exception as e:
             # 处理错误
             error_msg = f"处理请求时出现错误: {str(e)}"
             print(error_msg)
             history[-1]["content"] = f"抱歉，{error_msg}"
-            yield "", history, {}, "", [], ""
+            empty_table_update = self._prepare_table_update([])
+            yield "", history, empty_table_update, {}, "", [], ""
     
     def _format_stream_metrics(self, tool_calls: List[Dict], response_text: str) -> str:
         """格式化流式处理指标"""
