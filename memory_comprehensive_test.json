@@ -1,0 +1,77 @@
+{
+  "session_id": "comprehensive_test_session",
+  "export_time": "2025-06-21T16:29:24.549099",
+  "statistics": {
+    "session_id": "comprehensive_test_session",
+    "short_term": {
+      "current_size": 54,
+      "limit": 200,
+      "usage_ratio": 0.27,
+      "item_count": 1
+    },
+    "long_term": {
+      "total_memories": 6,
+      "total_characters": 148,
+      "average_importance": 0.7166666666666667,
+      "conversation_memories": 0,
+      "fact_memories": 5,
+      "compressed_memories": 1
+    },
+    "total_characters": 202
+  },
+  "short_term_memory": [
+    "用户: 我通常会先了解各方的核心关切，然后寻找平衡点\n助手: 这是很好的方法，理解各方需求是解决冲突的关键。"
+  ],
+  "long_term_memory": [
+    {
+      "id": "dae9b50b-da13-4d3e-a3c0-27541b0dc888",
+      "content": "张三认为跨团队协作需要很强的沟通能力",
+      "timestamp": "2025-06-21T16:29:24.537802",
+      "type": "fact",
+      "importance": 0.7,
+      "metadata": {}
+    },
+    {
+      "id": "7a526820-2d4a-4e7e-837e-685ba3d6ccd3",
+      "content": "张三的工作需要与开发、设计、运营等多个团队沟通",
+      "timestamp": "2025-06-21T16:29:24.531519",
+      "type": "fact",
+      "importance": 0.7,
+      "metadata": {}
+    },
+    {
+      "id": "5737a985-f7a2-4803-932c-8ef2d15323b5",
+      "content": "张三的职业是互联网公司的产品经理",
+      "timestamp": "2025-06-21T16:29:24.525328",
+      "type": "fact",
+      "importance": 0.7,
+      "metadata": {}
+    },
+    {
+      "id": "8445975f-7153-4b5a-a47a-068a241e618a",
+      "content": "张三在北京工作",
+      "timestamp": "2025-06-21T16:29:24.518691",
+      "type": "fact",
+      "importance": 0.7,
+      "metadata": {}
+    },
+    {
+      "id": "c3d4c9f5-f6f4-4bb0-986b-ae7d5c05cf18",
+      "content": "张三今年25岁",
+      "timestamp": "2025-06-21T16:29:24.512518",
+      "type": "fact",
+      "importance": 0.7,
+      "metadata": {}
+    },
+    {
+      "id": "3b260b34-9900-49a0-a0e5-ec950c4c98b9",
+      "content": "张三25岁，在北京一家互联网公司担任产品经理，工作忙碌但充实。他需要与开发、设计、运营等多个团队沟通，并处理团队间的分歧，强调跨团队协作对沟通能力的要求。",
+      "timestamp": "2025-06-21T16:29:24.505341",
+      "type": "compressed",
+      "importance": 0.8,
+      "metadata": {
+        "original_count": 3
+      }
+    }
+  ]
+}
