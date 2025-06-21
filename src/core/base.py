@@ -124,6 +124,106 @@ class BaseNode(ABC):
     async def post_execute(self, output: NodeOutput) -> NodeOutput:
         """执行后钩子 - 可以修改输出数据"""
         return output
+    
+    def parse_tool_arguments(self, tool_input: str) -> Dict[str, Any]:
+        """
+        通用工具参数解析方法 - 支持多种格式
+        
+        Args:
+            tool_input: 工具输入字符串
+            
+        Returns:
+            Dict[str, Any]: 解析后的参数字典
+        """
+        if not tool_input or not tool_input.strip():
+            return {}
+        
+        tool_input = tool_input.strip()
+        
+        # 1. 尝试解析JSON格式
+        try:
+            import json
+            # 检查是否是JSON对象格式
+            if tool_input.startswith('{') and tool_input.endswith('}'):
+                return json.loads(tool_input)
+            # 检查是否是JSON数组格式
+            elif tool_input.startswith('[') and tool_input.endswith(']'):
+                return {"items": json.loads(tool_input)}
+        except (json.JSONDecodeError, ValueError):
+            pass
+        
+        # 2. 尝试解析键值对格式 (key=value, key2=value2 或换行分隔)
+        try:
+            if '=' in tool_input:
+                arguments = {}
+                # 支持逗号或换行分隔
+                separators = [',', '\n', ';']
+                lines = tool_input
+                for sep in separators:
+                    if sep in lines:
+                        lines = lines.replace(sep, '\n')
+                        break
+                
+                for line in lines.split('\n'):
+                    line = line.strip()
+                    if '=' in line:
+                        key, value = line.split('=', 1)
+                        key = key.strip()
+                        value = value.strip().strip('"\'')  # 去除引号
+                        
+                        # 尝试智能类型转换
+                        if value.lower() in ['true', 'false']:
+                            arguments[key] = value.lower() == 'true'
+                        elif value.isdigit():
+                            arguments[key] = int(value)
+                        elif '.' in value and value.replace('.', '').isdigit():
+                            arguments[key] = float(value)
+                        elif value.startswith('[') and value.endswith(']'):
+                            # 尝试解析为列表
+                            try:
+                                import json
+                                arguments[key] = json.loads(value)
+                            except:
+                                arguments[key] = value
+                        else:
+                            arguments[key] = value
+                
+                if arguments:
+                    return arguments
+        except Exception:
+            pass
+        
+        # 3. 尝试解析YAML风格的键值对
+        try:
+            if ':' in tool_input and '\n' in tool_input:
+                import re
+                arguments = {}
+                lines = tool_input.split('\n')
+                for line in lines:
+                    line = line.strip()
+                    if ':' in line and not line.startswith('#'):
+                        match = re.match(r'^([^:]+):\s*(.*)$', line)
+                        if match:
+                            key = match.group(1).strip()
+                            value = match.group(2).strip().strip('"\'')
+                            
+                            # 智能类型转换
+                            if value.lower() in ['true', 'false']:
+                                arguments[key] = value.lower() == 'true'
+                            elif value.isdigit():
+                                arguments[key] = int(value)
+                            elif '.' in value and value.replace('.', '').isdigit():
+                                arguments[key] = float(value)
+                            else:
+                                arguments[key] = value
+                
+                if arguments:
+                    return arguments
+        except Exception:
+            pass
+        
+        # 4. 默认处理：包装为input参数
+        return {"input": tool_input}
         
     async def run(self, input_data: NodeInput, raise_on_error: bool = False) -> NodeResult:
         """运行节点 - 包含前后处理逻辑"""

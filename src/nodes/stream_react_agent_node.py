@@ -261,8 +261,8 @@ class StreamReactAgentNode(BaseNode):
         if not self.tool_manager:
             return "错误：没有可用的工具管理器"
         
-        # 解析工具输入参数 - 增强参数解析逻辑
-        arguments = self._parse_tool_arguments(tool_input)
+        # 使用基类的通用参数解析方法
+        arguments = self.parse_tool_arguments(tool_input)
         
         # 调用工具
         try:
@@ -279,15 +279,7 @@ class StreamReactAgentNode(BaseNode):
         except Exception as e:
             return f"工具执行失败: {str(e)}"
     
-    def _parse_tool_arguments(self, tool_input: str) -> Dict[str, Any]:
-        """解析工具输入参数 - 超级简化版本"""
-        if not tool_input or not tool_input.strip():
-            return {}
-        
-        # 就这么简单，直接返回input参数
-        return {"input": tool_input.strip()}
-    
-# 移除了不必要的修复和映射函数
+# 使用基类的parse_tool_arguments方法，无需重复实现
     
     def _build_system_prompt(self, context: Any) -> str:
         """构建流式ReAct系统提示词"""
