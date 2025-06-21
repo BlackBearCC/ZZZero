@@ -12,7 +12,8 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from core.base import BaseAgent, AgentContext
 from core.types import AgentType, TaskResult, Message, MessageRole
 from core.graph import Graph, GraphBuilder, GraphExecutor
-
+from core.memory import MemoryManager, SQLiteMemoryStore
+  
 from llm.base import BaseLLMProvider
 from tools.base import ToolManager
 
@@ -25,6 +26,10 @@ class ReactAgent(BaseAgent):
                  tool_manager: Optional[ToolManager] = None,
                  max_iterations: int = 5,
                  name: Optional[str] = None,
+                 memory_enabled: bool = True,
+                 memory_store: Optional[SQLiteMemoryStore] = None,
+                 short_term_limit: int = 3000,
+                 session_id: Optional[str] = None,
                  **kwargs):
         """
         初始化ReAct Agent
@@ -34,18 +39,33 @@ class ReactAgent(BaseAgent):
             tool_manager: 工具管理器（可选）
             max_iterations: 最大迭代次数
             name: Agent名称
+            memory_enabled: 是否启用记忆功能
+            memory_store: 记忆存储实例（可选）
+            short_term_limit: 短期记忆字符限制
+            session_id: 会话ID（用于记忆隔离）
             **kwargs: 其他配置
         """
         super().__init__(
             agent_type=AgentType.REACT,
             name=name or "react_agent",
-            description="基于ReAct范式的智能代理",
+            description="基于ReAct范式的智能代理（支持记忆）",
             **kwargs
         )
         self.llm = llm
         self.tool_manager = tool_manager
         self.max_iterations = max_iterations
         self.executor = GraphExecutor(max_iterations=max_iterations)
+        
+        # 记忆管理
+        self.memory_enabled = memory_enabled
+        self.memory_manager = None
+        if memory_enabled:
+            self.memory_manager = MemoryManager(
+                llm=llm,
+                store=memory_store or SQLiteMemoryStore("./workspace/memory.db"),
+                short_term_limit=short_term_limit,
+                session_id=session_id
+            )
         
     def build_graph(self, use_stream: bool = False) -> Graph:
         """构建ReAct执行图
@@ -112,7 +132,7 @@ class ReactAgent(BaseAgent):
         return "end"
         
     async def run(self, query: str, context: Optional[Dict[str, Any]] = None) -> TaskResult:
-        """运行ReAct Agent"""
+        """运行ReAct Agent（支持记忆）"""
         # 生成任务ID
         task_id = str(uuid.uuid4())
         
@@ -132,6 +152,9 @@ class ReactAgent(BaseAgent):
         if self.tool_manager:
             available_tools = self.tool_manager.list_tools()
         
+        # 构建系统提示（包含记忆上下文）
+        system_prompt = await self._build_system_prompt(query)
+        
         # 创建执行上下文
         agent_context = AgentContext(
             task_id=task_id,
@@ -140,7 +163,7 @@ class ReactAgent(BaseAgent):
             messages=[
                 Message(
                     role=MessageRole.SYSTEM,
-                    content=self._build_system_prompt()
+                    content=system_prompt
                 ),
                 Message(
                     role=MessageRole.USER,
@@ -181,6 +204,14 @@ class ReactAgent(BaseAgent):
             # 如果没有找到有效结果，设置默认消息
             if not result.success:
                 result.result = "抱歉，无法生成回复"
+        
+        # 保存对话到记忆
+        if self.memory_enabled and self.memory_manager and result.success:
+            try:
+                await self.memory_manager.add_conversation(query, result.result)
+                print(f"对话已保存到记忆，会话ID: {self.memory_manager.session_id}")
+            except Exception as e:
+                print(f"保存对话记忆失败: {e}")
                 
         # 构建执行轨迹
         result.execution_trace = [
@@ -201,7 +232,16 @@ class ReactAgent(BaseAgent):
             "tool_calls": sum(1 for nr in node_results if nr.node_name == "act"),
             "total_duration": sum(nr.duration or 0 for nr in node_results)
         }
-            
+        
+        # 添加记忆统计信息
+        if self.memory_enabled and self.memory_manager:
+            try:
+                memory_stats = await self.memory_manager.get_stats()
+                result.metrics.update({
+                    "memory_stats": memory_stats
+                })
+            except Exception as e:
+                print(f"获取记忆统计失败: {e}")
 
         return result
     
@@ -218,6 +258,9 @@ class ReactAgent(BaseAgent):
         if self.tool_manager:
             available_tools = self.tool_manager.list_tools()
         
+        # 构建系统提示（包含记忆上下文）
+        system_prompt = await self._build_system_prompt(query)
+        
         # 创建执行上下文
         agent_context = AgentContext(
             task_id=task_id,
@@ -226,7 +269,7 @@ class ReactAgent(BaseAgent):
             messages=[
                 Message(
                     role=MessageRole.SYSTEM,
-                    content=self._build_system_prompt()
+                    content=system_prompt
                 ),
                 Message(
                     role=MessageRole.USER,
@@ -287,15 +330,29 @@ class ReactAgent(BaseAgent):
                 "metadata": {"success": result.success}
             }
         
-    def _build_system_prompt(self) -> str:
-        """构建系统提示"""
+    async def _build_system_prompt(self, query: Optional[str] = None) -> str:
+        """构建系统提示（支持记忆上下文）"""
+        base_prompt = ""
+        
+        # 添加记忆上下文
+        if self.memory_enabled and self.memory_manager and query:
+            try:
+                memory_context = await self.memory_manager.get_context_for_query(query, max_entries=5)
+                if memory_context:
+                    base_prompt += f"""=== 记忆上下文 ===
+{memory_context}
+
+"""
+            except Exception as e:
+                print(f"获取记忆上下文失败: {e}")
+        
         # 检查是否有工具可用
         if self.tool_manager and self.tool_manager.list_tools():
             # 获取工具描述
             tools_desc = self.tool_manager.get_tools_description()
             tool_names = self.tool_manager.list_tools()
             
-            return f"""你是一个基于ReAct（Reasoning and Acting）范式的智能助手。
+            base_prompt += f"""你是一个基于ReAct（Reasoning and Acting）范式的智能助手，具有记忆能力。
 
 可用工具：
 {tools_desc}
@@ -303,7 +360,7 @@ class ReactAgent(BaseAgent):
 必须使用以下格式进行推理和行动：
 
 Question: 你需要回答的问题
-Thought: 分析Qyestion，你永远知道下一步要做什么
+Thought: 分析Question，你永远知道下一步要做什么
 Action: 要采取的行动，应该是 [{', '.join(tool_names)}] 中的一个
 Action Input: 行动的输入
 Observation: 行动的结果
@@ -315,19 +372,24 @@ Final Answer: 对原始问题的最终答案
 2. 如果需要更多信息，使用可用的工具
 3. 每次只使用一个工具
 4. 仔细分析工具的返回结果
+5. 利用记忆上下文中的相关信息
+6. 注意保持对话的连贯性
 
 开始！"""
         else:
             # 没有工具时的提示
-            return """你是一个智能助手。
+            base_prompt += """你是一个智能助手，具有记忆能力。
 
 由于当前没有可用的外部工具，你需要：
 1. 仔细分析用户的问题
-2. 基于你的知识库提供最佳答案
+2. 基于你的知识库和记忆上下文提供最佳答案
 3. 如果无法确定答案，诚实地说明情况
 4. 提供清晰、有帮助的回复
+5. 保持对话的连贯性和个性化
 
 请保持友好、专业的态度回答用户问题。"""
+        
+        return base_prompt
         
     async def initialize(self):
         """初始化Agent"""
@@ -340,3 +402,21 @@ Final Answer: 对原始问题的最终答案
         await self.llm.cleanup()
         if self.tool_manager:
             await self.tool_manager.cleanup() 
+    
+    async def get_memory_stats(self) -> Optional[Dict[str, Any]]:
+        """获取记忆统计信息"""
+        if self.memory_enabled and self.memory_manager:
+            return await self.memory_manager.get_stats()
+        return None
+    
+    async def clear_memory(self):
+        """清空当前会话记忆"""
+        if self.memory_enabled and self.memory_manager:
+            await self.memory_manager.clear_all()
+            print(f"已清空会话记忆: {self.memory_manager.session_id}")
+    
+    async def export_memory(self) -> Optional[Dict[str, Any]]:
+        """导出记忆数据"""
+        if self.memory_enabled and self.memory_manager:
+            return await self.memory_manager.export_data()
+        return None

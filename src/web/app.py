@@ -90,12 +90,23 @@ class AgentApp:
             if self.tool_manager:
                 self.tool_manager.set_enabled_servers(enabled_servers)
             
-            # 创建或更新Agent
+            # 创建记忆存储
+            from core.memory import SQLiteMemoryStore
+            import uuid
+            
+            memory_store = SQLiteMemoryStore("workspace/memory.db")
+            session_id = str(uuid.uuid4())[:8]  # 生成短会话ID
+            
+            # 创建或更新Agent（启用记忆功能）
             self.agent = ReactAgent(
                 llm=self.llm,  # 传递LLM实例作为第一个参数
                 tool_manager=self.tool_manager,
                 max_iterations=self.current_config.get('max_iterations', 10),
-                name="智能助手"
+                name="智能助手",
+                memory_enabled=True,  # 启用记忆功能
+                memory_store=memory_store,  # 传递记忆存储
+                short_term_limit=3000,  # 短期记忆限制
+                session_id=session_id  # 会话ID
             )
             
             # 同时设置current_agent以兼容其他方法
@@ -313,6 +324,23 @@ class AgentApp:
                             ],
                             value=[],
                             label="启用的传统工具"
+                        )
+                    
+                    # 记忆管理
+                    with gr.Accordion("🧠 记忆管理", open=True):
+                        memory_status = gr.HTML(
+                            value="<p>正在加载记忆状态...</p>",
+                            label="记忆状态"
+                        )
+                        
+                        with gr.Row():
+                            refresh_memory_btn = gr.Button("刷新记忆状态", variant="secondary", scale=1)
+                            clear_memory_btn = gr.Button("清空会话记忆", variant="stop", scale=1)
+                            export_memory_btn = gr.Button("导出记忆数据", variant="secondary", scale=1)
+                        
+                        memory_export_display = gr.JSON(
+                            label="记忆导出数据",
+                            visible=False
                         )
                     
                     # 文件管理
@@ -837,11 +865,15 @@ def hello_world():
                         }
                     ]
                     
+                    # 获取初始记忆状态
+                    memory_status_html = await self._refresh_memory_status()
+                    
                     return (
                         status_html,
                         gr.update(choices=choices, value=default_enabled),
                         demo_messages,
-                        gr.update(value=[], headers=None, visible=False)  # 初始隐藏表格
+                        gr.update(value=[], headers=None, visible=False),  # 初始隐藏表格
+                        memory_status_html  # 记忆状态
                     )
                     
                 except Exception as e:
@@ -852,12 +884,13 @@ def hello_world():
                         f"❌ 初始化失败: {str(e)}",
                         gr.update(choices=[], value=[]),
                         [],
-                        gr.update(value=[], headers=None, visible=False)
+                        gr.update(value=[], headers=None, visible=False),
+                        "<div style='color: red;'>❌ 记忆状态获取失败</div>"
                     )
             
             app.load(
                 on_load,
-                outputs=[mcp_servers_status, enabled_mcp_servers, chatbot, dynamic_table]
+                outputs=[mcp_servers_status, enabled_mcp_servers, chatbot, dynamic_table, memory_status]
             )
             
             # MCP服务器勾选变化事件
@@ -865,6 +898,22 @@ def hello_world():
                 self._on_mcp_servers_change,
                 inputs=[enabled_mcp_servers],
                 outputs=[mcp_servers_status]
+            )
+            
+            # 记忆管理事件
+            refresh_memory_btn.click(
+                self._refresh_memory_status,
+                outputs=[memory_status]
+            )
+            
+            clear_memory_btn.click(
+                self._clear_memory,
+                outputs=[memory_status]
+            )
+            
+            export_memory_btn.click(
+                self._export_memory,
+                outputs=[memory_status, memory_export_display]
             )
             
             # 文件管理事件
@@ -1153,6 +1202,93 @@ def hello_world():
             """
             
         return app
+    
+    async def _refresh_memory_status(self):
+        """刷新记忆状态"""
+        try:
+            if not self.current_agent or not hasattr(self.current_agent, 'memory_enabled'):
+                return "<div style='color: #666;'>🧠 记忆功能未启用</div>"
+            
+            if not self.current_agent.memory_enabled:
+                return "<div style='color: #666;'>🧠 记忆功能已禁用</div>"
+            
+            memory_manager = self.current_agent.memory_manager
+            stats = await memory_manager.get_stats()
+            
+            # 解析统计信息
+            short_term = stats.get('short_term', {})
+            long_term = stats.get('long_term', {})
+            
+            short_term_count = short_term.get('item_count', 0)
+            short_term_chars = short_term.get('current_size', 0)
+            long_term_count = long_term.get('total_memories', 0)
+            compression_count = long_term.get('compressed_memories', 0)
+            
+            status_html = f"""
+            <div style='font-family: monospace; padding: 10px; border: 1px solid #ddd; border-radius: 4px; background-color: #f0f8ff;'>
+                <h4>🧠 记忆系统状态</h4>
+                <p><strong>会话ID:</strong> {memory_manager.session_id}</p>
+                <p><strong>短期记忆:</strong> {short_term_count} 条 ({short_term_chars} 字符)</p>
+                <p><strong>长期记忆:</strong> {long_term_count} 条</p>
+                <p><strong>压缩记忆:</strong> {compression_count} 条</p>
+                <p><strong>状态:</strong> {'🟢 正常' if short_term_chars < 3000 else '🟡 接近压缩阈值'}</p>
+            </div>
+            """
+            
+            return status_html
+            
+        except Exception as e:
+            return f"<div style='color: red;'>❌ 获取记忆状态失败: {str(e)}</div>"
+    
+    async def _clear_memory(self):
+        """清空会话记忆"""
+        try:
+            if not self.current_agent or not hasattr(self.current_agent, 'memory_enabled'):
+                return "<div style='color: #666;'>🧠 记忆功能未启用</div>"
+            
+            if not self.current_agent.memory_enabled:
+                return "<div style='color: #666;'>🧠 记忆功能已禁用</div>"
+            
+            memory_manager = self.current_agent.memory_manager
+            await memory_manager.clear_all()
+            
+            return "<div style='color: green;'>✅ 会话记忆已清空</div>"
+            
+        except Exception as e:
+            return f"<div style='color: red;'>❌ 清空记忆失败: {str(e)}</div>"
+    
+    async def _export_memory(self):
+        """导出记忆数据"""
+        try:
+            if not self.current_agent or not hasattr(self.current_agent, 'memory_enabled'):
+                return "<div style='color: #666;'>🧠 记忆功能未启用</div>", {}
+            
+            if not self.current_agent.memory_enabled:
+                return "<div style='color: #666;'>🧠 记忆功能已禁用</div>", {}
+            
+            memory_manager = self.current_agent.memory_manager
+            memory_data = await memory_manager.export_data()
+            
+            # 保存到文件
+            import json
+            import os
+            export_path = os.path.join("workspace", "memory_export.json")
+            with open(export_path, 'w', encoding='utf-8') as f:
+                json.dump(memory_data, f, ensure_ascii=False, indent=2)
+            
+            status_html = f"""
+            <div style='color: green; font-family: monospace;'>
+                ✅ 记忆数据已导出<br/>
+                <small>文件路径: {export_path}</small><br/>
+                <small>数据条数: {len(memory_data.get('memories', []))}</small>
+            </div>
+            """
+            
+            import gradio as gr
+            return status_html, gr.update(value=memory_data, visible=True)
+            
+        except Exception as e:
+            return f"<div style='color: red;'>❌ 导出记忆失败: {str(e)}</div>", {}
     
     async def _refresh_mcp_servers(self):
         """刷新MCP服务器状态"""
@@ -1731,6 +1867,15 @@ def hello_world():
             
             # 生成流程图
             flow_diagram = self._generate_flow_diagram(execution_trace)
+            
+            # 保存对话到记忆（流式模式）
+            if (self.current_agent and hasattr(self.current_agent, 'memory_enabled') and 
+                self.current_agent.memory_enabled and accumulated_response.strip()):
+                try:
+                    await self.current_agent.memory_manager.add_conversation(message, accumulated_response)
+                    print(f"流式对话已保存到记忆，会话ID: {self.current_agent.memory_manager.session_id}")
+                except Exception as e:
+                    print(f"保存流式对话记忆失败: {e}")
             
             # 最终输出
             final_highlighted_content, final_tables_data = self._highlight_agent_keywords(accumulated_response)
