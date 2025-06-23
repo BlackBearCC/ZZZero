@@ -117,43 +117,62 @@ class NewsClassificationServer:
         # 执行异步初始化
         await self.doubao_client.initialize()
         
-        # 构建分类提示词
-        categories_str = "、".join(self.CLASSIFICATION_CATEGORIES)
-        
         # 组合新闻文本
         news_text = f"标题：{title}"
         if content.strip():
-            news_text += f"\n内容：{content[:500]}"  # 限制内容长度
+            news_text += f"\n内容：{content}"  # 不限制内容长度，使用完整内容
         
-        # 使用COT思维链提示，支持多标签
-        prompt = f"""请按照以下步骤对新闻进行分类：
+        # 使用COT思维链提示，支持多标签，合并成一段
+        prompt = f"""
+按照以下步骤对新闻进行分类：
 
-**第一步：理解分类标准**
-可选的26个分类标准：{categories_str}
+第一步：理解分类标准
+可选的27个分类标准及其说明：
+- 音乐：与音乐创作、演出、乐器和音乐产业相关的内容
+- 影视：电影、电视剧、纪录片等视听娱乐作品及其制作发行
+- 游戏：电子游戏、手机游戏、电竞比赛等游戏娱乐内容
+- 运动：体育竞技、健身锻炼、运动赛事等身体活动相关
+- 阅读：书籍出版、文学作品、阅读文化等文字阅读相关
+- 艺术：绘画雕塑、艺术展览、创意设计等艺术创作活动
+- 二次元：动漫、漫画、声优等二次元文化相关内容
+- 亚文化：小众兴趣、特殊群体文化等非主流文化现象
+- 旅行：旅游出行、景点介绍、旅行攻略等出游相关
+- 美食：餐饮文化、烹饪技巧、食材介绍等饮食相关
+- 校园：学校教育、学生生活、学术研究等教育机构相关
+- 摄影：拍照技术、相机设备、摄影艺术等影像创作
+- 大自然：环境保护、野生动植物、自然现象等自然界相关
+- 科技数码：科技产品、数字技术、互联网应用等技术创新
+- 家居：家庭装修、家具用品、居住环境等家庭生活空间
+- 绿植：植物种植、园艺养护、花卉栽培等植物养护
+- 宠物：动物饲养、宠物护理、宠物用品等动物陪伴
+- 娱乐圈：明星动态、娱乐八卦、演艺圈新闻等娱乐产业
+- 穿搭美妆：时尚搭配、化妆美容、服装潮流等外在形象
+- 生活方式：生活理念、日常习惯、生活品质反应生活态度的内容
+- 日常琐事：生活中的社会新闻、热点事件发生在大众身边的生活内容
+- 线下活动：聚会活动、展览演出、社交聚集等现场活动
+- 两性情感：恋爱关系、情感话题、性别议题等情感交流
+- 职场：工作环境、企业管理、职业发展等工作相关
+- 家庭：家庭关系、婚姻生活、亲子教育等家庭生活
+- 价值观：思想观念、人生哲理、社会价值等精神层面
+- 政治：政府政策、外交关系、政治人物等国家治理相关（政治话题必须独立出现，禁止多个标签同时出现）
 
-**第二步：分析新闻内容**
-新闻内容：
-{news_text}
-
+第二步：分析新闻内容
+新闻内容：{news_text}
 请分析这篇新闻的核心主题是什么，主要讨论的内容和领域是什么，涉及哪些方面。
 
-**第三步：匹配分类**
-根据新闻的核心主题和涉及的多个方面，从26个分类标准中选择1-3个最合适的分类。一篇新闻可以有多个标签。
+第三步：匹配分类
+根据新闻的核心主题和涉及的多个方面，从27个分类标准中选择1-3个最合适的分类。一篇新闻可以有多个标签。
 
-**最终输出**
+最终输出
 请严格按照以下JSON格式输出结果，不要包含任何其他内容：
-{{
-    "thinking": "你的分析思考过程",
-    "categories": ["分类1", "分类2"]
-}}
+{{"thinking": "你的分析思考过程", "categories": ["分类1", "分类2"]}}
 
 要求：
-1. thinking字段描述你的分析思考过程
-2. categories字段是数组，包含1-3个分类，每个分类必须是上述26个分类之一
-3. 如果新闻涉及多个领域，可以选择多个分类
-4. 输出必须是有效的JSON格式
-5. 分类不能重复
-6. 政治话题禁止归为职场，必须独立分类"""
+1.thinking字段描述你的分析思考过程 
+2.categories字段是数组，包含1-3个分类，每个分类必须是上述27个分类之一 
+3.如果新闻涉及多个领域，可以选择多个分类 4.输出必须是有效的JSON格式 
+5.分类不能重复 6.政治话题必须独立出现，禁止多个标签同时出现 7
+.根据分类说明仔细区分相似类别"""
         
         # 调用豆包LLM
         success, response = await self.doubao_client.call_llm(
@@ -288,16 +307,34 @@ class NewsClassificationServer:
                             "title": original_row.get(title_column, ""),
                             "timestamp": datetime.now().isoformat()
                         }
-                        print(f"❌ 第{row_idx+1}条分类失败: {original_row.get(title_column, '')[:50]}... - {str(result)}")
+                        title_display = original_row.get(title_column, "")
+                        print(f"\n❌ 第{row_idx+1}条分类失败:")
+                        print(f"   标题: {title_display}")
+                        print(f"   错误: {str(result)}")
                     else:
                         result_dict = result
+                        title_display = result_dict.get('title', '')
+                        content_display = original_row.get(content_column, "")
+                        
                         if result_dict.get("success", False):
                             success_count += 1
-                            # 打印每条成功的分类结果
+                            # 打印每条成功的分类结果，包含完整内容和思考过程
                             categories_str = "、".join(result_dict.get("categories", []))
-                            print(f"✅ 第{row_idx+1}条: {result_dict.get('title', '')[:50]}... → {categories_str}")
+                            thinking = result_dict.get("thinking", "")
+                            
+                            print(f"\n✅ 第{row_idx+1}条分类成功:")
+                            print(f"   标题: {title_display}")
+                            if content_display.strip():
+                                print(f"   内容: {content_display}")
+                            print(f"   分类: {categories_str}")
+                            print(f"   思考过程: {thinking}")
                         else:
-                            print(f"❌ 第{row_idx+1}条分类失败: {result_dict.get('title', '')[:50]}... - {result_dict.get('error', '未知错误')}")
+                            error_msg = result_dict.get('error', '未知错误')
+                            print(f"\n❌ 第{row_idx+1}条分类失败:")
+                            print(f"   标题: {title_display}")
+                            if content_display.strip():
+                                print(f"   内容: {content_display}")
+                            print(f"   错误: {error_msg}")
                     
                     # 合并原始数据和分类结果
                     combined_result = {**original_row, **result_dict}
