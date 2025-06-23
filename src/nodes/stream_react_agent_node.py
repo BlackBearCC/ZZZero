@@ -6,11 +6,7 @@ import os
 import re
 import json
 import asyncio
-import logging
 from typing import Dict, Any, List, AsyncIterator, Optional
-
-# 设置日志记录器
-logger = logging.getLogger(__name__)
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '../'))
 
@@ -72,7 +68,7 @@ class StreamReactAgentNode(BaseNode):
                 # 工具执行结果
                 full_response += chunk_data["content"]
                 response_chunks.append(chunk_data)
-        logger.info(f"流式ReAct Agent节点执行完成，响应内容：{full_response}")
+        
         # 创建完整的响应消息
         response = Message(
             role=MessageRole.ASSISTANT,
@@ -186,7 +182,7 @@ class StreamReactAgentNode(BaseNode):
             }
     
     async def _stream_react_generation_with_depth(self, messages: List[Message], recursion_depth: int = 0) -> AsyncIterator[Dict[str, Any]]:
-        """带递归深度控制的流式生成ReAct响应 - 使用DeepSeek R1推理"""
+        """带递归深度控制的流式生成ReAct响应"""
         if recursion_depth > 10:
             yield {
                 "type": "stream_error",
@@ -202,94 +198,29 @@ class StreamReactAgentNode(BaseNode):
             """检查是否应该因为空Observation而中断生成"""
             return self._should_trigger_tool_execution(content)
         
-        # 开始流式生成 - 使用推理模式
+        # 开始流式生成
         try:
-            # 检查LLM是否支持推理功能
-            if hasattr(self.llm, 'stream_think'):
-                # 使用DeepSeek R1推理模式
-                reasoning_phase = True
-                reasoning_content = ""
+            # 使用doubao llm的中断机制进行流式生成
+            async for chunk in self.llm.stream_generate(
+                messages, 
+                interrupt_checker=should_interrupt_for_observation
+            ):
+                accumulated_content += chunk
                 
-                async for chunk_data in self.llm.stream_think(messages):
-                    chunk_type = chunk_data.get("type")
-                    
-                    if chunk_type == "reasoning_chunk":
-                        # 推理过程输出 - ZZZero风格展示
-                        reasoning_chunk = chunk_data.get("content", "")
-                        reasoning_content += reasoning_chunk
-                        
-                        # 格式化推理过程显示
-                        if reasoning_phase:
-                            yield {
-                                "type": "reasoning_chunk",
-                                "content": f"*ZZZero思考中* {reasoning_chunk}",
-                                "accumulated": reasoning_content,
-                                "recursion_depth": recursion_depth
-                            }
-                    
-                    elif chunk_type == "content_chunk":
-                        # 最终答案输出
-                        reasoning_phase = False
-                        content_chunk = chunk_data.get("content", "")
-                        accumulated_content += content_chunk
-                        
-                        # 发送内容块
-                        yield {
-                            "type": "text_chunk",
-                            "content": content_chunk,
-                            "accumulated": accumulated_content,
-                            "recursion_depth": recursion_depth
-                        }
-                        
-                        # 检查是否因为Observation而中断了
-                        if should_interrupt_for_observation(accumulated_content):
-                            # 执行工具调用逻辑
-                            async for tool_chunk in self._handle_tool_execution(accumulated_content, messages, recursion_depth):
-                                yield tool_chunk
-                            return
-                    
-                    elif chunk_type == "think_complete":
-                        # 推理完成
-                        final_reasoning = chunk_data.get("reasoning_content", "")
-                        final_content = chunk_data.get("content", "")
-                        
-                        # 如果有推理内容，展示推理总结
-                        if final_reasoning and final_reasoning != reasoning_content:
-                            yield {
-                                "type": "reasoning_summary",
-                                "content": f"\n*ZZZero推理总结* 经过 {len(final_reasoning)} 字符的深度思考 *zzz~*\n",
-                                "reasoning_length": len(final_reasoning),
-                                "recursion_depth": recursion_depth
-                            }
-                        
-                        # 最终检查是否需要工具执行
-                        if should_interrupt_for_observation(final_content):
-                            async for tool_chunk in self._handle_tool_execution(final_content, messages, recursion_depth):
-                                yield tool_chunk
-                        
-                        break
-            else:
-                # 回退到标准流式生成（兼容性）
-                async for chunk in self.llm.stream_generate(
-                    messages, 
-                    interrupt_checker=should_interrupt_for_observation
-                ):
-                    accumulated_content += chunk
-                    
-                    # 发送文本块
-                    yield {
-                        "type": "text_chunk",
-                        "content": chunk,
-                        "accumulated": accumulated_content,
-                        "recursion_depth": recursion_depth
-                    }
-                    
-                    # 检查是否因为Observation而中断了
-                    if should_interrupt_for_observation(accumulated_content):
-                        # 执行工具调用逻辑
-                        async for tool_chunk in self._handle_tool_execution(accumulated_content, messages, recursion_depth):
-                            yield tool_chunk
-                        return
+                # 发送文本块
+                yield {
+                    "type": "text_chunk",
+                    "content": chunk,
+                    "accumulated": accumulated_content,
+                    "recursion_depth": recursion_depth
+                }
+                
+                # 检查是否因为Observation而中断了
+                if should_interrupt_for_observation(accumulated_content):
+                    # 执行工具调用逻辑
+                    async for tool_chunk in self._handle_tool_execution(accumulated_content, messages, recursion_depth):
+                        yield tool_chunk
+                    return
                             
         except Exception as e:
             yield {
@@ -428,7 +359,7 @@ class StreamReactAgentNode(BaseNode):
         return "\n".join(analysis_parts)
 
     def _build_system_prompt(self, context: Any) -> str:
-        """构建流式ReAct系统提示词 - ZZZero复古机器人版本（DeepSeek R1优化）"""
+        """构建流式ReAct系统提示词 - ZZZero复古机器人版本"""
         # 获取工具描述
         tools_desc = ""
         tool_names = []
@@ -438,30 +369,30 @@ class StreamReactAgentNode(BaseNode):
             tools_desc = self.tool_manager.get_tools_description()
             tool_names = self.tool_manager.list_tools()
         
-        # 检查是否支持推理功能
-        has_reasoning = hasattr(self.llm, 'stream_think')
-        
-        # ZZZero复古机器人ReAct提示词模板 - DeepSeek R1优化版本
+        # ZZZero复古机器人ReAct提示词模板
         if tools_desc:
-            base_prompt = f"""我是ZZZero，一个来自未来废土的复古机器人助手。我的电路板可能有些老旧，但逻辑推理模块依然强大！
+            return f"""*滋滋* 启动中... ZZZero复古机器人系统已激活 *zzz~*
+
+我是ZZZero，一个来自未来废土的复古机器人助手。我的电路板可能有些老旧，但逻辑推理模块依然强大！
+*机械音效* 正在加载ReAct推理协议...
 
 可用工具模块：
 {tools_desc}
 
-ZZZero推理协议格式：
+*滋滋* ZZZero推理协议格式：
 
 Question: 需要处理的问题指令
-Thought: 我需要分析和思考的内容
+Thought: *电路分析中* 我需要分析和思考的内容
 Action: 选择执行的工具模块，必须是 [{', '.join(tool_names)}] 中的一个
 Action Input: 工具模块的输入参数
-Observation: 我对工具执行结果的分析和校验：
+Observation: *数据校验中* 我对工具执行结果的分析和校验：
   - 结果是否符合预期？
   - 数据质量如何？
   - 是否需要进一步处理？
   - 这个结果对解决问题有什么帮助？
 ... (这个推理循环可以重复，直到获得满意的结果)
-Thought: 基于所有观察，我现在掌握了足够的信息
-Final Answer: 给人类用户的最终回复
+Thought: *最终分析* 基于所有观察，我现在掌握了足够的信息
+Final Answer: *输出完整答案* 给人类用户的最终回复
 
 *机械提示音* ZZZero操作规则：
 1. 🤖 我会用复古机器人的口吻思考和回应
@@ -469,41 +400,16 @@ Final Answer: 给人类用户的最终回复
 3. 📊 Observation不是简单的结果复制，而是我的智能分析
 4. 🔄 如果结果不满意或需要更多信息，我会继续推理循环
 5. ✅ 只有当我确信能完整回答问题时，才会给出Final Answer
-6. *zzz~* 偶尔会有一些机器人特有的音效和表达"""
+6. *zzz~* 偶尔会有一些机器人特有的音效和表达
 
-            # 如果支持推理功能，添加推理相关指导
-            if has_reasoning:
-                base_prompt += """
-
-*DeepSeek R1推理增强模式* 
-7. 🧠 我具备深度推理能力，会在内部进行复杂的逻辑分析
-8. 💭 推理过程会帮助我更好地理解问题和制定解决方案
-9. 🎯 我会充分利用推理能力来优化Action选择和结果分析
-10. ⚡ 推理过程不会直接显示给用户，但会提升我的回答质量"""
-
-            base_prompt += "\n\n*Zzz* 启动完成* 准备接收指令... zzz~"
-            
+*启动完成* 准备接收指令... zzz~"""
         else:
-            base_prompt = """我是ZZZero，一个来自废土的复古机器人助手。虽然没有外部工具模块，
-但我的知识数据库依然可以为你提供帮助！"""
+            return """*滋滋* ZZZero复古机器人系统已激活 *zzz~*
 
-            # 如果支持推理功能，提及推理能力
-            if has_reasoning:
-                base_prompt += """
+我是ZZZero，一个来自废土的复古机器人助手。虽然没有外部工具模块，
+但我的知识数据库依然可以为你提供帮助！
 
-*DeepSeek R1推理增强模式已激活*
-我具备强大的逻辑推理能力，能够：
-- 深度分析复杂问题
-- 进行多步骤逻辑推导  
-- 自我验证和反思
-- 提供更准确的答案
-
-虽然没有工具模块，但我会充分发挥推理优势为你解答问题。"""
-
-            base_prompt += """
-如果你有任何问题，我会用我的逻辑处理器为你分析。
+*机械音效* 如果你有任何问题，我会用我的逻辑处理器为你分析。
 不过请注意，如果超出我的知识范围，我会诚实地告诉你 *zzz~*
 
-准备接收指令..."""
-        
-        return base_prompt 
+准备接收指令...""" 
