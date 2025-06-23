@@ -363,7 +363,7 @@ Question: 你需要回答的问题
 Thought: 分析Question，你永远知道下一步要做什么
 Action: 要采取的行动，应该是 [{', '.join(tool_names)}] 中的一个
 Action Input: 行动的输入
-Observation: 行动的结果
+Observation: 对行动的结果的观察
 ... (这个 Thought/Action/Action Input/Observation 可以重复N次，直到你认为你已经得到了最终答案)
 Final Answer: 对原始问题的最终答案
 
