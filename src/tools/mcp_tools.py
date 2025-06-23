@@ -71,7 +71,7 @@ class MCPToolManager:
         self.all_available_tools: Dict[str, MCPTool] = {}
         
         # 启用状态
-        self.enabled_servers: Set[str] = set()
+        self.enabled_servers:  Set[str] = set()
         self.enabled_tools: Set[str] = set()
         
         # 注册服务器和工具
