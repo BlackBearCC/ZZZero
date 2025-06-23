@@ -14,6 +14,7 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from core.base import BaseTool
+from core.plugins import get_role_plugin_manager, RolePluginManager
 
 logger = logging.getLogger(__name__)
 
@@ -74,10 +75,13 @@ class MCPToolManager:
         self.enabled_servers:  Set[str] = set()
         self.enabled_tools: Set[str] = set()
         
+        # 角色插件管理器
+        self.role_plugin_manager: RolePluginManager = get_role_plugin_manager()
+        
         # 注册服务器和工具
         self._register_servers_and_tools()
         
-        logger.info("MCP工具管理器（直接调用版）初始化完成")
+        logger.info("MCP工具管理器（直接调用版）初始化完成，角色插件已集成")
     
     def _register_servers_and_tools(self):
         """注册服务器配置和工具"""
@@ -297,14 +301,20 @@ class MCPToolManager:
         if not self._is_server_running(tool.server_id):
             raise RuntimeError(f"MCP服务器 {tool.server_id} 未运行")
         
+        # 为有权限的服务器注入角色上下文
+        enhanced_arguments = await self.inject_role_context_to_arguments(
+            tool.server_id, tool.name, arguments
+        )
+        
         server_instance = self.server_instances[tool.server_id]
         
         try:
             logger.info(f"直接调用工具: {tool.name}, 服务器: {tool.server_id}")
-            logger.info(f"参数: {arguments}")
+            logger.info(f"原始参数: {arguments}")
+            logger.info(f"增强参数: {enhanced_arguments}")
             
-            # 直接调用服务器的_call_tool方法
-            result = await server_instance._call_tool(tool.name, arguments, None)
+            # 直接调用服务器的_call_tool方法，使用增强参数
+            result = await server_instance._call_tool(tool.name, enhanced_arguments, None)
             
             logger.info(f"工具调用成功，原始结果: {result}")
             
@@ -439,6 +449,74 @@ class MCPToolManager:
                     logger.warning(f"服务器 {tool.server_id} 未运行，工具 {tool_name} 不可用")
         
         return tools
+    
+    def has_role_plugin_permission(self, server_id: str) -> bool:
+        """检查指定服务器是否有角色插件权限
+        
+        目前只有角色扮演数据生成服务器（roleplay）有权限使用角色插件
+        """
+        return server_id == "roleplay"
+    
+    async def get_role_context_for_server(self, server_id: str, keywords: List[str] = None) -> Dict[str, Any]:
+        """为指定服务器获取角色上下文"""
+        if not self.has_role_plugin_permission(server_id):
+            return {}
+        
+        return await self.role_plugin_manager.get_role_context(keywords)
+    
+    async def inject_role_context_to_arguments(self, server_id: str, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """为工具调用注入角色上下文"""
+        # 检查是否有权限使用角色插件
+        if not self.has_role_plugin_permission(server_id):
+            return arguments
+        
+        # 提取关键词（从需求描述中）
+        keywords = []
+        requirements = arguments.get("requirements", "")
+        if requirements:
+            # 简单的关键词提取（可以根据需要改进）
+            import re
+            words = re.findall(r'\b\w+\b', requirements)
+            keywords = [word for word in words if len(word) > 2][:3]  # 取前3个有效关键词
+        
+        # 获取角色上下文
+        role_context = await self.get_role_context_for_server(server_id, keywords)
+        
+        if not role_context:
+            logger.info(f"服务器 {server_id} 未获取到角色上下文")
+            return arguments
+        
+        # 注入角色上下文到参数中
+        enhanced_arguments = arguments.copy()
+        
+        # 如果有角色资料，注入到character_description中
+        if "profile" in role_context:
+            profile_content = role_context["profile"]
+            if "character_description" not in enhanced_arguments or not enhanced_arguments["character_description"].strip():
+                enhanced_arguments["character_description"] = profile_content
+                logger.info(f"已注入角色资料到工具 {tool_name}")
+            else:
+                # 如果已有角色描述，在前面添加插件角色资料
+                enhanced_arguments["character_description"] = f"{profile_content}\n\n=== 补充角色描述 ===\n{enhanced_arguments['character_description']}"
+                logger.info(f"已补充角色资料到工具 {tool_name}")
+        
+        # 如果有知识库结果，注入到requirements中
+        if "knowledge" in role_context and role_context["knowledge"]:
+            knowledge_content = "\n".join([
+                f"- {item['keyword']}: {item['content']}" 
+                for item in role_context["knowledge"]
+            ])
+            
+            knowledge_section = f"\n\n=== 动态角色知识 ===\n{knowledge_content}"
+            
+            if "requirements" in enhanced_arguments:
+                enhanced_arguments["requirements"] += knowledge_section
+            else:
+                enhanced_arguments["requirements"] = f"基础要求{knowledge_section}"
+            
+            logger.info(f"已注入 {len(role_context['knowledge'])} 条知识库结果到工具 {tool_name}")
+        
+        return enhanced_arguments
     
     async def cleanup(self):
         """清理资源"""

@@ -8,6 +8,7 @@ import sys
 import json
 import asyncio
 import logging
+import random
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
@@ -52,6 +53,67 @@ class TimePhase(Enum):
         self.end_time = end_time
 
 
+class ConfigManager:
+    """配置管理器 - 管理地点、天气、情绪配置数据"""
+    
+    def __init__(self):
+        # 地点配置
+        self.locations = {
+            "居住场所": ["卧室", "客厅", "厨房", "阳台", "花园", "书房", "工作室"],
+            "工作场所": ["办公室", "会议室", "实验室", "工厂", "商店", "餐厅", "学校"],
+            "休闲场所": ["公园", "咖啡厅", "图书馆", "健身房", "电影院", "商场", "海边"],
+            "社交场所": ["朋友家", "社区中心", "俱乐部", "聚会场所", "宴会厅"],
+            "户外场所": ["山林", "湖泊", "城市广场", "街道", "景区", "运动场"]
+        }
+        
+        # 天气配置
+        self.weather = {
+            "晴朗": ["阳光明媚", "微风徐徐", "万里无云", "温暖舒适"],
+            "阴天": ["多云", "凉爽", "微风", "适合户外活动"],
+            "雨天": ["小雨", "中雨", "大雨", "雷雨", "毛毛雨", "阵雨"],
+            "特殊天气": ["雪天", "雾天", "沙尘", "炎热", "寒冷"]
+        }
+        
+        # 情绪氛围配置
+        self.emotions = {
+            "积极情绪": ["兴奋", "愉悦", "专注", "充满活力", "满足", "平静"],
+            "中性情绪": ["平常", "淡定", "思考", "观察", "等待", "准备"],
+            "挑战情绪": ["紧张", "忙碌", "压力", "期待", "不安", "困惑"]
+        }
+    
+    def get_random_location(self, category: str = None) -> str:
+        """随机获取地点"""
+        if category and category in self.locations:
+            return random.choice(self.locations[category])
+        # 随机选择分类和地点
+        category = random.choice(list(self.locations.keys()))
+        return random.choice(self.locations[category])
+    
+    def get_random_weather(self, category: str = None) -> str:
+        """随机获取天气"""
+        if category and category in self.weather:
+            return random.choice(self.weather[category])
+        # 随机选择分类和天气
+        category = random.choice(list(self.weather.keys()))
+        return random.choice(self.weather[category])
+    
+    def get_random_emotion(self, category: str = None) -> str:
+        """随机获取情绪"""
+        if category and category in self.emotions:
+            return random.choice(self.emotions[category])
+        # 随机选择分类和情绪
+        category = random.choice(list(self.emotions.keys()))
+        return random.choice(self.emotions[category])
+    
+    def get_all_config(self) -> Dict[str, Any]:
+        """获取所有配置"""
+        return {
+            "locations": self.locations,
+            "weather": self.weather,
+            "emotions": self.emotions
+        }
+
+
 class PromptManager:
     """提示词管理器 - 管理预置的标准提示词模板"""
     
@@ -64,41 +126,12 @@ class PromptManager:
 【任务描述】
 {requirements}
 
-【参考选项库】
-参考地点类型：
-- 居住场所：卧室、客厅、厨房、阳台、花园、书房、工作室
-- 工作场所：办公室、会议室、实验室、工厂、商店、餐厅、学校
-- 休闲场所：公园、咖啡厅、图书馆、健身房、电影院、商场、海边
-- 社交场所：朋友家、社区中心、俱乐部、聚会场所、宴会厅
-- 户外场所：山林、湖泊、城市广场、街道、景区、运动场
-
-参考天气类型：
-- 晴朗：阳光明媚、微风徐徐、万里无云、温暖舒适
-- 阴天：多云、凉爽、微风、适合户外活动
-- 雨天：小雨、中雨、大雨、雷雨、毛毛雨、阵雨
-- 特殊天气：雪天、雾天、沙尘、炎热、寒冷
-
-参考情绪氛围：
-- 积极情绪：兴奋、愉悦、专注、充满活力、满足、平静
-- 中性情绪：平常、淡定、思考、观察、等待、准备
-- 挑战情绪：紧张、忙碌、压力、期待、不安、困惑
-
 请按照以下格式生成日程计划框架：
 1. **角色日程标题**（结合角色特点和任务描述）
 2. **计划时间范围**（具体日期或时间段）
 3. **角色当前状态**（基于角色设定的心理状态和生活状况）
 4. **主要目标**（符合角色性格和任务要求的核心目标）
-5. **关键活动概览**（使用markdown表格格式）
-
-对于关键活动概览，请使用以下markdown表格格式：
-
-```table
-| 活动名称 | 预计时长 | 重要性级别 | 适合时间段 | 背景原因/目的 |
-|---------|---------|-----------|-----------|-------------|
-| 示例活动1 | 30分钟 | 高 | 上午 | 活动的具体原因和目标 |
-| 示例活动2 | 1小时 | 中 | 下午 | 活动的具体原因和目标 |
-```
-
+5. **关键活动概览**（简洁描述主要活动）
 6. **角色生活节奏特点**（基于角色设定的作息习惯和生活方式）
 7. **特殊注意事项**（角色的限制条件、偏好、禁忌等）
 
@@ -108,13 +141,12 @@ class PromptManager:
 - 考虑角色的工作性质、社交需求、个人爱好
 - 活动安排要有明确的背景原因和目的
 - 预留符合角色性格的弹性时间和休息方式
-- **重要：必须使用```table```代码块格式来展示关键活动概览表格**
 - 使用中文回复"""
         
         self.detailed_schedule_prompt = """你是一个专业的角色扮演日程细化专家。根据提供的计划框架，为指定角色生成详细的5阶段日程安排。
 
 【重要说明】
-本详细日程将作为最终执行资料使用，必须详细说明所有相关的背景和计划内容。每个活动安排都要让用户理解其背景原因和目的。
+必须按照JSON格式输出，每个活动只包含活动名称和细节两个字段。
 
 【角色设定】
 {character_description}
@@ -125,67 +157,53 @@ class PromptManager:
 【补充要求】
 {requirements}
 
-请按照以下5个时间阶段生成详细日程：
+请按照以下JSON格式生成详细日程，将一天分为5个时间阶段：
 
-**上午阶段（06:00-11:00）**：
-使用以下markdown表格格式展示活动安排：
-
-```table
-| 时间段 | 活动名称 | 地点 | 天气情况 | 情绪氛围 | 活动内容详述 | 角色行为细节 | 所需资源/工具 | 注意事项 |
-|--------|---------|-----|---------|---------|-------------|-------------|-------------|---------|
-| 06:00-06:30 | 晨起活动 | 卧室 | 晴朗微风 | 平静清醒 | 活动的背景原因和目的 | 符合性格的具体表现 | 所需物品 | 特殊考虑 |
-| 06:30-07:00 | 下一活动 | 相应地点 | 天气状况 | 情绪状态 | 详细描述 | 行为细节 | 需要资源 | 注意要点 |
-```
-
-**中午阶段（11:00-14:00）**：
-使用以下markdown表格格式展示活动安排：
-
-```table
-| 时间段 | 活动名称 | 地点 | 天气情况 | 情绪氛围 | 活动内容详述 | 角色行为细节 | 所需资源/工具 | 注意事项 |
-|--------|---------|-----|---------|---------|-------------|-------------|-------------|---------|
-| 11:00-11:30 | 午间活动 | 相应地点 | 天气状况 | 情绪状态 | 从上午活动的自然过渡及详述 | 午餐时间的个人习惯体现 | 需要资源 | 休息调整的个性化需求 |
-```
-
-**下午阶段（14:00-18:00）**：
-使用以下markdown表格格式展示活动安排：
-
-```table
-| 时间段 | 活动名称 | 地点 | 天气情况 | 情绪氛围 | 活动内容详述 | 角色行为细节 | 所需资源/工具 | 注意事项 |
-|--------|---------|-----|---------|---------|-------------|-------------|-------------|---------|
-| 14:00-14:30 | 下午活动 | 适合场所 | 下午特征 | 专注状态 | 背景原因和目的详述 | 工作/学习风格体现 | 需要资源 | 避免疲劳的策略 |
-```
-
-**晚上阶段（18:00-23:00）**：
-使用以下markdown表格格式展示活动安排：
-
-```table
-| 时间段 | 活动名称 | 地点 | 天气情况 | 情绪氛围 | 活动内容详述 | 角色行为细节 | 所需资源/工具 | 注意事项 |
-|--------|---------|-----|---------|---------|-------------|-------------|-------------|---------|
-| 18:00-18:30 | 晚间活动 | 休闲场所 | 夜晚氛围 | 心境转换 | 背景原因和目的详述 | 个人爱好和放松方式 | 需要资源 | 对睡眠质量的影响 |
-```
-
-**夜间阶段（23:00-06:00）**：
-使用以下markdown表格格式展示活动安排：
-
-```table
-| 时间段 | 活动名称 | 地点 | 环境氛围 | 情绪状态 | 活动内容详述 | 角色行为细节 | 所需资源/工具 | 注意事项 |
-|--------|---------|-----|---------|---------|-------------|-------------|-------------|---------|
-| 23:00-23:30 | 睡前准备 | 睡眠环境 | 夜间设置 | 心理调节 | 睡前仪式的个性化体现 | 睡眠习惯和晨起风格 | 需要资源 | 保证睡眠质量的措施 |
+```json
+{{
+  "morning": [
+    {{
+      "activity_name": "活动名称",
+      "details": "活动的详细描述，包括背景原因、目的、具体行为等"
+    }}
+  ],
+  "noon": [
+    {{
+      "activity_name": "活动名称", 
+      "details": "活动的详细描述"
+    }}
+  ],
+  "afternoon": [
+    {{
+      "activity_name": "活动名称",
+      "details": "活动的详细描述"
+    }}
+  ],
+  "evening": [
+    {{
+      "activity_name": "活动名称",
+      "details": "活动的详细描述"
+    }}
+  ],
+  "night": [
+    {{
+      "activity_name": "活动名称",
+      "details": "活动的详细描述"
+    }}
+  ]
+}}
 ```
 
 生成要求：
-1. **地点选择要合理且符合角色需要**，可参考地点类型库，也可根据角色特质创造新地点
-2. **天气安排要符合季节特点和情节需要**，要与活动性质相匹配
-3. **情绪氛围要贴合活动性质和角色当前状态**，体现角色的心理变化过程
-4. **严格按照角色设定中描述的性格特点、生活方式来安排活动**
-5. **每个活动都要说明背景原因和目的**，让用户理解为什么要这样安排
-6. **安排符合角色个人特质的具体活动**，包含日常生活的细节体现
-7. **考虑工作日和休息日的不同节奏**，体现角色的时间管理方式
-8. **地点选择要符合角色的个人特质和当前阶段主题**
-9. **活动之间要有自然的衔接和过渡**，体现真实生活的连贯性
-10. **时间安排要精确具体**，便于实际执行和跟踪
-- **重要：必须使用```table```代码块格式来展示每个阶段的活动安排表格**
-- 使用中文回复"""
+1. **严格按照角色设定中描述的性格特点、生活方式来安排活动**
+2. **每个活动都要说明背景原因和目的**，让用户理解为什么要这样安排
+3. **安排符合角色个人特质的具体活动**，包含日常生活的细节体现
+4. **考虑工作日和休息日的不同节奏**，体现角色的时间管理方式
+5. **活动之间要有自然的衔接和过渡**，体现真实生活的连贯性
+6. **details字段要详细描述活动内容、背景原因、角色行为等**
+7. **输出必须是有效的JSON格式**
+- 使用中文回复
+- 必须严格按照JSON格式输出"""
     
     def get_schedule_plan_prompt(self, character_description: str = "", requirements: str = "") -> str:
         """获取日程计划生成提示词"""
@@ -233,7 +251,7 @@ class LLMCaller:
                 model_name=model_name,
                 api_key=api_key,
                 api_base=api_base,
-                temperature=0.5,
+                temperature=0.4,
                 timeout=600  # 增加超时时间到60秒
             )
             
@@ -293,6 +311,7 @@ class RolePlayDataGenerator:
     def __init__(self):
         self.prompt_manager = PromptManager()
         self.llm_caller = LLMCaller()
+        self.config_manager = ConfigManager()
         self.generation_history = []
     
     async def generate_schedule_plan(self, character_description: str = "", requirements: str = "") -> Dict[str, Any]:
@@ -415,35 +434,61 @@ class RolePlayDataGenerator:
             }
     
     def _parse_schedule_phases(self, content: str) -> Dict[str, Any]:
-        """解析日程内容，提取5个时间阶段的信息"""
-        phases = {}
-        
-        for phase in TimePhase:
-            phase_key = phase.name.lower()
-            phase_pattern = f"**{phase.phase_name}阶段（{phase.time_range}）**"
+        """解析日程内容，提取JSON格式的5个时间阶段信息"""
+        try:
+            # 尝试从内容中提取JSON
+            json_start = content.find('{')
+            json_end = content.rfind('}')
             
-            # 简单的文本匹配提取（实际项目中可以使用更复杂的解析逻辑）
-            if phase_pattern in content:
-                start_idx = content.find(phase_pattern)
-                # 查找下一个阶段的开始位置
-                next_phase_idx = len(content)
-                for next_phase in TimePhase:
-                    if next_phase != phase:
-                        next_pattern = f"**{next_phase.phase_name}阶段"
-                        idx = content.find(next_pattern, start_idx + 1)
-                        if idx != -1 and idx < next_phase_idx:
-                            next_phase_idx = idx
+            if json_start != -1 and json_end != -1:
+                json_str = content[json_start:json_end + 1]
+                schedule_data = json.loads(json_str)
                 
-                phase_content = content[start_idx:next_phase_idx].strip()
-                phases[phase_key] = {
-                    "name": phase.phase_name,
-                    "time_range": phase.time_range,
-                    "start_time": phase.start_time,
-                    "end_time": phase.end_time,
-                    "content": phase_content
+                # 为每个阶段添加配置数据
+                phases = {}
+                phase_mapping = {
+                    "morning": TimePhase.MORNING,
+                    "noon": TimePhase.NOON,
+                    "afternoon": TimePhase.AFTERNOON,
+                    "evening": TimePhase.EVENING,
+                    "night": TimePhase.NIGHT
                 }
-        
-        return phases
+                
+                for phase_key, activities in schedule_data.items():
+                    if phase_key in phase_mapping:
+                        phase_enum = phase_mapping[phase_key]
+                        
+                        # 为每个活动随机分配地点、天气、情绪
+                        enhanced_activities = []
+                        for activity in activities:
+                            enhanced_activity = {
+                                "activity_name": activity.get("activity_name", ""),
+                                "details": activity.get("details", ""),
+                                "location": self.config_manager.get_random_location(),
+                                "weather": self.config_manager.get_random_weather(),
+                                "emotion": self.config_manager.get_random_emotion()
+                            }
+                            enhanced_activities.append(enhanced_activity)
+                        
+                        phases[phase_key] = {
+                            "name": phase_enum.phase_name,
+                            "time_range": phase_enum.time_range,
+                            "start_time": phase_enum.start_time,
+                            "end_time": phase_enum.end_time,
+                            "activities": enhanced_activities
+                        }
+                
+                return phases
+            else:
+                logger.warning("未找到有效的JSON格式")
+                return {}
+                
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON解析失败: {e}")
+            return {}
+        except Exception as e:
+            logger.error(f"解析阶段数据失败: {e}")
+            return {}
     
     def _add_to_history(self, result: Dict[str, Any]):
         """添加生成结果到历史记录"""
@@ -577,6 +622,8 @@ class RolePlayDataServer(StdioMCPServer):
                 properties={}
             )
         ))
+        
+
     
     async def _call_tool(self, name: str, arguments: Dict[str, Any], context) -> Dict[str, Any]:
         """处理工具调用"""

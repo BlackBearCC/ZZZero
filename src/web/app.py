@@ -16,7 +16,8 @@ from core.types import AgentType, ToolConfig, LLMConfig, TaskResult
 from agents.react_agent import ReactAgent
 from llm.base import LLMFactory
 
-from tools.mcp_tools import MCPToolManager 
+from tools.mcp_tools import MCPToolManager
+from core.plugins import get_role_plugin_manager 
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -33,6 +34,8 @@ class AgentApp:
         self.agent = None  # 添加agent属性
         self.tool_manager = None
         self.llm = None
+        # 角色插件管理器
+        self.role_plugin_manager = get_role_plugin_manager()
         # 保存当前配置
         self.current_config = {
             'llm_provider': 'doubao',
@@ -233,7 +236,7 @@ class AgentApp:
                     gr.Markdown("## ⚙️ 配置面板")
                     
                     # LLM配置
-                    with gr.Accordion("🧠 LLM配置", open=True):
+                    with gr.Accordion("🧠 LLM配置", open=False):
                         llm_provider = gr.Dropdown(
                             choices=["doubao", "openai"],
                             value="doubao",
@@ -253,7 +256,7 @@ class AgentApp:
                         )
                     
                     # Agent配置
-                    with gr.Accordion("🤖 Agent配置", open=True):
+                    with gr.Accordion("🤖 Agent配置", open=False):
                         agent_type = gr.Dropdown(
                             choices=["react"],
                             value="react",
@@ -268,7 +271,7 @@ class AgentApp:
                         )
                     
                     # MCP服务器管理
-                    with gr.Accordion("🔌 MCP服务器管理", open=True):
+                    with gr.Accordion("🔌 MCP服务器管理", open=False):
                         # 服务器状态和勾选在一起
                         mcp_servers_status = gr.HTML(
                             value="<p>正在加载MCP服务器信息...</p>",
@@ -326,8 +329,108 @@ class AgentApp:
                             label="启用的传统工具"
                         )
                     
+                    # 角色插件配置
+                    with gr.Accordion("🎭 角色插件配置", open=False):
+                        role_plugin_status = gr.HTML(
+                            value="<p>正在加载角色插件状态...</p>",
+                            label="角色插件状态"
+                        )
+                        
+                        # 角色资料配置
+                        with gr.Group():
+                            gr.Markdown("### 📝 角色资料配置")
+                            
+                            with gr.Row():
+                                role_profile_enabled = gr.Checkbox(
+                                    label="启用角色资料插件",
+                                    value=False
+                                )
+                                clear_profile_btn = gr.Button("清空角色资料", variant="secondary", scale=1)
+                            
+                            role_profile_name = gr.Textbox(
+                                label="角色名称",
+                                placeholder="例如：艾莉丝",
+                                value=""
+                            )
+                            
+                            # 支持文本输入和文件上传
+                            with gr.Tab("文本输入"):
+                                role_profile_content = gr.Textbox(
+                                    label="角色资料内容",
+                                    placeholder="详细描述角色的性格、背景、特点等...",
+                                    lines=6,
+                                    value=""
+                                )
+                            
+                            with gr.Tab("文件上传"):
+                                role_profile_file = gr.File(
+                                    label="上传角色资料文件（txt格式）",
+                                    file_types=[".txt"],
+                                    file_count="single"
+                                )
+                                load_profile_btn = gr.Button("从文件加载角色资料", variant="secondary")
+                            
+                            role_profile_tags = gr.Textbox(
+                                label="角色标签（用逗号分隔）",
+                                placeholder="例如：温柔,聪明,艺术家",
+                                value=""
+                            )
+                        
+                        # 角色知识库配置
+                        with gr.Group():
+                            gr.Markdown("### 📚 角色知识库配置")
+                            
+                            with gr.Row():
+                                role_kb_enabled = gr.Checkbox(
+                                    label="启用角色知识库插件",
+                                    value=False
+                                )
+                                clear_kb_btn = gr.Button("清空知识库配置", variant="secondary", scale=1)
+                            
+                            role_kb_name = gr.Textbox(
+                                label="知识库名称",
+                                placeholder="例如：艾莉丝专属知识库",
+                                value=""
+                            )
+                            
+                            role_kb_file = gr.File(
+                                label="上传知识库文件（txt或csv格式）",
+                                file_types=[".txt", ".csv"],
+                                file_count="single"
+                            )
+                            
+                            role_kb_description = gr.Textbox(
+                                label="知识库描述",
+                                placeholder="描述知识库的内容和用途...",
+                                lines=2,
+                                value=""
+                            )
+                            
+                            role_kb_search_limit = gr.Slider(
+                                minimum=1,
+                                maximum=10,
+                                value=3,
+                                step=1,
+                                label="搜索结果数量限制"
+                            )
+                        
+                        # 操作按钮
+                        with gr.Row():
+                            save_role_config_btn = gr.Button("保存角色插件配置", variant="primary", scale=2)
+                            refresh_role_status_btn = gr.Button("刷新状态", variant="secondary", scale=1)
+                        
+                        # 配置说明
+                        gr.Markdown("""
+                        **角色插件说明：**
+                        - **角色资料**：可直接输入文本或上传txt文件，自动填入prompt
+                        - **角色知识库**：上传txt或csv文件，系统自动处理成可搜索的知识库
+                        - 目前只有角色扮演数据生成工具可以使用这些插件
+                        - 启用插件后，工具调用时会自动注入角色信息，无需手动输入
+                        - 配置会自动保存到本地，重启后自动恢复
+                        """)
+                    
                     # 记忆管理
-                    with gr.Accordion("🧠 记忆管理", open=True):
+                    with gr.Accordion("🧠 记忆管理", open=False):
                         memory_status = gr.HTML(
                             value="<p>正在加载记忆状态...</p>",
                             label="记忆状态"
@@ -344,7 +447,7 @@ class AgentApp:
                         )
                     
                     # 文件管理
-                    with gr.Accordion("📁 文件管理", open=True):
+                    with gr.Accordion("📁 文件管理", open=False):
                         # 文件上传
                         with gr.Tab("上传文件"):
                             file_upload = gr.File(
@@ -868,12 +971,20 @@ def hello_world():
                     # 获取初始记忆状态
                     memory_status_html = await self._refresh_memory_status()
                     
+                    # 获取角色插件状态
+                    role_plugin_status_html = await self._refresh_role_plugin_status()
+                    
+                    # 加载角色插件当前配置
+                    role_config = self._load_role_plugin_current_config()
+                    
                     return (
                         status_html,
                         gr.update(choices=choices, value=default_enabled),
                         demo_messages,
                         gr.update(value=[], headers=None, visible=False),  # 初始隐藏表格
-                        memory_status_html  # 记忆状态
+                        memory_status_html,  # 记忆状态
+                        role_plugin_status_html,  # 角色插件状态
+                        *role_config  # 角色插件配置字段
                     )
                     
                 except Exception as e:
@@ -885,12 +996,19 @@ def hello_world():
                         gr.update(choices=[], value=[]),
                         [],
                         gr.update(value=[], headers=None, visible=False),
-                        "<div style='color: red;'>❌ 记忆状态获取失败</div>"
+                        "<div style='color: red;'>❌ 记忆状态获取失败</div>",
+                        "<div style='color: red;'>❌ 角色插件状态获取失败</div>",
+                        False, "", "", "", False, "", "", 3  # 角色插件配置默认值
                     )
             
             app.load(
                 on_load,
-                outputs=[mcp_servers_status, enabled_mcp_servers, chatbot, dynamic_table, memory_status]
+                outputs=[
+                    mcp_servers_status, enabled_mcp_servers, chatbot, dynamic_table, memory_status,
+                    role_plugin_status,
+                    role_profile_enabled, role_profile_name, role_profile_content, role_profile_tags,
+                    role_kb_enabled, role_kb_name, role_kb_description, role_kb_search_limit
+                ]
             )
             
             # MCP服务器勾选变化事件
@@ -926,6 +1044,37 @@ def hello_world():
             refresh_files_btn.click(
                 self._refresh_file_lists,
                 outputs=[input_files_display, output_files_display]
+            )
+            
+            # 角色插件事件绑定
+            load_profile_btn.click(
+                self._load_profile_from_file,
+                inputs=[role_profile_file],
+                outputs=[role_profile_content]
+            )
+            
+            save_role_config_btn.click(
+                self._save_role_plugin_config,
+                inputs=[
+                    role_profile_enabled, role_profile_name, role_profile_content, role_profile_tags,
+                    role_kb_enabled, role_kb_name, role_kb_file, role_kb_description, role_kb_search_limit
+                ],
+                outputs=[role_plugin_status]
+            )
+            
+            refresh_role_status_btn.click(
+                self._refresh_role_plugin_status,
+                outputs=[role_plugin_status]
+            )
+            
+            clear_profile_btn.click(
+                self._clear_role_profile,
+                outputs=[role_plugin_status]
+            )
+            
+            clear_kb_btn.click(
+                self._clear_role_knowledge_base,
+                outputs=[role_plugin_status]
             )
             
             # 页面加载时刷新文件列表
@@ -1289,6 +1438,188 @@ def hello_world():
             
         except Exception as e:
             return f"<div style='color: red;'>❌ 导出记忆失败: {str(e)}</div>", {}
+    
+    async def _refresh_role_plugin_status(self):
+        """刷新角色插件状态"""
+        try:
+            status = self.role_plugin_manager.get_status()
+            
+            # 生成状态HTML
+            status_html = "<div style='font-family: monospace; padding: 10px; border: 1px solid #ddd; border-radius: 4px; background-color: #f0f8ff;'>"
+            status_html += "<h4>🎭 角色插件状态</h4>"
+            
+            # 角色资料插件状态
+            profile_info = status['profile_plugin']
+            profile_enabled_icon = "✅" if profile_info['enabled'] else "⚪"
+            profile_available_icon = "🟢" if profile_info['available'] else "🔴"
+            
+            status_html += f"<div style='margin: 8px 0; padding: 8px; border: 1px solid #ddd; border-radius: 4px;'>"
+            status_html += f"<strong>{profile_enabled_icon} {profile_available_icon} 角色资料插件</strong><br/>"
+            status_html += f"<small>启用状态: {'已启用' if profile_info['enabled'] else '已禁用'}</small><br/>"
+            status_html += f"<small>可用状态: {'可用' if profile_info['available'] else '不可用'}</small><br/>"
+            
+            if profile_info['info']:
+                info = profile_info['info']
+                status_html += f"<small>角色名称: {info['name']}</small><br/>"
+                status_html += f"<small>内容长度: {info['content_length']} 字符</small><br/>"
+                status_html += f"<small>标签: {', '.join(info['tags']) if info['tags'] else '无'}</small><br/>"
+                status_html += f"<small>更新时间: {info['updated_at']}</small>"
+            else:
+                status_html += "<small>未配置角色资料</small>"
+            status_html += "</div>"
+            
+            # 知识库插件状态
+            kb_info = status['knowledge_base_plugin']
+            kb_enabled_icon = "✅" if kb_info['enabled'] else "⚪"
+            kb_available_icon = "🟢" if kb_info['available'] else "🔴"
+            
+            status_html += f"<div style='margin: 8px 0; padding: 8px; border: 1px solid #ddd; border-radius: 4px;'>"
+            status_html += f"<strong>{kb_enabled_icon} {kb_available_icon} 角色知识库插件</strong><br/>"
+            status_html += f"<small>启用状态: {'已启用' if kb_info['enabled'] else '已禁用'}</small><br/>"
+            status_html += f"<small>可用状态: {'可用' if kb_info['available'] else '不可用'}</small><br/>"
+            
+            if kb_info['info']:
+                info = kb_info['info']
+                status_html += f"<small>知识库名称: {info['name']}</small><br/>"
+                status_html += f"<small>向量库路径: {info['path']}</small><br/>"
+                status_html += f"<small>搜索限制: {info['search_limit']} 条</small><br/>"
+                status_html += f"<small>创建时间: {info['created_at']}</small>"
+            else:
+                status_html += "<small>未配置知识库</small>"
+            status_html += "</div>"
+            
+            status_html += "</div>"
+            
+            return status_html
+            
+        except Exception as e:
+            return f"<div style='color: red;'>❌ 获取角色插件状态失败: {str(e)}</div>"
+    
+    async def _load_profile_from_file(self, profile_file):
+        """从文件加载角色资料"""
+        try:
+            if not profile_file:
+                return "❌ 请先选择文件"
+            
+            file_path = profile_file.name
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            if not content.strip():
+                return "❌ 文件内容为空"
+            
+            return content.strip()
+            
+        except Exception as e:
+            return f"❌ 加载文件失败: {str(e)}"
+    
+    async def _save_role_plugin_config(self, profile_enabled, profile_name, profile_content, profile_tags,
+                                      kb_enabled, kb_name, kb_file, kb_description, kb_search_limit):
+        """保存角色插件配置"""
+        try:
+            # 配置角色资料
+            if profile_name.strip() and profile_content.strip():
+                tags = [tag.strip() for tag in profile_tags.split(",") if tag.strip()] if profile_tags else []
+                self.role_plugin_manager.configure_profile(
+                    name=profile_name.strip(),
+                    content=profile_content.strip(),
+                    tags=tags,
+                    enabled=profile_enabled
+                )
+                logger.info(f"角色资料已配置: {profile_name}")
+            elif profile_enabled:
+                return "❌ 启用角色资料插件时，角色名称和内容不能为空"
+            
+            # 配置知识库
+            if kb_name.strip() and kb_file:
+                # 保存上传的文件到工作空间
+                import shutil
+                kb_file_path = f"./workspace/kb_{kb_name.strip().replace(' ', '_')}.{kb_file.name.split('.')[-1]}"
+                shutil.copy2(kb_file.name, kb_file_path)
+                
+                self.role_plugin_manager.configure_knowledge_base(
+                    name=kb_name.strip(),
+                    source_file=kb_file_path,
+                    description=kb_description.strip(),
+                    search_limit=int(kb_search_limit),
+                    enabled=kb_enabled
+                )
+                logger.info(f"角色知识库已配置: {kb_name} -> {kb_file_path}")
+            elif kb_enabled:
+                return "❌ 启用角色知识库插件时，知识库名称和文件不能为空"
+            
+            # 如果插件被禁用，则禁用对应插件
+            if not profile_enabled:
+                self.role_plugin_manager.disable_plugin("role_profile")
+            if not kb_enabled:
+                self.role_plugin_manager.disable_plugin("role_knowledge_base")
+            
+            return "✅ 角色插件配置已保存"
+            
+        except Exception as e:
+            logger.error(f"保存角色插件配置失败: {e}")
+            return f"❌ 保存配置失败: {str(e)}"
+    
+    async def _clear_role_profile(self):
+        """清空角色资料"""
+        try:
+            self.role_plugin_manager.profile_plugin.clear_profile()
+            self.role_plugin_manager.profile_plugin.disable()
+            self.role_plugin_manager._save_config()
+            return "✅ 角色资料已清空"
+        except Exception as e:
+            return f"❌ 清空角色资料失败: {str(e)}"
+    
+    async def _clear_role_knowledge_base(self):
+        """清空角色知识库配置"""
+        try:
+            self.role_plugin_manager.knowledge_base_plugin.clear_knowledge_base()
+            self.role_plugin_manager.knowledge_base_plugin.disable()
+            self.role_plugin_manager._save_config()
+            return "✅ 角色知识库配置已清空"
+        except Exception as e:
+            return f"❌ 清空知识库配置失败: {str(e)}"
+    
+    def _load_role_plugin_current_config(self):
+        """加载当前角色插件配置到界面"""
+        try:
+            status = self.role_plugin_manager.get_status()
+            
+            # 角色资料配置
+            profile_info = status['profile_plugin']
+            profile_enabled = profile_info['enabled']
+            profile_name = ""
+            profile_content = ""
+            profile_tags = ""
+            
+            if profile_info['info']:
+                info = profile_info['info']
+                profile_name = info['name']
+                profile_content = self.role_plugin_manager.profile_plugin.profile.content if self.role_plugin_manager.profile_plugin.profile else ""
+                profile_tags = ", ".join(info['tags']) if info['tags'] else ""
+            
+            # 知识库配置
+            kb_info = status['knowledge_base_plugin']
+            kb_enabled = kb_info['enabled']
+            kb_name = ""
+            kb_description = ""
+            kb_search_limit = 3
+            
+            if kb_info['info']:
+                info = kb_info['info']
+                kb_name = info['name']
+                kb_description = info['description']
+                kb_search_limit = info['search_limit']
+            
+            import gradio as gr
+            return (
+                profile_enabled, profile_name, profile_content, profile_tags,
+                kb_enabled, kb_name, kb_description, kb_search_limit
+            )
+        except Exception as e:
+            logger.error(f"加载角色插件配置失败: {e}")
+            import gradio as gr
+            return (False, "", "", "", False, "", "", 3)
     
     async def _refresh_mcp_servers(self):
         """刷新MCP服务器状态"""

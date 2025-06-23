@@ -1,0 +1,13 @@
+{
+  "role_profile": {
+    "enabled": false,
+    "name": "方知衡",
+    "content": "一个大学教授",
+    "tags": [],
+    "created_at": "2025-06-23T18:01:42.827678",
+    "updated_at": "2025-06-23T18:01:42.827678"
+  },
+  "role_knowledge_base": {
+    "enabled": false
+  }
+}
