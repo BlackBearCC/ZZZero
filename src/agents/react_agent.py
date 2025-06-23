@@ -331,7 +331,7 @@ class ReactAgent(BaseAgent):
             }
         
     async def _build_system_prompt(self, query: Optional[str] = None) -> str:
-        """构建系统提示（支持记忆上下文）"""
+        """构建系统提示（支持记忆上下文和推理增强）"""
         base_prompt = ""
         
         # 添加记忆上下文
@@ -346,13 +346,29 @@ class ReactAgent(BaseAgent):
             except Exception as e:
                 print(f"获取记忆上下文失败: {e}")
         
+        # 检查是否支持推理功能
+        has_reasoning = hasattr(self.llm, 'think') or hasattr(self.llm, 'stream_think')
+        
         # 检查是否有工具可用
         if self.tool_manager and self.tool_manager.list_tools():
             # 获取工具描述
             tools_desc = self.tool_manager.get_tools_description()
             tool_names = self.tool_manager.list_tools()
             
-            base_prompt += f"""你是一个基于ReAct（Reasoning and Acting）范式的智能助手，具有记忆能力。
+            base_prompt += f"""你是一个基于ReAct（Reasoning and Acting）范式的智能助手，具有记忆能力。"""
+            
+            # 如果支持推理功能，添加推理能力说明
+            if has_reasoning:
+                base_prompt += """
+
+*推理增强模式已激活*
+你具备强大的逻辑推理能力，能够：
+- 深度分析复杂问题
+- 进行多步骤逻辑推导
+- 自我验证和反思
+- 优化工具选择和使用策略"""
+
+            base_prompt += f"""
 
 可用工具：
 {tools_desc}
@@ -363,7 +379,7 @@ Question: 你需要回答的问题
 Thought: 分析Question，你永远知道下一步要做什么
 Action: 要采取的行动，应该是 [{', '.join(tool_names)}] 中的一个
 Action Input: 行动的输入
-Observation: 对行动的结果的观察
+Observation: 行动的结果
 ... (这个 Thought/Action/Action Input/Observation 可以重复N次，直到你认为你已经得到了最终答案)
 Final Answer: 对原始问题的最终答案
 
@@ -373,19 +389,52 @@ Final Answer: 对原始问题的最终答案
 3. 每次只使用一个工具
 4. 仔细分析工具的返回结果
 5. 利用记忆上下文中的相关信息
-6. 注意保持对话的连贯性
+6. 注意保持对话的连贯性"""
 
-开始！"""
+            # 如果支持推理功能，添加推理相关规则
+            if has_reasoning:
+                base_prompt += """
+7. 充分利用推理能力深度分析问题
+8. 在选择工具前进行充分的逻辑推导
+9. 对工具结果进行批判性思考和验证
+10. 基于推理结果优化后续行动策略"""
+
+            base_prompt += "\n\n开始！"
         else:
             # 没有工具时的提示
-            base_prompt += """你是一个智能助手，具有记忆能力。
+            base_prompt += """你是一个智能助手，具有记忆能力。"""
+            
+            # 如果支持推理功能，强调推理能力
+            if has_reasoning:
+                base_prompt += """
 
-由于当前没有可用的外部工具，你需要：
+*推理增强模式已激活*
+你具备强大的逻辑推理能力，能够：
+- 深度分析复杂问题
+- 进行多步骤逻辑推导
+- 自我验证和反思
+- 提供更准确和全面的答案
+
+由于当前没有可用的外部工具，你需要充分发挥推理优势："""
+            else:
+                base_prompt += """
+
+由于当前没有可用的外部工具，你需要："""
+
+            base_prompt += """
 1. 仔细分析用户的问题
 2. 基于你的知识库和记忆上下文提供最佳答案
 3. 如果无法确定答案，诚实地说明情况
 4. 提供清晰、有帮助的回复
-5. 保持对话的连贯性和个性化
+5. 保持对话的连贯性和个性化"""
+
+            if has_reasoning:
+                base_prompt += """
+6. 运用逻辑推理能力深入思考问题
+7. 进行多角度分析和验证
+8. 基于推理结果给出最优解答"""
+
+            base_prompt += """
 
 请保持友好、专业的态度回答用户问题。"""
         
