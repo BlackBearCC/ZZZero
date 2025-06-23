@@ -2,7 +2,7 @@
 LLM基类和工厂
 """
 from abc import ABC, abstractmethod
-from typing import Dict, List, Any, Optional, AsyncIterator, Type
+from typing import Dict, List, Any, Optional, AsyncIterator, Type, NamedTuple
 import asyncio
 from enum import Enum
 
@@ -20,6 +20,13 @@ class LLMProvider(str, Enum):
     ANTHROPIC = "anthropic"
     DOUBAO = "doubao"
     CUSTOM = "custom"
+
+
+class ThinkResult(NamedTuple):
+    """推理结果数据结构 - 基础定义"""
+    reasoning_content: str  # 推理过程内容
+    content: str           # 最终答案内容
+    metadata: Dict[str, Any]  # 元数据信息
 
 
 class BaseLLMProvider(BaseLLM):
@@ -76,6 +83,70 @@ class BaseLLMProvider(BaseLLM):
                             **kwargs) -> AsyncIterator[str]:
         """流式生成 - 子类必须实现"""
         pass
+    
+    async def think(self, 
+                   messages: List[Message],
+                   **kwargs) -> ThinkResult:
+        """
+        推理接口 - 默认实现，子类可以重写以支持专用推理模型
+        
+        Args:
+            messages: 消息列表
+            **kwargs: 其他参数
+            
+        Returns:
+            ThinkResult: 包含推理过程和最终答案的结果
+        """
+        # 默认实现：使用普通generate，没有推理过程
+        response = await self.generate(messages, **kwargs)
+        
+        return ThinkResult(
+            reasoning_content="",  # 默认没有推理过程
+            content=response.content,
+            metadata={
+                "model": getattr(self.config, 'model_name', 'unknown'),
+                "has_reasoning": False,
+                "is_default_implementation": True,
+                **response.metadata
+            }
+        )
+    
+    async def stream_think(self,
+                          messages: List[Message],
+                          **kwargs) -> AsyncIterator[Dict[str, Any]]:
+        """
+        流式推理接口 - 默认实现，子类可以重写
+        
+        Args:
+            messages: 消息列表
+            **kwargs: 其他参数
+            
+        Yields:
+            Dict: 包含推理过程或最终答案的流式数据
+        """
+        # 默认实现：使用普通stream_generate
+        accumulated_content = ""
+        
+        async for chunk in self.stream_generate(messages, **kwargs):
+            accumulated_content += chunk
+            yield {
+                "type": "content_chunk",
+                "content": chunk,
+                "accumulated_content": accumulated_content
+            }
+        
+        # 发送完成信号
+        yield {
+            "type": "think_complete",
+            "reasoning_content": "",  # 默认没有推理过程
+            "content": accumulated_content,
+            "metadata": {
+                "model": getattr(self.config, 'model_name', 'unknown'),
+                "has_reasoning": False,
+                "is_default_implementation": True,
+                "content_length": len(accumulated_content)
+            }
+        }
 
 
 class LLMFactory:

@@ -3,10 +3,10 @@
 """
 import json
 import aiohttp
-from typing import List, Dict, Any, AsyncIterator, Optional
+from typing import List, Dict, Any, AsyncIterator, Optional, NamedTuple
 from datetime import datetime
 
-from .base import BaseLLMProvider, LLMFactory
+from .base import BaseLLMProvider, LLMFactory, ThinkResult
 import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -37,6 +37,193 @@ class DoubaoLLM(BaseLLMProvider):
         if not self.config.api_base:
             # 优先使用环境变量中的URL
             self.config.api_base = os.getenv('DOUBAO_BASE_URL', "https://ark.cn-beijing.volces.com/api/v3")
+    
+    async def think(self, 
+                   messages: List[Message],
+                   **kwargs) -> ThinkResult:
+        """
+        使用DeepSeek R1推理模型进行思考
+        
+        Args:
+            messages: 消息列表
+            **kwargs: 其他参数
+            
+        Returns:
+            ThinkResult: 包含推理过程和最终答案的结果
+        """
+        # 获取DeepSeek R1模型名称，默认从环境变量获取
+        deepseek_model = os.getenv('DOUBAO_MODEL_DEEPSEEKR1', 'deepseek-reasoner')
+        
+        headers = {
+            "Authorization": f"Bearer {self.config.api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        # 转换消息格式
+        formatted_messages = self._convert_messages(messages)
+        
+        # 构建请求数据 - DeepSeek R1推理模型专用配置
+        data = {
+            "model": deepseek_model,
+            "messages": formatted_messages,
+            "temperature": kwargs.get("temperature", 0.6),  # DeepSeek R1推荐温度
+            "max_tokens": kwargs.get("max_tokens", 16384),  # DeepSeek R1最大支持16384 tokens
+        }
+        
+        # DeepSeek R1不支持的参数，需要过滤
+        unsupported_params = ['top_p', 'presence_penalty', 'frequency_penalty']
+        if self.config.extra_params:
+            filtered_params = {k: v for k, v in self.config.extra_params.items() 
+                             if k not in unsupported_params}
+            data.update(filtered_params)
+            
+        # 发送请求
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{self.config.api_base}/chat/completions",
+                headers=headers,
+                json=data,
+                timeout=aiohttp.ClientTimeout(total=self.config.timeout)
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    raise Exception(f"豆包API调用失败: {error_text}")
+                    
+                result = await response.json()
+                
+                # 提取推理内容和最终答案
+                choice = result["choices"][0]["message"]
+                reasoning_content = choice.get("reasoning_content", "")
+                content = choice.get("content", "")
+                
+                # 构建元数据
+                metadata = {
+                    "model": deepseek_model,
+                    "usage": result.get("usage", {}),
+                    "finish_reason": result["choices"][0].get("finish_reason"),
+                    "has_reasoning": bool(reasoning_content),
+                    "reasoning_length": len(reasoning_content),
+                    "content_length": len(content)
+                }
+                
+                return ThinkResult(
+                    reasoning_content=reasoning_content,
+                    content=content,
+                    metadata=metadata
+                )
+    
+    async def stream_think(self,
+                          messages: List[Message],
+                          **kwargs) -> AsyncIterator[Dict[str, Any]]:
+        """
+        流式推理接口 - 支持DeepSeek R1的流式推理输出
+        
+        Args:
+            messages: 消息列表
+            **kwargs: 其他参数
+            
+        Yields:
+            Dict: 包含推理过程或最终答案的流式数据
+        """
+        # 获取DeepSeek R1模型名称
+        deepseek_model = os.getenv('DOUBAO_MODEL_DEEPSEEKR1', 'deepseek-reasoner')
+        
+        headers = {
+            "Authorization": f"Bearer {self.config.api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        # 转换消息格式
+        formatted_messages = self._convert_messages(messages)
+        
+        # 构建流式请求数据
+        data = {
+            "model": deepseek_model,
+            "messages": formatted_messages,
+            "temperature": kwargs.get("temperature", 0.6),
+            "max_tokens": kwargs.get("max_tokens", 16384),  # DeepSeek R1最大支持16384 tokens
+            "stream": True,
+            "stream_options": {
+                "include_usage": True
+            }
+        }
+        
+        # 过滤不支持的参数
+        if self.config.extra_params:
+            unsupported_params = ['top_p', 'presence_penalty', 'frequency_penalty']
+            filtered_params = {k: v for k, v in self.config.extra_params.items() 
+                             if k not in unsupported_params}
+            data.update(filtered_params)
+            
+        # 发送流式请求
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{self.config.api_base}/chat/completions",
+                headers=headers,
+                json=data,
+                timeout=aiohttp.ClientTimeout(total=self.config.timeout)
+            ) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    raise Exception(f"豆包API调用失败: {error_text}")
+                
+                # 累积内容用于构建完整结果
+                accumulated_reasoning = ""
+                accumulated_content = ""
+                
+                # 处理流式响应
+                async for line in response.content:
+                    line_text = line.decode('utf-8').strip()
+                    if not line_text:
+                        continue
+                        
+                    if line_text.startswith("data: "):
+                        line_text = line_text[6:]
+                        
+                    if line_text == "[DONE]":
+                        # 发送最终完整结果
+                        yield {
+                            "type": "think_complete",
+                            "reasoning_content": accumulated_reasoning,
+                            "content": accumulated_content,
+                            "metadata": {
+                                "model": deepseek_model,
+                                "has_reasoning": bool(accumulated_reasoning),
+                                "reasoning_length": len(accumulated_reasoning),
+                                "content_length": len(accumulated_content)
+                            }
+                        }
+                        break
+                        
+                    try:
+                        chunk = json.loads(line_text)
+                        
+                        if chunk.get("choices") and len(chunk["choices"]) > 0:
+                            choice = chunk["choices"][0]
+                            delta = choice.get("delta", {})
+                            
+                            # 处理推理内容
+                            if delta.get("reasoning_content"):
+                                reasoning_chunk = delta["reasoning_content"]
+                                accumulated_reasoning += reasoning_chunk
+                                yield {
+                                    "type": "reasoning_chunk",
+                                    "content": reasoning_chunk,
+                                    "accumulated_reasoning": accumulated_reasoning
+                                }
+                            
+                            # 处理最终答案内容
+                            if delta.get("content"):
+                                content_chunk = delta["content"]
+                                accumulated_content += content_chunk
+                                yield {
+                                    "type": "content_chunk",
+                                    "content": content_chunk,
+                                    "accumulated_content": accumulated_content
+                                }
+                                
+                    except json.JSONDecodeError:
+                        continue
             
     async def generate(self, 
                       messages: List[Message],
