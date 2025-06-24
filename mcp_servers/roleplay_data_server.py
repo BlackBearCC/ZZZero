@@ -189,13 +189,27 @@ class AnnualScheduleManager:
             filename = f"day_{day_index + 1:03d}_{daily_data.get('date', 'unknown')}.json"
             filepath = self.output_dir / filename
             
+            # 创建可序列化的数据副本
+            serializable_data = self._make_json_serializable(daily_data)
+            
             with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(daily_data, f, ensure_ascii=False, indent=2)
+                json.dump(serializable_data, f, ensure_ascii=False, indent=2)
             
             return True
         except Exception as e:
             logger.error(f"保存第{day_index + 1}天日程失败: {e}")
             return False
+    
+    def _make_json_serializable(self, data: Any) -> Any:
+        """将数据转换为JSON可序列化格式"""
+        if isinstance(data, datetime):
+            return data.isoformat()
+        elif isinstance(data, dict):
+            return {k: self._make_json_serializable(v) for k, v in data.items()}
+        elif isinstance(data, list):
+            return [self._make_json_serializable(item) for item in data]
+        else:
+            return data
     
     def save_weekly_compression(self, week_index: int, compression_data: Dict[str, Any]) -> bool:
         """保存每周压缩摘要"""
@@ -849,10 +863,22 @@ class RolePlayDataGenerator:
                         schedule_data.generation_progress["completed_days"] = total_generated
                         logger.info(f"✅ 第{day_index + 1}天日程生成成功")
                         
+                        # 打印LLM生成的原始内容
+                        if "llm_generated_content" in daily_result:
+                            logger.info(f"🤖 第{day_index + 1}天LLM生成内容:")
+                            logger.info("=" * 60)
+                            logger.info(daily_result["llm_generated_content"][:500] + "..." if len(daily_result["llm_generated_content"]) > 500 else daily_result["llm_generated_content"])
+                            logger.info("=" * 60)
+                        
                         # 保存到文件
                         save_success = self.annual_manager.save_daily_schedule(day_index, daily_result)
                         if save_success:
                             logger.info(f"💾 第{day_index + 1}天日程已保存到文件")
+                            # 显示文件路径
+                            date_str = current_date.strftime('%Y-%m-%d')
+                            filename = f"day_{day_index + 1:03d}_{date_str}.json"
+                            filepath = self.annual_manager.output_dir / filename
+                            logger.info(f"📁 文件路径: {filepath}")
                         else:
                             logger.warning(f"⚠️ 第{day_index + 1}天日程保存失败")
                         
@@ -874,10 +900,21 @@ class RolePlayDataGenerator:
                         if compression_result["success"]:
                             logger.info(f"✅ 第{week_index + 1}周压缩摘要生成成功")
                             
+                            # 打印周度压缩LLM生成内容
+                            if "llm_generated_content" in compression_result:
+                                logger.info(f"🤖 第{week_index + 1}周压缩LLM生成内容:")
+                                logger.info("=" * 60)
+                                logger.info(compression_result["llm_generated_content"][:300] + "..." if len(compression_result["llm_generated_content"]) > 300 else compression_result["llm_generated_content"])
+                                logger.info("=" * 60)
+                            
                             # 保存周度压缩摘要
                             save_success = self.annual_manager.save_weekly_compression(week_index, compression_result)
                             if save_success:
                                 logger.info(f"💾 第{week_index + 1}周压缩摘要已保存到文件")
+                                # 显示文件路径
+                                filename = f"week_{week_index + 1:02d}_compression.json"
+                                filepath = self.annual_manager.output_dir / filename
+                                logger.info(f"📁 文件路径: {filepath}")
                             
                             # 进行角色一致性验证
                             verification_result = await self._perform_character_verification(
@@ -925,6 +962,52 @@ class RolePlayDataGenerator:
             logger.info(f"⏱️ 总耗时: {total_time:.2f} 秒")
             logger.info(f"📂 输出目录: {self.annual_manager.output_dir}")
             
+            # 输出详细的文件列表
+            logger.info("📋 生成的文件列表:")
+            for day_idx in range(start_from_day, end_day):
+                date_str = (base_date + timedelta(days=day_idx)).strftime('%Y-%m-%d')
+                filename = f"day_{day_idx + 1:03d}_{date_str}.json"
+                filepath = self.annual_manager.output_dir / filename
+                if filepath.exists():
+                    size_kb = round(filepath.stat().st_size / 1024, 2)
+                    logger.info(f"  📄 第{day_idx + 1}天: {filename} ({size_kb}KB)")
+            
+            # 输出周度文件
+            for week_idx in range(start_from_day // 7, (end_day - 1) // 7 + 1):
+                filename = f"week_{week_idx + 1:02d}_compression.json"
+                filepath = self.annual_manager.output_dir / filename
+                if filepath.exists():
+                    size_kb = round(filepath.stat().st_size / 1024, 2)
+                    logger.info(f"  📊 第{week_idx + 1}周: {filename} ({size_kb}KB)")
+            
+            # 收集生成的文件列表
+            output_files = []
+            for day_idx in range(start_from_day, end_day):
+                date_str = (base_date + timedelta(days=day_idx)).strftime('%Y-%m-%d')
+                filename = f"day_{day_idx + 1:03d}_{date_str}.json"
+                filepath = self.annual_manager.output_dir / filename
+                if filepath.exists():
+                    output_files.append({
+                        "day": day_idx + 1,
+                        "date": date_str,
+                        "filename": filename,
+                        "filepath": str(filepath),
+                        "size_kb": round(filepath.stat().st_size / 1024, 2)
+                    })
+            
+            # 收集周度压缩文件
+            weekly_files = []
+            for week_idx in range(start_from_day // 7, (end_day - 1) // 7 + 1):
+                filename = f"week_{week_idx + 1:02d}_compression.json"
+                filepath = self.annual_manager.output_dir / filename
+                if filepath.exists():
+                    weekly_files.append({
+                        "week": week_idx + 1,
+                        "filename": filename,
+                        "filepath": str(filepath),
+                        "size_kb": round(filepath.stat().st_size / 1024, 2)
+                    })
+
             result = {
                 "generation_id": generation_id,
                 "type": "annual_schedule",
@@ -947,6 +1030,12 @@ class RolePlayDataGenerator:
                 "generation_time": total_time,
                 "started_at": start_time.isoformat(),
                 "completed_at": end_time.isoformat(),
+                "output_files": {
+                    "daily_files": output_files,
+                    "weekly_files": weekly_files,
+                    "total_files": len(output_files) + len(weekly_files),
+                    "total_size_kb": sum(f["size_kb"] for f in output_files + weekly_files)
+                },
                 "daily_results_sample": generation_results[:3] if generation_results else []
             }
             
@@ -1034,7 +1123,8 @@ class RolePlayDataGenerator:
                         "scheduled_events": day_events,
                         "daily_data": daily_data,
                         "knowledge_references_used": len(knowledge_references.split('\n')) if knowledge_references else 0,
-                        "generated_at": datetime.now().isoformat()
+                        "generated_at": datetime.now().isoformat(),
+                        "llm_generated_content": content  # 添加LLM原始生成内容
                     }
                 else:
                     return {
@@ -1090,20 +1180,22 @@ class RolePlayDataGenerator:
             return None
     
     def _get_recent_context(self, day_index: int, schedule_data: AnnualScheduleData) -> str:
-        """获取近期背景信息"""
+        """获取近期背景信息 - 累计7天内的活动摘要"""
         if day_index <= 0:
             return "这是第一天，没有近期背景信息"
         
-        # 获取最近3天的摘要
+        # 获取最近7天的摘要（包括昨天在内最多7天）
         recent_summaries = []
-        for i in range(max(0, day_index - 3), day_index):
+        start_index = max(0, day_index - 7)
+        
+        for i in range(start_index, day_index):
             summary = schedule_data.daily_summaries.get(i)
             if summary:
                 date = (datetime(2024, 1, 1) + timedelta(days=i)).strftime('%m-%d')
                 recent_summaries.append(f"{date}: {summary}")
         
         if recent_summaries:
-            return "最近几天的活动摘要:\n" + "\n".join(recent_summaries)
+            return f"近期活动摘要（过去{len(recent_summaries)}天）:\n" + "\n".join(recent_summaries)
         else:
             return "近期背景信息不可用"
     
@@ -1216,7 +1308,8 @@ class RolePlayDataGenerator:
                         "success": True,
                         "compression_data": compression_data,
                         "daily_count": len(daily_summaries),
-                        "generated_at": datetime.now().isoformat()
+                        "generated_at": datetime.now().isoformat(),
+                        "llm_generated_content": content  # 添加LLM原始生成内容
                     }
                 else:
                     return {
@@ -1309,7 +1402,8 @@ class RolePlayDataGenerator:
                         "time_range": time_range,
                         "success": True,
                         "content": verification_data,
-                        "generated_at": datetime.now().isoformat()
+                        "generated_at": datetime.now().isoformat(),
+                        "llm_generated_content": content  # 添加LLM原始生成内容
                     }
                 else:
                     return {
@@ -1358,10 +1452,10 @@ class RolePlayDataGenerator:
         """添加生成结果到历史记录"""
         # 简化历史记录，只保留关键信息
         history_entry = {
-            "generation_id": result["generation_id"],
-            "type": result["type"],
-            "success": result["success"],
-            "generated_at": result["generated_at"],
+            "generation_id": result.get("generation_id", "unknown"),
+            "type": result.get("type", "unknown"),
+            "success": result.get("success", False),
+            "generated_at": result.get("generated_at") or result.get("completed_at") or result.get("failed_at") or datetime.now().isoformat(),
             "generation_time": result.get("generation_time", 0)
         }
         
