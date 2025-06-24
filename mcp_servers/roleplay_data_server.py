@@ -68,7 +68,7 @@ class AnnualScheduleData:
         self.weekly_compressions = {}  # 每周压缩摘要 {week_index: compressed_summary}
         self.generation_progress = {
             "current_day": 0,
-            "total_days": 365,
+            "total_days": 557,  # 2025年6月24日到2027年1月1日约557天
             "completed_days": 0,
             "started_at": None,
             "estimated_completion": None,
@@ -136,11 +136,22 @@ class AnnualScheduleManager:
             return False, error_msg, []
     
     def _parse_date_range(self, month_str: str, date_range: str) -> Tuple[Optional[datetime], Optional[datetime]]:
-        """解析日期范围，返回开始和结束日期"""
+        """解析日期范围，返回开始和结束日期，将原始年度日程拉长排序到2027年1月1日"""
         try:
             # 解析月份
             month = int(month_str.replace('月', ''))
-            year = 2024  # 默认年份
+            
+            # 基准日期：2025年6月24日
+            base_date = datetime(2025, 6, 24)
+            target_end_date = datetime(2027, 1, 1)  # 拉长到2027年1月1日
+            
+            # 计算总天数：2025年6月24日到2027年1月1日
+            total_days = (target_end_date - base_date).days  # 约557天
+            
+            # 将原始12个月的事件均匀分布到557天周期中
+            # 原始月份1-12对应到557天的不同时段
+            month_start_ratio = (month - 1) / 12.0  # 月份开始位置比例
+            month_end_ratio = month / 12.0  # 月份结束位置比例
             
             # 解析日期范围 "01-05" 或 "15-17"
             if '-' in date_range:
@@ -151,8 +162,21 @@ class AnnualScheduleManager:
                 # 单日事件
                 start_day = end_day = int(date_range)
             
-            start_date = datetime(year, month, start_day)
-            end_date = datetime(year, month, end_day)
+            # 计算在该月份内的位置比例
+            days_in_month = 31  # 简化处理，统一按31天计算
+            day_start_ratio = (start_day - 1) / days_in_month
+            day_end_ratio = end_day / days_in_month
+            
+            # 计算在整个557天周期中的实际位置
+            absolute_start_ratio = month_start_ratio + (month_end_ratio - month_start_ratio) * day_start_ratio
+            absolute_end_ratio = month_start_ratio + (month_end_ratio - month_start_ratio) * day_end_ratio
+            
+            # 转换为实际日期
+            start_offset_days = int(absolute_start_ratio * total_days)
+            end_offset_days = int(absolute_end_ratio * total_days)
+            
+            start_date = base_date + timedelta(days=start_offset_days)
+            end_date = base_date + timedelta(days=end_offset_days)
             
             return start_date, end_date
             
@@ -161,7 +185,7 @@ class AnnualScheduleManager:
             return None, None
     
     def get_day_events(self, day_index: int, base_date: datetime) -> List[Dict[str, Any]]:
-        """获取指定天的事件（day_index: 0-364）"""
+        """获取指定天的事件（day_index: 0-556，对应557天周期）"""
         if not self.current_schedule_data:
             return []
         
@@ -226,7 +250,7 @@ class AnnualScheduleManager:
             return False
     
     def save_schedule_csv_summary(self, daily_summaries: List[Dict[str, Any]], total_days: int) -> bool:
-        """保存日程CSV汇总文件"""
+        """保存日程CSV汇总文件 - 简化版，只保存解析后的时间和内容"""
         try:
             filename = f"annual_schedule_summary_{total_days}days.csv"
             filepath = self.output_dir / filename
@@ -234,65 +258,90 @@ class AnnualScheduleManager:
             import csv
             
             with open(filepath, 'w', newline='', encoding='utf-8-sig') as csvfile:
-                fieldnames = [
-                    '天数', '日期', '星期', '日期类型', '当日摘要', '角色状态',
-                    '上午活动', '中午活动', '下午活动', '晚上活动', '夜间活动',
-                    '特别事件', '情绪状态', '天气', '主要地点'
-                ]
+                fieldnames = ['天数', '日期', '时间', '活动内容', '地点']
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 
                 # 写入表头
                 writer.writeheader()
                 
-                # 写入每日数据
+                # 写入每日数据 - 解析JSON获取具体时间和内容
                 for day_summary in daily_summaries:
                     if not day_summary.get("success", False):
                         continue
                     
                     daily_data = day_summary.get("daily_data", {})
                     day_index = day_summary.get("day_index", 0)
+                    date_str = day_summary.get("date", "")
                     
-                    # 提取5个时间段的活动
-                    phases = ["morning", "noon", "afternoon", "evening", "night"]
-                    phase_activities = []
+                    # 解析5个时间段的详细活动
+                    phases = [
+                        ("morning", "上午", "06:00-11:00"),
+                        ("noon", "中午", "11:00-14:00"), 
+                        ("afternoon", "下午", "14:00-18:00"),
+                        ("evening", "晚上", "18:00-23:00"),
+                        ("night", "夜间", "23:00-06:00")
+                    ]
                     
-                    for phase in phases:
-                        phase_data = daily_data.get(phase, {})
-                        if isinstance(phase_data, dict):
-                            activities = phase_data.get("activities", [])
-                            if activities and isinstance(activities, list):
-                                activity_text = "; ".join([str(act).strip() for act in activities[:2]])  # 只取前2个活动
-                            else:
-                                activity_text = str(phase_data.get("summary", "")).strip()
-                        else:
-                            activity_text = str(phase_data).strip()
+                    for phase_key, phase_name, default_time_range in phases:
+                        phase_data = daily_data.get(phase_key, [])
                         
-                        phase_activities.append(activity_text[:100])  # 限制长度
-                    
-                    # 提取环境信息
-                    env_context = daily_data.get("environmental_context", {})
-                    
-                    row = {
-                        '天数': day_index + 1,
-                        '日期': day_summary.get("date", ""),
-                        '星期': day_summary.get("weekday", ""),
-                        '日期类型': env_context.get("day_type", "普通日"),
-                        '当日摘要': daily_data.get("daily_summary", "")[:200],
-                        '角色状态': daily_data.get("character_state", "")[:100],
-                        '上午活动': phase_activities[0] if len(phase_activities) > 0 else "",
-                        '中午活动': phase_activities[1] if len(phase_activities) > 1 else "",
-                        '下午活动': phase_activities[2] if len(phase_activities) > 2 else "",
-                        '晚上活动': phase_activities[3] if len(phase_activities) > 3 else "",
-                        '夜间活动': phase_activities[4] if len(phase_activities) > 4 else "",
-                        '特别事件': "; ".join([str(e.get("activity", "")) for e in day_summary.get("scheduled_events", [])])[:150],
-                        '情绪状态': env_context.get("emotion", ""),
-                        '天气': env_context.get("weather", ""),
-                        '主要地点': env_context.get("location", "")
-                    }
-                    
-                    writer.writerow(row)
+                        if isinstance(phase_data, list) and phase_data:
+                            # 处理列表格式的活动数据
+                            for activity in phase_data:
+                                if isinstance(activity, dict):
+                                    # 提取具体时间和内容
+                                    time_detail = activity.get("time_detail", default_time_range)
+                                    activity_name = activity.get("activity_name", "未命名活动")
+                                    location = activity.get("location", "未指定地点")
+                                    details = activity.get("details", "")
+                                    
+                                    # 组合活动内容
+                                    content = activity_name
+                                    if details:
+                                        content += f" - {details}"
+                                    
+                                    row = {
+                                        '天数': day_index + 1,
+                                        '日期': date_str,
+                                        '时间': time_detail,
+                                        '活动内容': content[:200],  # 限制长度
+                                        '地点': location
+                                    }
+                                    writer.writerow(row)
+                                else:
+                                    # 处理简单字符串格式
+                                    row = {
+                                        '天数': day_index + 1,
+                                        '日期': date_str,
+                                        '时间': default_time_range,
+                                        '活动内容': str(activity)[:200],
+                                        '地点': "未指定地点"
+                                    }
+                                    writer.writerow(row)
+                        elif isinstance(phase_data, dict):
+                            # 处理字典格式的阶段数据
+                            activities = phase_data.get("activities", [])
+                            for activity in activities:
+                                if isinstance(activity, dict):
+                                    time_detail = activity.get("time_detail", default_time_range)
+                                    activity_name = activity.get("activity_name", "未命名活动")
+                                    location = activity.get("location", "未指定地点") 
+                                    details = activity.get("details", "")
+                                    
+                                    content = activity_name
+                                    if details:
+                                        content += f" - {details}"
+                                    
+                                    row = {
+                                        '天数': day_index + 1,
+                                        '日期': date_str,
+                                        '时间': time_detail,
+                                        '活动内容': content[:200],
+                                        '地点': location
+                                    }
+                                    writer.writerow(row)
             
-            logger.info(f"✅ 成功保存CSV汇总文件: {filepath}")
+            logger.info(f"✅ 成功保存简化CSV汇总文件: {filepath}")
             return True
             
         except Exception as e:
@@ -415,7 +464,7 @@ class PromptManager:
       "activity_name": "活动名称",
       "time_detail": "具体时间安排",
       "location": "活动地点",
-      "details": "活动的详细描述，包括背景原因、目的、具体行为、角色心理等"
+      "details": "活动的详细描述，包括背景原因、目的、具体行为"
     }}
   ],
   "noon": [
@@ -889,14 +938,14 @@ class RolePlayDataGenerator:
             return character_description, requirements
     
     async def generate_annual_schedule(self, csv_file_path: str, character_description: str = "", 
-                                     start_from_day: int = 0, max_days: int = 365) -> Dict[str, Any]:
+                                      start_from_day: int = 0, max_days: int = 557) -> Dict[str, Any]:
         """
-        基于CSV年度日程规划生成365天详细日程
+        基于CSV年度日程规划生成557天详细日程（从2025年6月24日到2027年1月1日）
         
         Args:
             csv_file_path: CSV年度日程文件路径
             character_description: 角色设定描述，包含角色的性格特点、生活方式等
-            start_from_day: 从第几天开始生成（用于断点续传，0-364）
+            start_from_day: 从第几天开始生成（用于断点续传，0-556）
             max_days: 最大生成天数（用于测试或分段生成）
             
         Returns:
@@ -905,10 +954,10 @@ class RolePlayDataGenerator:
         generation_id = f"annual_{int(datetime.now().timestamp())}"
         start_time = datetime.now()
         
-        logger.info(f"🚀 开始生成365天详细日程，生成ID: {generation_id}")
+        logger.info(f"🚀 开始生成557天详细日程（2025年6月24日至2027年1月1日），生成ID: {generation_id}")
         logger.info(f"📋 CSV文件路径: {csv_file_path}")
         logger.info(f"📝 角色描述长度: {len(character_description)} 字符")
-        logger.info(f"🎯 生成范围: 第{start_from_day + 1}天 至 第{min(start_from_day + max_days, 365)}天")
+        logger.info(f"🎯 生成范围: 第{start_from_day + 1}天 至 第{min(start_from_day + max_days, 557)}天")
         
         try:
             # 第一步：加载CSV年度日程
@@ -952,7 +1001,7 @@ class RolePlayDataGenerator:
             total_errors = 0
             generation_results = []
             
-            end_day = min(start_from_day + max_days, 365)
+            end_day = min(start_from_day + max_days, 557)  # 最大支持557天
             
             for day_index in range(start_from_day, end_day):
                 current_date = base_date + timedelta(days=day_index)
@@ -2019,15 +2068,15 @@ class RolePlayDataServer(StdioMCPServer):
         # 生成999天年度详细日程工具
         self.register_tool(Tool(
             name="generate_annual_schedule",
-            description="基于CSV年度日程规划生成指定天数的详细5阶段日程安排。从2025年6月24日开始生成，支持自定义生成天数",
+            description="基于CSV年度日程规划生成557天详细5阶段日程安排。从2025年6月24日开始拉长到2027年1月1日，将原始12个月事件均匀分布到557天周期",
             inputSchema=ToolInputSchema(
                 type="object",
                 properties={
                     "max_days": {
                         "type": "integer",
-                        "description": "生成的天数，默认3天（演示模式），可设置1-999天",
+                        "description": "生成的天数，默认3天（演示模式），可设置1-557天",
                         "minimum": 1,
-                        "maximum": 99,
+                        "maximum": 557,
                         "default": 3
                     }
                 },
@@ -2220,7 +2269,7 @@ class RolePlayDataServer(StdioMCPServer):
 
 async def test_local_generation():
     """本地测试生成功能"""
-    print("🚀 角色扮演数据生成服务 - 本地测试模式（365天年度日程生成）")
+    print("🚀 角色扮演数据生成服务 - 本地测试模式（557天年度日程生成）")
     print("=" * 80)
     
     # 创建生成器实例
@@ -2289,7 +2338,7 @@ async def test_local_generation():
     作息规律，不喜欢熬夜，有每日晨跑习惯
     """
     
-    print("📝 第四步：测试365天年度日程生成功能...")
+    print("📝 第四步：测试557天年度日程生成功能...")
     print(f"📂 CSV文件路径: {csv_file_path}")
     print(f"👤 角色设定: {test_character.strip()}")
 
@@ -2297,7 +2346,7 @@ async def test_local_generation():
     
     try:
         # 测试年度日程生成（只生成前3天作为演示）
-        print("🎯 开始生成365天年度详细日程（演示：前3天）...")
+        print("🎯 开始生成557天年度详细日程（演示：前3天）...")
         annual_result = await generator.generate_annual_schedule(
             csv_file_path=csv_file_path,
             character_description=test_character,
