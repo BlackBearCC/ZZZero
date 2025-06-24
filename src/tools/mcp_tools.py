@@ -156,17 +156,19 @@ class MCPToolManager:
         # 注册角色扮演数据生成服务器
         roleplay_config = MCPServerConfig(
             name="角色扮演数据生成服务器",
-            description="基于AI的角色扮演数据生成服务，支持日程规划等功能"
+            description="基于AI的角色扮演数据生成服务，支持365天年度日程生成，每天生成5阶段详细安排，集成角色插件和向量知识库"
         )
         self.servers["roleplay"] = roleplay_config
         
         # 注册角色扮演数据生成工具
         roleplay_tools = [
-            MCPTool("generate_schedule_plan", "生成日程计划框架", "roleplay"),
-            MCPTool("generate_detailed_schedule", "生成详细5阶段日程", "roleplay"),
+            MCPTool("generate_annual_schedule", "自动生成角色的年度日程安排（演示模式：前3天详细5阶段日程）", "roleplay"),
             MCPTool("get_time_phases", "获取5阶段时间规划信息", "roleplay"),
             MCPTool("get_generation_history", "获取生成历史记录", "roleplay"),
             MCPTool("clear_generation_history", "清空生成历史记录", "roleplay"),
+            MCPTool("query_role_profile", "查询当前配置的角色资料信息", "roleplay"),
+            MCPTool("search_role_knowledge", "基于关键词在角色知识库中进行搜索", "roleplay"),
+            MCPTool("get_role_plugin_status", "获取角色插件系统的状态信息", "roleplay"),
         ]
         
         for tool in roleplay_tools:
