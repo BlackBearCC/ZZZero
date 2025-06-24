@@ -363,12 +363,23 @@ class AgentApp:
                                 )
                             
                             with gr.Tab("文件上传"):
+                                gr.Markdown("""
+                                **📁 文件上传说明：**
+                                - 支持txt格式的角色资料文件
+                                - 文件大小限制：5MB以内
+                                - 支持编码：UTF-8、GBK、GB2312等
+                                - 加载后内容会显示在"文本输入"标签页中，可继续编辑
+                                """)
+                                
                                 role_profile_file = gr.File(
-                                    label="上传角色资料文件（txt格式）",
+                                    label="选择角色资料文件（txt格式）",
                                     file_types=[".txt"],
                                     file_count="single"
                                 )
-                                load_profile_btn = gr.Button("从文件加载角色资料", variant="secondary")
+                                
+                                with gr.Row():
+                                    load_profile_btn = gr.Button("📥 从文件加载角色资料", variant="primary")
+                                    gr.HTML('<small style="color: #666; margin-left: 10px;">加载后请切换到"文本输入"标签页查看和编辑</small>')
                             
                             role_profile_tags = gr.Textbox(
                                 label="角色标签（用逗号分隔）",
@@ -1289,6 +1300,38 @@ def hello_world():
             .chat-window .message-content {
                 white-space: pre-wrap;
                 word-wrap: break-word;
+                line-height: 1.6 !important;
+            }
+            
+            /* 优化消息内容的段落间距 */
+            .chat-window .message p {
+                margin: 0.5em 0 !important;
+                line-height: 1.6 !important;
+            }
+            
+            .chat-window .message p:first-child {
+                margin-top: 0 !important;
+            }
+            
+            .chat-window .message p:last-child {
+                margin-bottom: 0 !important;
+            }
+            
+            /* 减少空行的高度 */
+            .chat-window .message br {
+                line-height: 0.8 !important;
+            }
+            
+            /* 优化列表项间距 */
+            .chat-window .message ul, 
+            .chat-window .message ol {
+                margin: 0.5em 0 !important;
+                padding-left: 1.5em !important;
+            }
+            
+            .chat-window .message li {
+                margin: 0.2em 0 !important;
+                line-height: 1.5 !important;
             }
             
             /* Markdown表格样式 */
@@ -1504,14 +1547,54 @@ def hello_world():
             if not profile_file:
                 return "❌ 请先选择文件"
             
-            file_path = profile_file.name
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
+            # 处理文件路径
+            if hasattr(profile_file, 'name'):
+                file_path = profile_file.name
+            else:
+                file_path = str(profile_file)
+            
+            # 检查文件是否存在
+            import os
+            if not os.path.exists(file_path):
+                return "❌ 文件不存在，请重新选择文件"
+            
+            # 获取文件信息
+            file_size = os.path.getsize(file_path)
+            if file_size == 0:
+                return "❌ 文件为空，请选择有内容的文件"
+            
+            # 检查文件大小（限制为5MB）
+            max_size = 5 * 1024 * 1024  # 5MB
+            if file_size > max_size:
+                return f"❌ 文件过大（{file_size / (1024*1024):.1f}MB），请选择小于5MB的文件"
+            
+            # 尝试不同的编码格式读取文件
+            encodings = ['utf-8', 'utf-8-sig', 'gbk', 'gb2312', 'gb18030', 'utf-16']
+            content = None
+            used_encoding = None
+            
+            for encoding in encodings:
+                try:
+                    with open(file_path, 'r', encoding=encoding) as f:
+                        content = f.read()
+                    used_encoding = encoding
+                    break
+                except UnicodeDecodeError:
+                    continue
+                except Exception:
+                    continue
+            
+            if content is None:
+                return "❌ 无法读取文件，请检查文件编码格式（支持UTF-8、GBK、GB2312等）"
             
             if not content.strip():
-                return "❌ 文件内容为空"
+                return "❌ 文件内容为空或只包含空白字符"
             
-            return content.strip()
+            # 清理内容：去除多余的空行和空白字符
+            content = content.strip()
+            
+            # 直接返回文件内容，不添加任何修饰
+            return content
             
         except Exception as e:
             return f"❌ 加载文件失败: {str(e)}"

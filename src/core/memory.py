@@ -292,11 +292,11 @@ class MemoryCompressor:
             # 解析响应
             summary, facts = self._parse_compression_response(response.content)
             
-            logger.info(f"压缩完成: 原文{len(conversations_text)}字符 -> 摘要{len(summary)}字符")
+            logger.debug(f"压缩完成: 原文{len(conversations_text)}字符 -> 摘要{len(summary)}字符")
             return summary, facts
             
         except Exception as e:
-            logger.error(f"记忆压缩失败: {e}")
+            logger.debug(f"记忆压缩失败: {e}")
             # 降级处理：简单截取
             fallback_summary = conversations_text[:int(len(conversations_text) * target_ratio)]
             return fallback_summary, []
@@ -481,7 +481,7 @@ class MemoryManager:
         self.short_term = ShortTermMemory(short_term_limit)
         self.long_term = LongTermMemory(store)
         
-        logger.info(f"记忆管理器初始化完成，会话ID: {self.session_id}")
+        logger.debug(f"记忆管理器初始化完成，会话ID: {self.session_id}")
     
     async def add_conversation(self, user_message: str, agent_response: str) -> bool:
         """添加对话到记忆"""
@@ -493,17 +493,19 @@ class MemoryManager:
             logger.debug(f"对话已添加到短期记忆，当前大小: {self.short_term.current_size}")
             return True
         else:
-            # 短期记忆满了，需要压缩
-            logger.info("短期记忆已满，开始压缩...")
+            # 短期记忆满了，需要压缩（静默处理）
+            logger.debug("短期记忆已满，开始压缩...")
             await self._compress_and_store()
             
             # 压缩后再次尝试添加
             if self.short_term.add(conversation):
-                logger.info("压缩后成功添加新对话")
+                logger.debug("压缩后成功添加新对话")
                 return True
             else:
-                logger.error("压缩后仍无法添加对话")
-                return False
+                # 如果压缩后仍无法添加，可能是单条消息过长，直接保存到长期记忆
+                logger.debug("压缩后仍无法添加对话，直接保存到长期记忆")
+                await self.long_term.save_conversation(conversation, self.session_id, 0.6)
+                return True
     
     async def _compress_and_store(self):
         """压缩短期记忆并存储到长期记忆"""
@@ -523,19 +525,21 @@ class MemoryManager:
                     self.session_id, 
                     len(conversations)
                 )
-                logger.info(f"已保存压缩摘要: {len(compressed_summary)}字符")
+                logger.debug(f"已保存压缩摘要: {len(compressed_summary)}字符")
             
             # 保存提取的事实
             if facts:
                 saved_facts = await self.long_term.save_facts(facts, self.session_id)
-                logger.info(f"已保存{len(saved_facts)}个事实")
+                logger.debug(f"已保存{len(saved_facts)}个事实")
             
             # 清空短期记忆
             self.short_term.clear()
-            logger.info("短期记忆已清空")
+            logger.debug("短期记忆已清空")
             
         except Exception as e:
-            logger.error(f"压缩和存储失败: {e}")
+            logger.debug(f"压缩和存储失败: {e}")
+            # 如果压缩失败，至少清空短期记忆以避免阻塞
+            self.short_term.clear()
     
     async def get_context_for_query(self, query: str, max_entries: int = 5) -> str:
         """为查询获取相关上下文"""
@@ -596,7 +600,7 @@ class MemoryManager:
             # 清空长期记忆
             success = await self.long_term.store.delete_session(self.session_id)
             
-            logger.info(f"记忆清空{'成功' if success else '失败'}")
+            logger.debug(f"记忆清空{'成功' if success else '失败'}")
             return success
         except Exception as e:
             logger.error(f"清空记忆失败: {e}")
