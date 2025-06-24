@@ -693,6 +693,217 @@ class RolePlayDataGenerator:
             "cleared_at": datetime.now().isoformat()
         }
     
+    async def query_role_profile(self, include_metadata: bool = False) -> Dict[str, Any]:
+        """
+        查询角色资料信息
+        
+        Args:
+            include_metadata: 是否包含元数据信息
+            
+        Returns:
+            角色资料查询结果字典
+        """
+        try:
+            # 检查角色资料插件是否可用
+            profile_plugin = self.role_plugin_manager.get_plugin("role_profile")
+            if not profile_plugin:
+                return {
+                    "success": False,
+                    "error": "角色资料插件未找到",
+                    "available": False
+                }
+            
+            # 检查插件是否启用且有数据
+            is_available = await profile_plugin.is_available()
+            if not is_available:
+                return {
+                    "success": False,
+                    "error": "角色资料插件未启用或无可用数据",
+                    "available": False,
+                    "enabled": profile_plugin.enabled
+                }
+            
+            # 获取角色资料内容
+            profile_content = await profile_plugin.get_data()
+            result = {
+                "success": True,
+                "available": True,
+                "enabled": profile_plugin.enabled,
+                "content": profile_content,
+                "content_length": len(profile_content) if profile_content else 0,
+                "queried_at": datetime.now().isoformat()
+            }
+            
+            # 如果需要包含元数据，添加详细信息
+            if include_metadata:
+                profile_info = profile_plugin.get_profile_info()
+                if profile_info:
+                    result.update({
+                        "metadata": profile_info,
+                        "name": profile_info.get("name"),
+                        "tags": profile_info.get("tags", []),
+                        "created_at": profile_info.get("created_at"),
+                        "updated_at": profile_info.get("updated_at")
+                    })
+            
+            logger.info(f"✅ 角色资料查询成功，内容长度: {result['content_length']}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"查询角色资料失败: {e}")
+            return {
+                "success": False,
+                "error": f"查询角色资料时发生错误: {str(e)}",
+                "available": False,
+                "queried_at": datetime.now().isoformat()
+            }
+    
+    async def search_role_knowledge(self, keywords: List[str], limit: int = 5, min_score: float = 0.0) -> Dict[str, Any]:
+        """
+        搜索角色知识库
+        
+        Args:
+            keywords: 搜索关键词列表
+            limit: 返回结果数量限制
+            min_score: 最小相似度分数阈值
+            
+        Returns:
+            知识库搜索结果字典
+        """
+        try:
+            # 检查参数
+            if not keywords or not isinstance(keywords, list):
+                return {
+                    "success": False,
+                    "error": "搜索关键词不能为空且必须是列表格式",
+                    "keywords": keywords
+                }
+            
+            # 过滤空关键词
+            valid_keywords = [kw.strip() for kw in keywords if kw and kw.strip()]
+            if not valid_keywords:
+                return {
+                    "success": False,
+                    "error": "没有有效的搜索关键词",
+                    "keywords": keywords
+                }
+            
+            # 检查知识库插件是否可用
+            kb_plugin = self.role_plugin_manager.get_plugin("role_knowledge_base")
+            if not kb_plugin:
+                return {
+                    "success": False,
+                    "error": "角色知识库插件未找到",
+                    "available": False,
+                    "keywords": valid_keywords
+                }
+            
+            # 检查插件是否启用且有数据
+            is_available = await kb_plugin.is_available()
+            if not is_available:
+                kb_info = kb_plugin.get_knowledge_base_info()
+                return {
+                    "success": False,
+                    "error": "角色知识库插件未启用或知识库未配置",
+                    "available": False,
+                    "enabled": kb_plugin.enabled,
+                    "knowledge_base_info": kb_info,
+                    "keywords": valid_keywords
+                }
+            
+            # 执行搜索
+            search_results = await kb_plugin.search_knowledge(valid_keywords, limit)
+            
+            # 根据最小分数过滤结果
+            filtered_results = []
+            if search_results:
+                for result in search_results:
+                    score = result.get("score", 0.0)
+                    if score >= min_score:
+                        filtered_results.append(result)
+            
+            # 构建返回结果
+            result = {
+                "success": True,
+                "available": True,
+                "enabled": kb_plugin.enabled,
+                "keywords": valid_keywords,
+                "total_results": len(search_results),
+                "filtered_results": len(filtered_results),
+                "results": filtered_results,
+                "search_params": {
+                    "limit": limit,
+                    "min_score": min_score
+                },
+                "searched_at": datetime.now().isoformat()
+            }
+            
+            # 添加知识库基本信息
+            kb_info = kb_plugin.get_knowledge_base_info()
+            if kb_info:
+                result["knowledge_base_info"] = {
+                    "name": kb_info.get("name"),
+                    "description": kb_info.get("description"),
+                    "data_count": kb_info.get("data_count", 0),
+                    "vector_count": kb_info.get("vector_count", 0)
+                }
+            
+            logger.info(f"✅ 角色知识库搜索完成: {valid_keywords} -> {len(filtered_results)} 个结果")
+            return result
+            
+        except Exception as e:
+            logger.error(f"搜索角色知识库失败: {e}")
+            import traceback
+            logger.error(f"详细错误信息: {traceback.format_exc()}")
+            return {
+                "success": False,
+                "error": f"搜索角色知识库时发生错误: {str(e)}",
+                "available": False,
+                "keywords": keywords,
+                "searched_at": datetime.now().isoformat()
+            }
+    
+    def get_role_plugin_status(self) -> Dict[str, Any]:
+        """
+        获取角色插件系统状态
+        
+        Returns:
+            角色插件系统状态字典
+        """
+        try:
+            # 获取插件管理器状态
+            status = self.role_plugin_manager.get_status()
+            
+            # 添加额外的状态信息
+            result = {
+                "success": True,
+                "status": status,
+                "checked_at": datetime.now().isoformat(),
+                "summary": {
+                    "profile_enabled": status.get("profile_plugin", {}).get("enabled", False),
+                    "profile_available": status.get("profile_plugin", {}).get("available", False),
+                    "knowledge_base_enabled": status.get("knowledge_base_plugin", {}).get("enabled", False),
+                    "knowledge_base_available": status.get("knowledge_base_plugin", {}).get("available", False)
+                }
+            }
+            
+            # 添加可用性描述
+            profile_status = "可用" if result["summary"]["profile_available"] else "不可用"
+            kb_status = "可用" if result["summary"]["knowledge_base_available"] else "不可用"
+            
+            result["description"] = f"角色资料: {profile_status}, 知识库: {kb_status}"
+            
+            logger.info(f"✅ 角色插件状态查询完成: {result['description']}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"获取角色插件状态失败: {e}")
+            return {
+                "success": False,
+                "error": f"获取角色插件状态时发生错误: {str(e)}",
+                "checked_at": datetime.now().isoformat()
+            }
+    
     async def cleanup(self):
         """清理资源"""
         if self.llm_caller:
@@ -796,8 +1007,65 @@ class RolePlayDataServer(StdioMCPServer):
             )
         ))
         
+        # 查询角色资料工具
+        self.register_tool(Tool(
+            name="query_role_profile",
+            description="查询当前配置的角色资料信息，包括角色的基本设定、性格特点、背景故事等详细信息",
+            inputSchema=ToolInputSchema(
+                type="object",
+                properties={
+                    "include_metadata": {
+                        "type": "boolean",
+                        "description": "是否包含元数据信息（创建时间、更新时间、标签等）",
+                        "default": False
+                    }
+                }
+            )
+        ))
+        
+        # 搜索角色知识库工具
+        self.register_tool(Tool(
+            name="search_role_knowledge",
+            description="基于关键词在角色知识库中进行向量相似度搜索，获取相关的角色背景知识、专业信息等",
+            inputSchema=ToolInputSchema(
+                type="object",
+                properties={
+                    "keywords": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "搜索关键词列表，用于在知识库中查找相关信息",
+                        "minItems": 1
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "返回结果数量限制，默认使用知识库配置的限制",
+                        "minimum": 1,
+                        "maximum": 20,
+                        "default": 5
+                    },
+                    "min_score": {
+                        "type": "number",
+                        "description": "最小相似度分数阈值（0-1），低于此分数的结果将被过滤",
+                        "minimum": 0.0,
+                        "maximum": 1.0,
+                        "default": 0.0
+                    }
+                },
+                required=["keywords"]
+            )
+        ))
+        
+        # 获取角色插件状态工具
+        self.register_tool(Tool(
+            name="get_role_plugin_status",
+            description="获取角色插件系统的状态信息，包括角色资料和知识库的配置状态",
+            inputSchema=ToolInputSchema(
+                type="object",
+                properties={}
+            )
+        ))
 
-    
+
     async def _call_tool(self, name: str, arguments: Dict[str, Any], context) -> Dict[str, Any]:
         """处理工具调用"""
         try:
@@ -850,6 +1118,19 @@ class RolePlayDataServer(StdioMCPServer):
                     "description": "5阶段时间规划原则，将一天分为5个时间段进行精细化管理"
                 }
             
+            elif name == "query_role_profile":
+                include_metadata = arguments.get("include_metadata", False)
+                return await self.generator.query_role_profile(include_metadata)
+            
+            elif name == "search_role_knowledge":
+                keywords = arguments.get("keywords", [])
+                limit = arguments.get("limit", 5)
+                min_score = arguments.get("min_score", 0.0)
+                return await self.generator.search_role_knowledge(keywords, limit, min_score)
+            
+            elif name == "get_role_plugin_status":
+                return self.generator.get_role_plugin_status()
+            
             else:
                 return {"error": f"未知工具: {name}"}
                 
@@ -883,6 +1164,57 @@ async def test_local_generation():
     # 等待知识库初始化完成
     await asyncio.sleep(2)
     
+    print("🔍 第一步：测试角色插件状态查询...")
+    plugin_status = generator.get_role_plugin_status()
+    print(f"✅ 插件状态: {plugin_status.get('description', 'N/A')}")
+    print(f"📊 角色资料可用: {plugin_status.get('summary', {}).get('profile_available', False)}")
+    print(f"📊 知识库可用: {plugin_status.get('summary', {}).get('knowledge_base_available', False)}")
+    print("-" * 60)
+    
+    print("🔍 第二步：测试角色资料查询...")
+    profile_result = await generator.query_role_profile(include_metadata=True)
+    if profile_result["success"]:
+        print("✅ 角色资料查询成功！")
+        print(f"📝 内容长度: {profile_result.get('content_length', 0)} 字符")
+        if profile_result.get("content"):
+            print(f"📋 角色资料预览: {profile_result['content'][:200]}...")
+        if profile_result.get("metadata"):
+            print(f"🏷️ 角色名称: {profile_result.get('name', 'N/A')}")
+            print(f"🏷️ 标签: {profile_result.get('tags', [])}")
+    else:
+        print(f"❌ 角色资料查询失败: {profile_result.get('error', 'N/A')}")
+    print("-" * 60)
+    
+    print("🔍 第三步：测试角色知识库搜索...")
+    search_keywords = ["旅行", "偏好", "喜好", "兴趣", "习惯"]
+    kb_result = await generator.search_role_knowledge(
+        keywords=search_keywords, 
+        limit=3, 
+        min_score=0.1
+    )
+    if kb_result["success"]:
+        print("✅ 知识库搜索成功！")
+        print(f"🔍 搜索关键词: {kb_result.get('keywords', [])}")
+        print(f"📊 总结果数: {kb_result.get('total_results', 0)}")
+        print(f"📊 过滤后结果数: {kb_result.get('filtered_results', 0)}")
+        
+        results = kb_result.get("results", [])
+        if results:
+            print("📋 搜索结果预览:")
+            for i, result in enumerate(results[:2], 1):  # 只显示前2个结果
+                score = result.get("score", 0.0)
+                content = result.get("content", "")
+                print(f"  {i}. 相似度: {score:.3f}")
+                print(f"     内容: {content[:150]}...")
+        
+        kb_info = kb_result.get("knowledge_base_info", {})
+        if kb_info:
+            print(f"📚 知识库: {kb_info.get('name', 'N/A')}")
+            print(f"📚 数据量: {kb_info.get('data_count', 0)} 条，向量: {kb_info.get('vector_count', 0)} 个")
+    else:
+        print(f"❌ 知识库搜索失败: {kb_result.get('error', 'N/A')}")
+    print("-" * 60)
+    
     # 测试角色设定
     test_character = """
     方知衡，28岁，云枢大学天文系客座教授
@@ -895,7 +1227,7 @@ async def test_local_generation():
     希望能平衡工作和生活，体现角色的天文学家身份
     """
     
-    print("📝 测试参数:")
+    print("📝 第四步：测试日程生成功能...")
     print(f"角色设定: {test_character.strip()}")
     print(f"需求描述: {test_requirements.strip()}")
     print("-" * 60)
