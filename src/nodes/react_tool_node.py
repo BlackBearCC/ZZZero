@@ -81,7 +81,7 @@ class ReactToolNode(BaseNode):
         )
     
     async def _execute_single_tool(self, tool_call) -> Message:
-        """执行单个工具调用"""
+        """执行单个工具调用（支持角色插件自动注入）"""
         tool_name = getattr(tool_call, 'name', None)
         tool_args = getattr(tool_call, 'arguments', {})
         tool_id = getattr(tool_call, 'id', None)
@@ -89,8 +89,15 @@ class ReactToolNode(BaseNode):
         if not tool_name:
             raise ValueError("工具调用缺少工具名称")
         
-        # 执行工具
-        result = await self.tool_manager.execute_tool(tool_name, tool_args)
+        # 执行工具 - 优先使用MCPToolManager的增强功能
+        if hasattr(self.tool_manager, 'inject_role_context_to_arguments'):
+            print(f"[ReactToolNode._execute_single_tool] 检测到MCPToolManager，准备注入角色上下文")
+            # 这是MCPToolManager，它会在execute_tool内部自动调用inject_role_context_to_arguments
+            result = await self.tool_manager.execute_tool(tool_name, tool_args)
+        else:
+            print(f"[ReactToolNode._execute_single_tool] 使用基础ToolManager")
+            # 这是基础ToolManager
+            result = await self.tool_manager.execute_tool(tool_name, tool_args)
         
         # 格式化结果
         if isinstance(result, dict):

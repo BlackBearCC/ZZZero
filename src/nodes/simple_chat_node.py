@@ -36,10 +36,7 @@ class SimpleChatNode(BaseNode):
         
         # 添加系统提示
         if not any(msg.role == MessageRole.SYSTEM for msg in messages):
-            system_prompt = """你是一个有用的AI助手。请根据你的知识回答用户的问题。
-
-如果你不确定答案，请诚实地说明你不知道，而不是编造信息。
-请提供清晰、有帮助的回复。"""
+            system_prompt = self._build_system_prompt(context)
             
             messages.insert(0, Message(
                 role=MessageRole.SYSTEM,
@@ -64,4 +61,29 @@ class SimpleChatNode(BaseNode):
                 "node_type": "simple_chat",
                 "response_length": len(response.content)
             }
-        ) 
+        )
+    
+    def _build_system_prompt(self, context: Any) -> str:
+        """构建简单对话系统提示词 - 支持记忆上下文"""
+        base_prompt = ""
+        
+        # 从上下文中获取记忆信息
+        memory_context = ""
+        if hasattr(context, 'variables') and context.variables:
+            memory_context = context.variables.get("memory_context", "")
+        
+        # 添加记忆上下文
+        if memory_context:
+            base_prompt += f"""=== 记忆上下文 ===
+{memory_context}
+
+"""
+        
+        base_prompt += """你是一个有用的AI助手。请根据你的知识回答用户的问题。
+
+如果你不确定答案，请诚实地说明你不知道，而不是编造信息。
+请提供清晰、有帮助的回复。
+
+如果有记忆上下文，请充分利用这些历史信息为用户提供个性化的回复。"""
+        
+        return base_prompt 

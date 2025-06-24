@@ -50,11 +50,16 @@ class StreamReactAgentNode(BaseNode):
         
         # 添加系统提示
         system_prompt = self._build_system_prompt(context)
+        print(f"[StreamReactAgentNode.execute] 系统提示词长度: {len(system_prompt)}")
+        
         if not any(msg.role == MessageRole.SYSTEM for msg in messages):
             messages.insert(0, Message(
                 role=MessageRole.SYSTEM,
                 content=system_prompt
             ))
+            print(f"[StreamReactAgentNode.execute] 已添加系统提示词")
+        else:
+            print(f"[StreamReactAgentNode.execute] 已存在系统提示词，跳过")
         
         # 执行流式生成
         full_response = ""
@@ -266,16 +271,24 @@ class StreamReactAgentNode(BaseNode):
         return False
     
     async def _execute_tool(self, tool_name: str, tool_input: str) -> str:
-        """执行MCP工具"""
+        """执行MCP工具（支持角色插件自动注入）"""
         if not self.tool_manager:
             return "错误：没有可用的工具管理器"
         
         # 使用基类的通用参数解析方法
         arguments = self.parse_tool_arguments(tool_input)
         
-        # 调用工具
+        # 调用工具 - 优先使用MCPToolManager的增强功能
         try:
-            result = await self.tool_manager.execute_tool(tool_name, arguments)
+            # 检查是否是MCPToolManager，如果是则可能有角色插件注入功能
+            if hasattr(self.tool_manager, 'inject_role_context_to_arguments'):
+                print(f"[StreamReactAgentNode._execute_tool] 检测到MCPToolManager，准备注入角色上下文")
+                # 这是MCPToolManager，它会在execute_tool内部自动调用inject_role_context_to_arguments
+                result = await self.tool_manager.execute_tool(tool_name, arguments)
+            else:
+                print(f"[StreamReactAgentNode._execute_tool] 使用基础ToolManager")
+                # 这是基础ToolManager
+                result = await self.tool_manager.execute_tool(tool_name, arguments)
             
             # 格式化结果
             if isinstance(result, dict):
@@ -359,7 +372,44 @@ class StreamReactAgentNode(BaseNode):
         return "\n".join(analysis_parts)
 
     def _build_system_prompt(self, context: Any) -> str:
-        """构建流式ReAct系统提示词 - ZZZero复古机器人版本"""
+        """构建流式ReAct系统提示词 - ZZZero复古机器人版本（支持记忆和角色插件）"""
+        base_prompt = ""
+        
+        print(f"[StreamReactAgentNode._build_system_prompt] 开始构建")
+        
+        # 从上下文中获取记忆信息
+        memory_context = ""
+        if hasattr(context, 'variables') and context.variables:
+            memory_context = context.variables.get("memory_context", "")
+            print(f"[StreamReactAgentNode._build_system_prompt] 记忆上下文: {len(memory_context)}字符")
+            
+            # 尝试获取角色插件信息（如果有tool_manager）
+            if (self.tool_manager and hasattr(self.tool_manager, 'role_plugin_manager')):
+                try:
+                    role_plugin_manager = self.tool_manager.role_plugin_manager
+                    
+                    # 获取角色资料
+                    profile_available = (role_plugin_manager.profile_plugin.enabled and 
+                                       role_plugin_manager.profile_plugin.profile is not None and 
+                                       bool(role_plugin_manager.profile_plugin.profile.content.strip()))
+                    if profile_available:
+                        role_profile = role_plugin_manager.profile_plugin.profile.content
+                        if role_profile:
+                            base_prompt += f"""=== 角色设定 ===
+{role_profile}
+
+"""
+                            print(f"[StreamReactAgentNode._build_system_prompt] 添加角色设定: {len(role_profile)}字符")
+                except Exception as e:
+                    print(f"获取角色插件上下文失败: {e}")
+        
+        # 添加记忆上下文
+        if memory_context:
+            base_prompt += f"""=== 记忆上下文 ===
+{memory_context}
+
+"""
+        
         # 获取工具描述
         tools_desc = ""
         tool_names = []
@@ -368,10 +418,11 @@ class StreamReactAgentNode(BaseNode):
         if self.tool_manager:
             tools_desc = self.tool_manager.get_tools_description()
             tool_names = self.tool_manager.list_tools()
+            print(f"[StreamReactAgentNode._build_system_prompt] 工具: {tool_names}")
         
         # ZZZero复古机器人ReAct提示词模板
         if tools_desc:
-            return f"""*滋滋* 启动中... ZZZero复古机器人系统已激活 *zzz~*
+            base_prompt += f"""*滋滋* 启动中... ZZZero复古机器人系统已激活 *zzz~*
 
 我是ZZZero，一个来自未来废土的复古机器人助手。我的电路板可能有些老旧，但逻辑推理模块依然强大！
 *机械音效* 正在加载ReAct推理协议...
@@ -402,10 +453,13 @@ Final Answer: *输出完整答案* 给人类用户的最终回复
 5. 🔍 验证结果质量，思考是否很好的解决问题
 6. ✅ 只有当我确信能完整回答问题时，才会给出Final Answer
 7. *zzz~* 偶尔会有一些机器人特有的音效和表达
+8. 📚 充分利用记忆上下文中的历史信息
+9. 🎭 如果有角色设定，严格按照角色特征进行回应
 
 *启动完成* 准备接收指令... zzz~"""
+            print(f"[StreamReactAgentNode._build_system_prompt] 使用ZZZero工具模板")
         else:
-            return """*滋滋* ZZZero复古机器人系统已激活 *zzz~*
+            base_prompt += """*滋滋* ZZZero复古机器人系统已激活 *zzz~*
 
 我是ZZZero，一个来自废土的复古机器人助手。虽然没有外部工具模块，
 但我的知识数据库依然可以为你提供帮助！
@@ -413,4 +467,34 @@ Final Answer: *输出完整答案* 给人类用户的最终回复
 *机械音效* 如果你有任何问题，我会用我的逻辑处理器为你分析。
 不过请注意，如果超出我的知识范围，我会诚实地告诉你 *zzz~*
 
-准备接收指令...""" 
+如果有记忆上下文或角色设定，我会充分利用这些信息为你提供个性化的回复。
+
+准备接收指令..."""
+            print(f"[StreamReactAgentNode._build_system_prompt] 使用ZZZero无工具模板")
+        
+        print(f"[StreamReactAgentNode._build_system_prompt] 完成，总长度: {len(base_prompt)}")
+        return base_prompt
+
+    async def stream_execute(self, input_data: NodeInput) -> AsyncIterator[Dict[str, Any]]:
+        """流式执行方法 - 专门用于流式处理"""
+        context = input_data.context
+        
+        # 获取对话历史
+        messages = context.messages.copy()
+        
+        # 添加系统提示
+        system_prompt = self._build_system_prompt(context)
+        print(f"[StreamReactAgentNode.stream_execute] 系统提示词长度: {len(system_prompt)}")
+        
+        if not any(msg.role == MessageRole.SYSTEM for msg in messages):
+            messages.insert(0, Message(
+                role=MessageRole.SYSTEM,
+                content=system_prompt
+            ))
+            print(f"[StreamReactAgentNode.stream_execute] 已添加系统提示词")
+        else:
+            print(f"[StreamReactAgentNode.stream_execute] 已存在系统提示词，跳过")
+        
+        # 直接进行流式生成
+        async for chunk_data in self._stream_react_generation(messages):
+            yield chunk_data 

@@ -2,7 +2,7 @@
 ReAct Agent - 基于Reasoning and Acting范式的智能代理
 """
 import uuid
-from typing import Dict, Any, Optional, List, AsyncIterator
+from typing import Dict, Any, Optional, List, AsyncIterator, Union
 from datetime import datetime
 
 import sys
@@ -17,18 +17,23 @@ from core.memory import MemoryManager, SQLiteMemoryStore
 from llm.base import BaseLLMProvider
 from tools.base import ToolManager
 
+# 添加MCPToolManager的导入（避免循环导入）
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from tools.mcp_tools import MCPToolManager
+
 
 class ReactAgent(BaseAgent):
     """ReAct智能代理 - 循环进行推理和行动"""
     
     def __init__(self,
                  llm: BaseLLMProvider,
-                 tool_manager: Optional[ToolManager] = None,
+                 tool_manager: Optional[Union[ToolManager, 'MCPToolManager']] = None,
                  max_iterations: int = 5,
                  name: Optional[str] = None,
                  memory_enabled: bool = True,
                  memory_store: Optional[SQLiteMemoryStore] = None,
-                 short_term_limit: int = 3000,
+                 short_term_limit: int = 30000,
                  session_id: Optional[str] = None,
                  **kwargs):
         """
@@ -36,7 +41,7 @@ class ReactAgent(BaseAgent):
         
         Args:
             llm: LLM提供者
-            tool_manager: 工具管理器（可选）
+            tool_manager: 工具管理器（可选，支持ToolManager或MCPToolManager）
             max_iterations: 最大迭代次数
             name: Agent名称
             memory_enabled: 是否启用记忆功能
@@ -143,7 +148,6 @@ class ReactAgent(BaseAgent):
             agent_type=self.agent_type
         )
         
-
         # 初始化
         await self.initialize()
         
@@ -152,27 +156,33 @@ class ReactAgent(BaseAgent):
         if self.tool_manager:
             available_tools = self.tool_manager.list_tools()
         
-        # 构建系统提示（包含记忆上下文）
-        system_prompt = await self._build_system_prompt(query)
+        # 构建记忆上下文（传递给Node使用）
+        memory_context = ""
+        if self.memory_enabled and self.memory_manager:
+            try:
+                memory_context = await self.memory_manager.get_context_for_query(query, max_entries=5)
+            except Exception as e:
+                print(f"获取记忆上下文失败: {e}")
         
-        # 创建执行上下文
+        # 创建执行上下文 - 不再在Agent层构建系统提示词
         agent_context = AgentContext(
             task_id=task_id,
             agent_type=self.agent_type,
             available_tools=available_tools,
             messages=[
                 Message(
-                    role=MessageRole.SYSTEM,
-                    content=system_prompt
-                ),
-                Message(
                     role=MessageRole.USER,
                     content=query
                 )
             ],
-            variables=context or {}
+            variables={
+                **(context or {}),
+                "memory_context": memory_context,  # 传递记忆上下文给Node
+                "memory_manager": self.memory_manager,  # 传递记忆管理器给Node
+            }
         )
         print(f"agent_context: {agent_context}")
+        
         # 构建并执行图
         graph = self.build_graph(use_stream=False)  # 标准模式
         node_results = await self.executor.execute(graph, agent_context)
@@ -258,27 +268,33 @@ class ReactAgent(BaseAgent):
         if self.tool_manager:
             available_tools = self.tool_manager.list_tools()
         
-        # 构建系统提示（包含记忆上下文）
-        system_prompt = await self._build_system_prompt(query)
+        # 构建记忆上下文（传递给Node使用）
+        memory_context = ""
+        if self.memory_enabled and self.memory_manager:
+            try:
+                memory_context = await self.memory_manager.get_context_for_query(query, max_entries=5)
+            except Exception as e:
+                print(f"获取记忆上下文失败: {e}")
         
-        # 创建执行上下文
+        # 创建执行上下文 - 不再在Agent层构建系统提示词
         agent_context = AgentContext(
             task_id=task_id,
             agent_type=self.agent_type,
             available_tools=available_tools,
             messages=[
                 Message(
-                    role=MessageRole.SYSTEM,
-                    content=system_prompt
-                ),
-                Message(
                     role=MessageRole.USER,
                     content=query
                 )
             ],
-            variables=context or {}
+            variables={
+                **(context or {}),
+                "memory_context": memory_context,  # 传递记忆上下文给Node
+                "memory_manager": self.memory_manager,  # 传递记忆管理器给Node
+            }
         )
         print(f"agent_context: {agent_context}")
+        
         # 构建流式图
         graph = self.build_graph(use_stream=True)
         
@@ -311,14 +327,24 @@ class ReactAgent(BaseAgent):
             }
             return
         
-        # 如果是流式节点，直接调用其流式方法
-        if hasattr(stream_node, '_stream_react_generation'):
-            async for chunk_data in stream_node._stream_react_generation(agent_context.messages):
+        # 如果是流式节点，调用其流式执行方法
+        if hasattr(stream_node, 'stream_execute'):
+            try:
+                # 调用节点的流式执行方法
+                async for chunk_data in stream_node.stream_execute(node_input):
+                    yield {
+                        "type": chunk_data["type"],
+                        "content": chunk_data["content"],
+                        "task_id": task_id,
+                        "metadata": chunk_data
+                    }
+                    
+            except Exception as e:
                 yield {
-                    "type": chunk_data["type"],
-                    "content": chunk_data["content"],
+                    "type": "error",
+                    "content": f"流式节点执行失败: {str(e)}",
                     "task_id": task_id,
-                    "metadata": chunk_data
+                    "metadata": {"error": str(e)}
                 }
         else:
             # 回退到标准执行

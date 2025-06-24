@@ -76,7 +76,40 @@ class ReactAgentNode(BaseNode):
         )
     
     def _build_system_prompt(self, context: Any) -> str:
-        """构建标准ReAct系统提示词 - 基于LangChain ReAct模板"""
+        """构建标准ReAct系统提示词 - 支持记忆和角色插件"""
+        base_prompt = ""
+        
+        # 从上下文中获取记忆信息
+        memory_context = ""
+        if hasattr(context, 'variables') and context.variables:
+            memory_context = context.variables.get("memory_context", "")
+            memory_manager = context.variables.get("memory_manager")
+            
+            # 尝试获取角色插件信息（如果有tool_manager）
+            if (self.tool_manager and hasattr(self.tool_manager, 'role_plugin_manager')):
+                try:
+                    role_plugin_manager = self.tool_manager.role_plugin_manager
+                    
+                    # 获取角色资料
+                    profile_available = (role_plugin_manager.profile_plugin.enabled and 
+                                       role_plugin_manager.profile_plugin.profile is not None and 
+                                       bool(role_plugin_manager.profile_plugin.profile.content.strip()))
+                    if profile_available:
+                        role_profile = role_plugin_manager.profile_plugin.profile.content
+                        if role_profile:
+                            base_prompt += f"""=== 角色设定 ===
+{role_profile}
+
+"""
+                except Exception as e:
+                    print(f"获取角色插件上下文失败: {e}")
+        
+        # 添加记忆上下文
+        if memory_context:
+            base_prompt += f"""=== 记忆上下文 ===
+{memory_context}
+
+"""
         
         # 获取工具描述
         tools_desc = ""
@@ -87,9 +120,9 @@ class ReactAgentNode(BaseNode):
             tools_desc = self.tool_manager.get_tools_description()
             tool_names = self.tool_manager.list_tools()
         
-        # 标准ReAct提示词模板 - 基于LangChain hwchase17/react
+        # 标准ReAct提示词模板 - 基于LangChain ReAct模板
         if tools_desc:
-            return f"""你是一个有用的AI助手。你可以使用以下工具来回答问题：
+            base_prompt += f"""你是一个有用的AI助手。你可以使用以下工具来回答问题：
 
 {tools_desc}
 
@@ -109,13 +142,19 @@ Final Answer: 对原始问题的最终答案
 2. 如果需要更多信息，使用可用的工具
 3. 每次只使用一个工具
 4. 仔细分析工具的返回结果
+5. 充分利用记忆上下文中的历史信息
+6. 如果有角色设定，严格按照角色特征进行回应
 
 开始！"""
         else:
-            return """你是一个有用的AI助手。请根据你的知识回答用户的问题。
+            base_prompt += """你是一个有用的AI助手。请根据你的知识回答用户的问题。
 
 如果你不确定答案，请诚实地说明你不知道，而不是编造信息。
-请提供清晰、有帮助的回复。"""
+请提供清晰、有帮助的回复。
+
+如果有记忆上下文或角色设定，请充分利用这些信息为用户提供个性化的回复。"""
+        
+        return base_prompt
     
     def _get_default_template(self):
         """获取默认模板（保持兼容性）"""
