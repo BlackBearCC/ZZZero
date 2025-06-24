@@ -280,15 +280,9 @@ class StreamReactAgentNode(BaseNode):
         
         # 调用工具 - 优先使用MCPToolManager的增强功能
         try:
-            # 检查是否是MCPToolManager，如果是则可能有角色插件注入功能
-            if hasattr(self.tool_manager, 'inject_role_context_to_arguments'):
-                print(f"[StreamReactAgentNode._execute_tool] 检测到MCPToolManager，准备注入角色上下文")
-                # 这是MCPToolManager，它会在execute_tool内部自动调用inject_role_context_to_arguments
-                result = await self.tool_manager.execute_tool(tool_name, arguments)
-            else:
-                print(f"[StreamReactAgentNode._execute_tool] 使用基础ToolManager")
-                # 这是基础ToolManager
-                result = await self.tool_manager.execute_tool(tool_name, arguments)
+            # 直接使用工具管理器执行工具
+            print(f"[StreamReactAgentNode._execute_tool] 执行工具: {tool_name}")
+            result = await self.tool_manager.execute_tool(tool_name, arguments)
             
             # 格式化结果
             if isinstance(result, dict):
@@ -383,25 +377,23 @@ class StreamReactAgentNode(BaseNode):
             memory_context = context.variables.get("memory_context", "")
             print(f"[StreamReactAgentNode._build_system_prompt] 记忆上下文: {len(memory_context)}字符")
             
-            # 尝试获取角色插件信息（如果有tool_manager）
-            if (self.tool_manager and hasattr(self.tool_manager, 'role_plugin_manager')):
+            # 检查是否有角色信息查询工具
+            if self.tool_manager and hasattr(self.tool_manager, 'list_tools'):
                 try:
-                    role_plugin_manager = self.tool_manager.role_plugin_manager
-                    
-                    # 获取角色资料
-                    profile_available = (role_plugin_manager.profile_plugin.enabled and 
-                                       role_plugin_manager.profile_plugin.profile is not None and 
-                                       bool(role_plugin_manager.profile_plugin.profile.content.strip()))
-                    if profile_available:
-                        role_profile = role_plugin_manager.profile_plugin.profile.content
-                        if role_profile:
-                            base_prompt += f"""=== 角色设定 ===
-{role_profile}
+                    available_tools = self.tool_manager.list_tools()
+                    role_info_tools = [tool for tool in available_tools if tool.startswith('role_info_')]
+                    if role_info_tools:
+                        base_prompt += """=== 角色信息系统 ===
+*机械音* 检测到角色信息CRUD模块已激活
+如需获取角色设定，请使用以下工具：
+- role_info_query_profile: 查询角色人设
+- role_info_search_knowledge: 搜索角色知识库  
+- role_info_get_role_context: 获取完整角色上下文
 
 """
-                            print(f"[StreamReactAgentNode._build_system_prompt] 添加角色设定: {len(role_profile)}字符")
+                        print(f"[StreamReactAgentNode._build_system_prompt] 检测到{len(role_info_tools)}个角色信息工具")
                 except Exception as e:
-                    print(f"获取角色插件上下文失败: {e}")
+                    print(f"检查角色信息工具失败: {e}")
         
         # 添加记忆上下文
         if memory_context:
@@ -449,8 +441,9 @@ ZZZero操作规则：
 4. 🔄 如果结果不满意或需要更多信息，我会继续推理循环
 5. 🔍 验证结果质量，思考是否很好的解决问题
 6. ✅ 只有当我确信能完整回答问题时，才会给出Final Answer
-8. 📚 充分利用记忆上下文中的历史信息
-9. 🎭 如果有角色设定，严格按照角色特征进行回应
+7. 📚 充分利用记忆上下文中的历史信息
+8. 🎭 如需角色扮演，先使用role_info工具获取角色设定，然后严格按照角色特征进行回应
+9. 🔧 用户要求创建或修改角色信息时，使用相应的role_info工具进行操作
 
 *启动完成* 准备接收指令... zzz~"""
             print(f"[StreamReactAgentNode._build_system_prompt] 使用ZZZero工具模板")

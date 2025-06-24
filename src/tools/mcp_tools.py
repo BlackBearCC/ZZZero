@@ -14,7 +14,7 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from core.base import BaseTool
-from core.plugins import get_role_plugin_manager, RolePluginManager
+# 移除角色插件导入，现在使用MCP服务
 
 logger = logging.getLogger(__name__)
 
@@ -75,13 +75,12 @@ class MCPToolManager:
         self.enabled_servers:  Set[str] = set()
         self.enabled_tools: Set[str] = set()
         
-        # 角色插件管理器
-        self.role_plugin_manager: RolePluginManager = get_role_plugin_manager()
+        # 移除角色插件管理器，现在通过MCP服务获取角色信息
         
         # 注册服务器和工具
         self._register_servers_and_tools()
         
-        logger.info("MCP工具管理器（直接调用版）初始化完成，角色插件已集成")
+        logger.info("MCP工具管理器（直接调用版）初始化完成，角色信息CRUD服务已集成")
     
     def _register_servers_and_tools(self):
         """注册服务器配置和工具"""
@@ -153,10 +152,46 @@ class MCPToolManager:
             tool_key = f"python_{tool.name}"
             self.all_available_tools[tool_key] = tool
         
+        # 注册角色信息CRUD服务器
+        role_info_config = MCPServerConfig(
+            name="角色信息CRUD服务器",
+            description="支持角色人设、知识库和世界书的增删查改操作，集成向量数据库搜索"
+        )
+        self.servers["role_info"] = role_info_config
+        
+        # 注册角色信息CRUD工具
+        role_info_tools = [
+            # 角色人设工具
+            MCPTool("create_profile", "创建新的角色人设", "role_info"),
+            MCPTool("update_profile", "更新角色人设", "role_info"),
+            MCPTool("query_profile", "查询角色人设", "role_info"),
+            MCPTool("delete_profile", "删除角色人设", "role_info"),
+            MCPTool("list_profiles", "列出所有角色人设", "role_info"),
+            
+            # 知识库工具
+            MCPTool("add_knowledge", "添加知识条目", "role_info"),
+            MCPTool("search_knowledge", "搜索知识库", "role_info"),
+            MCPTool("update_knowledge", "更新知识条目", "role_info"),
+            MCPTool("delete_knowledge", "删除知识条目", "role_info"),
+            
+            # 世界书工具
+            MCPTool("add_world_entry", "添加世界书条目", "role_info"),
+            MCPTool("search_world", "搜索世界书", "role_info"),
+            MCPTool("update_world_entry", "更新世界书条目", "role_info"),
+            MCPTool("delete_world_entry", "删除世界书条目", "role_info"),
+            
+            # 综合工具
+            MCPTool("get_role_context", "获取完整的角色上下文（包含人设、知识库和世界书）", "role_info"),
+        ]
+        
+        for tool in role_info_tools:
+            tool_key = f"role_info_{tool.name}"
+            self.all_available_tools[tool_key] = tool
+        
         # 注册角色扮演数据生成服务器
         roleplay_config = MCPServerConfig(
             name="角色扮演数据生成服务器",
-            description="基于AI的角色扮演数据生成服务，支持365天年度日程生成，每天生成5阶段详细安排，集成角色插件和向量知识库"
+            description="基于AI的角色扮演数据生成服务，支持365天年度日程生成，每天生成5阶段详细安排"
         )
         self.servers["roleplay"] = roleplay_config
         
@@ -166,9 +201,6 @@ class MCPToolManager:
             MCPTool("get_time_phases", "获取5阶段时间规划信息", "roleplay"),
             MCPTool("get_generation_history", "获取生成历史记录", "roleplay"),
             MCPTool("clear_generation_history", "清空生成历史记录", "roleplay"),
-            MCPTool("query_role_profile", "查询当前配置的角色资料信息", "roleplay"),
-            MCPTool("search_role_knowledge", "基于关键词在角色知识库中进行搜索", "roleplay"),
-            MCPTool("get_role_plugin_status", "获取角色插件系统的状态信息", "roleplay"),
         ]
         
         for tool in roleplay_tools:
@@ -176,7 +208,7 @@ class MCPToolManager:
             self.all_available_tools[tool_key] = tool
         
         # 默认启用所有已注册的服务器
-        self.set_enabled_servers(["csv", "chromadb", "python", "roleplay"])
+        self.set_enabled_servers(["csv", "chromadb", "python", "role_info", "roleplay"])
     
     async def initialize(self):
         """初始化工具管理器"""
@@ -250,11 +282,20 @@ class MCPToolManager:
                     logger.error(f"Python执行器服务器启动失败: {e}")
                     return False
                     
+            elif server_id == "role_info":
+                # 直接导入并实例化角色信息CRUD服务器
+                try:
+                    from mcp_servers.role_info_crud_server import RoleInfoCRUDServer
+                    server_instance = RoleInfoCRUDServer("./workspace")
+                except Exception as e:
+                    logger.error(f"角色信息CRUD服务器启动失败: {e}")
+                    return False
+                    
             elif server_id == "roleplay":
                 # 直接导入并实例化角色扮演数据生成服务器
                 try:
-                    from mcp_servers.roleplay_data_server import RolePlayDataServer
-                    server_instance = RolePlayDataServer()
+                    from mcp_servers.roleplay_data_server import SimpleRolePlayDataServer
+                    server_instance = SimpleRolePlayDataServer()
                 except Exception as e:
                     logger.error(f"角色扮演数据生成服务器启动失败: {e}")
                     return False
@@ -425,7 +466,7 @@ class MCPToolManager:
             }
             
             # 无参数工具
-            for tool_name in ["roleplay_clear_generation_history", "roleplay_get_time_phases", "roleplay_get_role_plugin_status"]:
+            for tool_name in ["roleplay_clear_generation_history", "roleplay_get_time_phases"]:
                 schemas[tool_name] = {
                     "type": "object",
                     "properties": {},
@@ -461,10 +502,8 @@ class MCPToolManager:
         if not self._is_server_running(tool.server_id):
             raise RuntimeError(f"MCP服务器 {tool.server_id} 未运行")
         
-        # 为有权限的服务器注入角色上下文
-        enhanced_arguments = await self.inject_role_context_to_arguments(
-            tool.server_id, tool.name, arguments
-        )
+        # 使用原始参数（不再需要角色上下文注入，改为通过工具调用获取）
+        enhanced_arguments = arguments
         
         server_instance = self.server_instances[tool.server_id]
         
@@ -603,6 +642,9 @@ class MCPToolManager:
         elif server_id == "csv":
             # CSV服务器无额外依赖
             return {"status": "ok", "message": "CSV服务器可用"}
+        elif server_id == "role_info":
+            # 角色信息CRUD服务器无额外依赖（除了可选的ChromaDB）
+            return {"status": "ok", "message": "角色信息CRUD服务器可用"}
         elif server_id == "roleplay":
             # 角色扮演服务器无额外依赖
             return {"status": "ok", "message": "角色扮演服务器可用"}
@@ -656,73 +698,7 @@ class MCPToolManager:
         
         return tools
     
-    def has_role_plugin_permission(self, server_id: str) -> bool:
-        """检查指定服务器是否有角色插件权限
-        
-        目前只有角色扮演数据生成服务器（roleplay）有权限使用角色插件
-        """
-        return server_id == "roleplay"
-    
-    async def get_role_context_for_server(self, server_id: str, keywords: List[str] = None) -> Dict[str, Any]:
-        """为指定服务器获取角色上下文"""
-        if not self.has_role_plugin_permission(server_id):
-            return {}
-        
-        return await self.role_plugin_manager.get_role_context(keywords)
-    
-    async def inject_role_context_to_arguments(self, server_id: str, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """为工具调用注入角色上下文"""
-        # 检查是否有权限使用角色插件
-        if not self.has_role_plugin_permission(server_id):
-            return arguments
-        
-        # 提取关键词（从需求描述中）
-        keywords = []
-        requirements = arguments.get("requirements", "")
-        if requirements:
-            # 简单的关键词提取（可以根据需要改进）
-            import re
-            words = re.findall(r'\b\w+\b', requirements)
-            keywords = [word for word in words if len(word) > 2][:3]  # 取前3个有效关键词
-        
-        # 获取角色上下文
-        role_context = await self.get_role_context_for_server(server_id, keywords)
-        
-        if not role_context:
-            logger.info(f"服务器 {server_id} 未获取到角色上下文")
-            return arguments
-        
-        # 注入角色上下文到参数中
-        enhanced_arguments = arguments.copy()
-        
-        # 如果有角色资料，注入到character_description中
-        if "profile" in role_context:
-            profile_content = role_context["profile"]
-            if "character_description" not in enhanced_arguments or not enhanced_arguments["character_description"].strip():
-                enhanced_arguments["character_description"] = profile_content
-                logger.info(f"已注入角色资料到工具 {tool_name}")
-            else:
-                # 如果已有角色描述，在前面添加插件角色资料
-                enhanced_arguments["character_description"] = f"{profile_content}\n\n=== 补充角色描述 ===\n{enhanced_arguments['character_description']}"
-                logger.info(f"已补充角色资料到工具 {tool_name}")
-        
-        # 如果有知识库结果，注入到requirements中
-        if "knowledge" in role_context and role_context["knowledge"]:
-            knowledge_content = "\n".join([
-                f"- {item['keyword']}: {item['content']}" 
-                for item in role_context["knowledge"]
-            ])
-            
-            knowledge_section = f"\n\n=== 动态角色知识 ===\n{knowledge_content}"
-            
-            if "requirements" in enhanced_arguments:
-                enhanced_arguments["requirements"] += knowledge_section
-            else:
-                enhanced_arguments["requirements"] = f"基础要求{knowledge_section}"
-            
-            logger.info(f"已注入 {len(role_context['knowledge'])} 条知识库结果到工具 {tool_name}")
-        
-        return enhanced_arguments
+    # 移除角色插件权限检查功能，现在角色信息通过MCP服务管理
     
     async def cleanup(self):
         """清理资源"""

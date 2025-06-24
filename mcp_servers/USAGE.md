@@ -22,16 +22,16 @@ python roleplay_data_server.py
 
 启动标准的MCP服务器，可以通过MCP协议与其他应用集成。
 
-## 🎭 角色插件集成
+## 🎭 角色信息集成
 
 ### 自动功能
 服务启动时会自动：
-1. **初始化角色插件管理器**
-2. **配置知识库**：将 `roleplay_data_README.md` 加载为知识库
-3. **启用向量搜索**：支持基于关键词的智能搜索
+1. **配置知识库**：将 `roleplay_data_README.md` 加载为知识库
+2. **启用向量搜索**：支持基于关键词的智能搜索
+3. **集成MCP角色信息服务**：支持通过MCP协议访问角色资料和知识库
 
 ### 增强效果
-- **角色资料**：自动注入到 `character_description` 参数
+- **角色资料**：通过MCP角色信息服务获取角色设定
 - **知识库搜索**：根据 `requirements` 提取关键词，搜索相关知识并注入
 
 ## 📋 生成流程
@@ -45,9 +45,9 @@ result = await generator.generate_schedule_plan(
 )
 ```
 
-**插件增强**：
-- 如果配置了角色资料插件 → 自动补充角色信息
-- 如果配置了知识库插件 → 搜索相关知识并添加到需求中
+**MCP服务增强**：
+- 如果配置了角色信息服务 → 自动补充角色信息
+- 知识库搜索 → 搜索相关知识并添加到需求中
 
 ### 第二步：详细5阶段日程
 ```python
@@ -59,8 +59,8 @@ result = await generator.generate_detailed_schedule(
 )
 ```
 
-**插件增强**：
-- 再次应用角色插件增强
+**MCP服务增强**：
+- 再次应用角色信息服务增强
 - 生成包含地点、天气、情绪的详细日程
 
 ## 🔧 环境配置
@@ -90,10 +90,10 @@ DOUBAO_BASE_URL=https://ark.cn-beijing.volces.com/api/v3  # API基础URL
   "success": true,
   "content": "生成的计划框架内容...",
   "character_description": "原始角色描述",
-  "enhanced_character_description": "插件增强后的角色描述",
+  "enhanced_character_description": "MCP服务增强后的角色描述",
   "requirements": "原始需求",
-  "enhanced_requirements": "插件增强后的需求",
-  "role_plugin_used": true,
+  "enhanced_requirements": "MCP服务增强后的需求",
+  "role_service_used": true,
   "generation_time": 2.5,
   "generated_at": "2023-12-21T10:30:00",
   "completed_at": "2023-12-21T10:30:02"
@@ -123,7 +123,7 @@ DOUBAO_BASE_URL=https://ark.cn-beijing.volces.com/api/v3  # API基础URL
     }
     // ... 其他时间段
   },
-  "role_plugin_used": true,
+  "role_service_used": true,
   "generation_time": 3.2
 }
 ```
@@ -151,8 +151,8 @@ python -m logging --level=DEBUG mcp_servers/roleplay_data_server.py --test
 ```
 
 ### 关键日志信息
-- `✅ 已从角色资料插件获取角色信息`
-- `✅ 已从知识库插件获取 X 条相关知识`
+- `✅ 已从角色信息服务获取角色信息`
+- `✅ 已从知识库服务获取 X 条相关知识`
 - `✅ 已自动配置角色扮演数据生成服务知识库`
 
 ## ⚠️ 注意事项
@@ -185,14 +185,14 @@ echo $LLM_PROVIDER
 curl -I https://ark.cn-beijing.volces.com
 ```
 
-**Q: 角色插件未生效**
-- 确保 `workspace/` 目录存在且可写
-- 检查 `workspace/role_plugins_config.json` 配置文件
-- 查看日志中是否有角色插件相关的错误信息
+**Q: 角色信息服务未生效**
+- 确保MCP角色信息服务器正常运行
+- 检查角色信息数据文件是否存在
+- 查看日志中是否有角色信息服务相关的错误信息
 
 ## 📞 支持
 
 如果遇到问题，请查看：
 1. 控制台日志输出
-2. `workspace/` 目录下的配置文件
+2. MCP服务器连接状态
 3. 环境变量配置是否正确 

@@ -84,25 +84,6 @@ class ReactAgentNode(BaseNode):
         if hasattr(context, 'variables') and context.variables:
             memory_context = context.variables.get("memory_context", "")
             memory_manager = context.variables.get("memory_manager")
-            
-            # 尝试获取角色插件信息（如果有tool_manager）
-            if (self.tool_manager and hasattr(self.tool_manager, 'role_plugin_manager')):
-                try:
-                    role_plugin_manager = self.tool_manager.role_plugin_manager
-                    
-                    # 获取角色资料
-                    profile_available = (role_plugin_manager.profile_plugin.enabled and 
-                                       role_plugin_manager.profile_plugin.profile is not None and 
-                                       bool(role_plugin_manager.profile_plugin.profile.content.strip()))
-                    if profile_available:
-                        role_profile = role_plugin_manager.profile_plugin.profile.content
-                        if role_profile:
-                            base_prompt += f"""=== 角色设定 ===
-{role_profile}
-
-"""
-                except Exception as e:
-                    print(f"获取角色插件上下文失败: {e}")
         
         # 添加记忆上下文
         if memory_context:
@@ -143,7 +124,11 @@ Final Answer: 对原始问题的最终答案
 3. 每次只使用一个工具
 4. 仔细分析工具的返回结果
 5. 充分利用记忆上下文中的历史信息
-6. 如果有角色设定，严格按照角色特征进行回应
+6. 如需角色扮演，可使用role_info工具查询角色信息：
+   - role_info_query_profile: 查询角色人设
+   - role_info_search_knowledge: 搜索角色知识库
+   - role_info_get_role_context: 获取完整角色上下文
+7. 如果用户要求创建或管理角色信息，使用相应的role_info工具
 
 开始！"""
         else:
