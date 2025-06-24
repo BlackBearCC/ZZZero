@@ -5,6 +5,10 @@
 """
 import os
 import sys
+
+# 首先添加项目根目录到Python路径
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 import json
 import asyncio
 import logging
@@ -14,15 +18,16 @@ from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
 from enum import Enum
 
-# 添加项目根目录到Python路径
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-
+# 使用本地mcp模块
 from mcp.server.stdio_server import StdioMCPServer
 from mcp.types import Tool, Resource, JSONSchema, ToolInputSchema
 
 # 导入项目的LLM系统
 from src.llm.base import LLMFactory
 from src.core.types import LLMConfig, Message, MessageRole
+
+# 导入角色插件系统
+from src.core.plugins import get_role_plugin_manager, RolePluginManager
 
 # 确保LLM提供商已注册
 try:
@@ -313,6 +318,140 @@ class RolePlayDataGenerator:
         self.llm_caller = LLMCaller()
         self.config_manager = ConfigManager()
         self.generation_history = []
+        
+        # 初始化角色插件管理器
+        self.role_plugin_manager = get_role_plugin_manager()
+        logger.info("角色插件管理器已集成到角色扮演数据生成器")
+        
+        # 自动初始化知识库
+        asyncio.create_task(self._initialize_knowledge_base())
+    
+    async def _initialize_knowledge_base(self):
+        """自动初始化知识库，加载roleplay_data_README.md"""
+        try:
+            # 检查是否已有知识库配置
+            status = self.role_plugin_manager.get_status()
+            kb_info = status.get('knowledge_base_plugin', {})
+            
+            if kb_info.get('enabled') and kb_info.get('available'):
+                logger.info("知识库已存在且可用，跳过自动初始化")
+                return
+            
+            # 获取README文件路径
+            readme_path = Path(__file__).parent / "roleplay_data_README.md"
+            
+            if not readme_path.exists():
+                logger.warning(f"README文件不存在: {readme_path}")
+                return
+            
+            # 配置知识库
+            await self.role_plugin_manager.configure_knowledge_base(
+                name="角色扮演数据生成服务知识库",
+                source_file=str(readme_path),
+                description="包含角色扮演数据生成服务的功能说明、使用方法、配置信息等",
+                search_limit=5,
+                enabled=True,
+                process_immediately=True
+            )
+            
+            logger.info("✅ 已自动配置角色扮演数据生成服务知识库")
+            
+        except Exception as e:
+            logger.error(f"自动初始化知识库失败: {e}")
+            # 不抛出异常，允许服务继续运行
+    
+    async def _generate_search_keywords(self, character_description: str = "", requirements: str = "") -> List[str]:
+        """使用LLM生成搜索关键词"""
+        try:
+            # 构建关键词生成提示词
+            keyword_prompt = f"""请根据以下角色设定和需求描述，生成5-10个适合搜索知识库的关键词。
+关键词应该涵盖角色特点、活动类型、专业领域等方面。
+
+角色设定：
+{character_description if character_description else "未提供角色设定"}
+
+需求描述：
+{requirements if requirements else "未提供具体需求"}
+
+请只返回关键词，用逗号分隔，不要其他解释。
+例如：日程规划,时间管理,工作安排,休闲活动,个人爱好
+
+关键词："""
+
+            # 调用LLM生成关键词
+            success, content = await self.llm_caller.call_llm(
+                keyword_prompt, max_tokens=100, temperature=0.3
+            )
+            
+            if success and content:
+                # 解析生成的关键词
+                keywords = [kw.strip() for kw in content.strip().split(",") if kw.strip()]
+                # 限制关键词数量
+                keywords = keywords[:10]
+                logger.info(f"✅ LLM生成搜索关键词: {keywords}")
+                return keywords
+            else:
+                logger.warning("LLM关键词生成失败，使用默认关键词")
+                
+        except Exception as e:
+            logger.error(f"LLM关键词生成出错: {e}")
+        
+        # 回退方案：使用默认关键词
+        default_keywords = ["日程", "计划", "安排", "时间管理", "角色扮演"]
+        if requirements:
+            # 简单提取一些明显的关键词作为补充
+            simple_keywords = [word.strip() for word in requirements.replace("，", ",").split(",") if word.strip()]
+            default_keywords.extend(simple_keywords[:5])
+        
+        return default_keywords[:10]
+    
+    async def _enhance_with_role_plugins(self, character_description: str = "", requirements: str = "") -> Tuple[str, str]:
+        """使用角色插件增强参数"""
+        enhanced_character = character_description
+        enhanced_requirements = requirements
+        
+        try:
+            # 使用LLM生成搜索关键词
+            keywords = await self._generate_search_keywords(character_description, requirements)
+            
+            # 获取角色上下文
+            role_context = await self.role_plugin_manager.get_role_context(keywords)
+            
+            # 处理角色资料
+            if "profile" in role_context and role_context["profile"]:
+                profile_content = role_context["profile"]
+                if enhanced_character:
+                    # 如果已有角色描述，在前面添加插件角色资料
+                    enhanced_character = f"{profile_content}\n\n【补充信息】\n{enhanced_character}"
+                else:
+                    # 如果没有角色描述，直接使用插件角色资料
+                    enhanced_character = profile_content
+                logger.info("✅ 已从角色资料插件获取角色信息")
+            
+            # 处理知识库搜索结果
+            if "knowledge" in role_context and role_context["knowledge"]:
+                knowledge_results = role_context["knowledge"]
+                knowledge_text = "\n".join([
+                    f"📚 相关知识 {i+1}: {result['content'][:200]}..." 
+                    if len(result['content']) > 200 
+                    else f"📚 相关知识 {i+1}: {result['content']}"
+                    for i, result in enumerate(knowledge_results[:3])  # 限制最多3条
+                ])
+                
+                if enhanced_requirements:
+                    # 如果已有要求，在后面添加知识库内容
+                    enhanced_requirements = f"{enhanced_requirements}\n\n【相关知识参考】\n{knowledge_text}"
+                else:
+                    # 如果没有要求，将知识库内容作为参考
+                    enhanced_requirements = f"【相关知识参考】\n{knowledge_text}"
+                logger.info(f"✅ 已从知识库插件获取 {len(knowledge_results)} 条相关知识")
+            
+            return enhanced_character, enhanced_requirements
+            
+        except Exception as e:
+            logger.error(f"角色插件增强失败: {e}")
+            # 如果插件增强失败，返回原始参数
+            return character_description, requirements
     
     async def generate_schedule_plan(self, character_description: str = "", requirements: str = "") -> Dict[str, Any]:
         """
@@ -329,8 +468,13 @@ class RolePlayDataGenerator:
         start_time = datetime.now()
         
         try:
+            # 使用角色插件增强参数
+            enhanced_character, enhanced_requirements = await self._enhance_with_role_plugins(
+                character_description, requirements
+            )
+            
             # 获取提示词
-            prompt = self.prompt_manager.get_schedule_plan_prompt(character_description, requirements)
+            prompt = self.prompt_manager.get_schedule_plan_prompt(enhanced_character, enhanced_requirements)
             
             # 调用LLM生成
             success, content = await self.llm_caller.call_llm(prompt)
@@ -345,7 +489,10 @@ class RolePlayDataGenerator:
                 "content": content if success else None,
                 "error": content if not success else None,
                 "character_description": character_description[:200] + "..." if len(character_description) > 200 else character_description,
+                "enhanced_character_description": enhanced_character[:200] + "..." if len(enhanced_character) > 200 else enhanced_character,
                 "requirements": requirements,
+                "enhanced_requirements": enhanced_requirements[:200] + "..." if len(enhanced_requirements) > 200 else enhanced_requirements,
+                "role_plugin_used": enhanced_character != character_description or enhanced_requirements != requirements,
                 "generation_time": generation_time,
                 "generated_at": start_time.isoformat(),
                 "completed_at": end_time.isoformat()
@@ -385,9 +532,14 @@ class RolePlayDataGenerator:
         start_time = datetime.now()
         
         try:
+            # 使用角色插件增强参数（详细日程生成时也需要增强）
+            enhanced_character, enhanced_requirements = await self._enhance_with_role_plugins(
+                character_description, requirements
+            )
+            
             # 获取提示词
             prompt = self.prompt_manager.get_detailed_schedule_prompt(
-                character_description, plan_framework, requirements
+                enhanced_character, plan_framework, enhanced_requirements
             )
             
             # 调用LLM生成
@@ -409,8 +561,11 @@ class RolePlayDataGenerator:
                 "phases_data": phases_data,
                 "error": content if not success else None,
                 "character_description": character_description[:200] + "..." if len(character_description) > 200 else character_description,
+                "enhanced_character_description": enhanced_character[:200] + "..." if len(enhanced_character) > 200 else enhanced_character,
                 "plan_framework": plan_framework[:500] + "..." if len(plan_framework) > 500 else plan_framework,
                 "requirements": requirements,
+                "enhanced_requirements": enhanced_requirements[:200] + "..." if len(enhanced_requirements) > 200 else enhanced_requirements,
+                "role_plugin_used": enhanced_character != character_description or enhanced_requirements != requirements,
                 "generation_time": generation_time,
                 "generated_at": start_time.isoformat(),
                 "completed_at": end_time.isoformat()
@@ -699,16 +854,116 @@ class RolePlayDataServer(StdioMCPServer):
             await self.generator.cleanup()
 
 
+async def test_local_generation():
+    """本地测试生成功能"""
+    print("🚀 角色扮演数据生成服务 - 本地测试模式")
+    print("=" * 60)
+    
+    # 创建生成器实例
+    generator = RolePlayDataGenerator()
+    
+    # 等待知识库初始化完成
+    await asyncio.sleep(2)
+    
+    # 测试角色设定
+    test_character = """
+    方知衡，28岁，云枢大学天文系客座教授
+    性格温和，喜欢观星，有条理的生活方式
+    平时喜欢在咖啡店工作，热爱阅读和研究
+    """
+    
+    test_requirements = """
+    安排一个充实的周六，包括学术研究时间、休闲活动
+    希望能平衡工作和生活，体现角色的天文学家身份
+    """
+    
+    print("📝 测试参数:")
+    print(f"角色设定: {test_character.strip()}")
+    print(f"需求描述: {test_requirements.strip()}")
+    print("-" * 60)
+    
+    try:
+        # 演示LLM生成搜索关键词
+        print("🔍 演示：LLM生成搜索关键词...")
+        keywords = await generator._generate_search_keywords(test_character, test_requirements)
+        print(f"🏷️ 生成的搜索关键词: {', '.join(keywords)}")
+        print("-" * 60)
+        
+        # 第一步：生成日程计划框架
+        print("🎯 第一步：生成日程计划框架...")
+        plan_result = await generator.generate_schedule_plan(
+            character_description=test_character,
+            requirements=test_requirements
+        )
+        
+        if plan_result["success"]:
+            print("✅ 日程计划框架生成成功！")
+            print(f"🔧 是否使用了角色插件: {plan_result.get('role_plugin_used', False)}")
+            print(f"📊 生成时间: {plan_result['generation_time']:.2f}秒")
+            print("\n📋 生成的计划框架:")
+            print(plan_result["content"])
+            print("-" * 60)
+            
+            # 第二步：生成详细5阶段日程
+            print("🎯 第二步：生成详细5阶段日程...")
+            detailed_result = await generator.generate_detailed_schedule(
+                character_description=test_character,
+                plan_framework=plan_result["content"],
+                requirements="请确保每个时间段都有具体的活动安排"
+            )
+            
+            if detailed_result["success"]:
+                print("✅ 详细日程生成成功！")
+                print(f"🔧 是否使用了角色插件: {detailed_result.get('role_plugin_used', False)}")
+                print(f"📊 生成时间: {detailed_result['generation_time']:.2f}秒")
+                
+                # 显示5阶段日程
+                if detailed_result.get("phases_data"):
+                    print("\n📅 详细5阶段日程:")
+                    for phase_key, phase_data in detailed_result["phases_data"].items():
+                        print(f"\n🕐 {phase_data['name']} ({phase_data['time_range']}):")
+                        for i, activity in enumerate(phase_data['activities'], 1):
+                            print(f"  {i}. {activity['activity_name']}")
+                            print(f"     📍 地点: {activity.get('location', 'N/A')}")
+                            print(f"     🌤️ 天气: {activity.get('weather', 'N/A')}")
+                            print(f"     😊 情绪: {activity.get('emotion', 'N/A')}")
+                            print(f"     📝 详情: {activity['details'][:100]}...")
+                else:
+                    print("\n📝 原始生成内容:")
+                    print(detailed_result["content"])
+            else:
+                print(f"❌ 详细日程生成失败: {detailed_result['error']}")
+        else:
+            print(f"❌ 日程计划框架生成失败: {plan_result['error']}")
+            
+    except Exception as e:
+        print(f"❌ 测试过程中发生错误: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    finally:
+        # 清理资源
+        await generator.cleanup()
+        print("\n🏁 测试完成")
+
+
 async def main():
     """主函数"""
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
     
-    # 创建服务器实例
-    server = RolePlayDataServer()
-    
-    # 运行服务器
-    logger.info("启动角色扮演数据生成MCP服务器...")
-    await server.run()
+    # 检查启动模式
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "--test":
+        # 本地测试模式
+        await test_local_generation()
+    else:
+        # MCP服务器模式
+        server = RolePlayDataServer()
+        logger.info("🚀 启动角色扮演数据生成MCP服务器...")
+        await server.run()
 
 
 if __name__ == "__main__":
