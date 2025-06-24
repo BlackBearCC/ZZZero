@@ -1077,6 +1077,8 @@ def hello_world():
                 outputs=[role_plugin_status]
             )
             
+
+            
             # 页面加载时刷新文件列表
             app.load(
                 self._refresh_file_lists,
@@ -1481,8 +1483,9 @@ def hello_world():
             if kb_info['info']:
                 info = kb_info['info']
                 status_html += f"<small>知识库名称: {info['name']}</small><br/>"
-                status_html += f"<small>向量库路径: {info['path']}</small><br/>"
+                status_html += f"<small>源文件路径: {info['source_file']}</small><br/>"
                 status_html += f"<small>搜索限制: {info['search_limit']} 条</small><br/>"
+                status_html += f"<small>数据条数: {info['data_count']} 条</small><br/>"
                 status_html += f"<small>创建时间: {info['created_at']}</small>"
             else:
                 status_html += "<small>未配置知识库</small>"
