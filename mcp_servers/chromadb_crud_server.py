@@ -68,14 +68,21 @@ class ChromaDBManager:
         logger.info(f"ChromaDB管理器初始化完成: {data_dir}")
     
     def _get_sentence_transformer_ef(self):
-        """获取Sentence Transformer嵌入函数"""
+        """获取Sentence Transformer嵌入函数（使用BGE中文模型）"""
         try:
             return embedding_functions.SentenceTransformerEmbeddingFunction(
-                model_name="all-MiniLM-L6-v2"
+                model_name="BAAI/bge-small-zh-v1.5"
             )
         except Exception as e:
-            logger.warning(f"Sentence Transformer不可用: {e}")
-            return None
+            logger.warning(f"BGE Sentence Transformer不可用，尝试使用默认模型: {e}")
+            try:
+                # 回退到默认模型
+                return embedding_functions.SentenceTransformerEmbeddingFunction(
+                    model_name="all-MiniLM-L6-v2"
+                )
+            except Exception as e2:
+                logger.warning(f"默认Sentence Transformer也不可用: {e2}")
+                return None
     
     def _get_openai_ef(self):
         """获取OpenAI嵌入函数"""
@@ -91,14 +98,21 @@ class ChromaDBManager:
         return None
     
     def _get_huggingface_ef(self):
-        """获取HuggingFace嵌入函数"""
+        """获取HuggingFace嵌入函数（使用BGE中文模型）"""
         try:
             return embedding_functions.HuggingFaceEmbeddingFunction(
-                model_name="sentence-transformers/all-MiniLM-L6-v2"
+                model_name="BAAI/bge-small-zh-v1.5"
             )
         except Exception as e:
-            logger.warning(f"HuggingFace嵌入函数不可用: {e}")
-            return None
+            logger.warning(f"BGE HuggingFace嵌入函数不可用，尝试使用默认模型: {e}")
+            try:
+                # 回退到默认模型
+                return embedding_functions.HuggingFaceEmbeddingFunction(
+                    model_name="sentence-transformers/all-MiniLM-L6-v2"
+                )
+            except Exception as e2:
+                logger.warning(f"默认HuggingFace嵌入函数也不可用: {e2}")
+                return None
     
     def create_collection(self, name: str, 
                          embedding_function: str = 'default',

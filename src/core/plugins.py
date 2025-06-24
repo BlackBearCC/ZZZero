@@ -74,7 +74,7 @@ class RoleKnowledgeBase:
     search_limit: int = 3  # 搜索结果数量限制
     processed_data: List[str] = field(default_factory=list)  # 处理后的文本数据
     collection_name: str = ""  # ChromaDB集合名称
-    embedding_model: str = "all-MiniLM-L6-v2"  # embedding模型名称
+    embedding_model: str = "BAAI/bge-small-zh-v1.5"  # embedding模型名称（BGE中文模型，512维）
     chunk_size: int = 512  # 文本块大小
     chunk_overlap: int = 50  # 文本块重叠大小
     
@@ -276,8 +276,19 @@ class RoleKnowledgeBasePlugin(BaseRolePlugin):
             def __init__(self, model):
                 self.model = model
             
-            def __call__(self, texts: List[str]) -> List[List[float]]:
-                """生成512维embedding向量"""
+            def __call__(self, input: List[str]) -> List[List[float]]:
+                """
+                生成512维embedding向量
+                
+                Args:
+                    input: 输入文本列表（新版ChromaDB使用input参数而不是texts）
+                    
+                Returns:
+                    List[List[float]]: 512维embedding向量列表
+                """
+                # 兼容处理：支持旧版本的texts参数名
+                texts = input
+                
                 try:
                     # 生成embedding
                     embeddings = self.model.encode(texts, convert_to_numpy=True)
@@ -762,7 +773,7 @@ class RolePluginManager:
                             created_at=kb_config.get("created_at", now),
                             search_limit=kb_config.get("search_limit", 3),
                             collection_name=kb_config.get("collection_name", ""),
-                            embedding_model=kb_config.get("embedding_model", "all-MiniLM-L6-v2"),
+                            embedding_model=kb_config.get("embedding_model", "BAAI/bge-small-zh-v1.5"),
                             chunk_size=kb_config.get("chunk_size", 512),
                             chunk_overlap=kb_config.get("chunk_overlap", 50)
                         )

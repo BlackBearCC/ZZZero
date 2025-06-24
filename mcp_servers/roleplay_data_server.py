@@ -406,45 +406,63 @@ class RolePlayDataGenerator:
         return default_keywords[:10]
     
     async def _enhance_with_role_plugins(self, character_description: str = "", requirements: str = "") -> Tuple[str, str]:
-        """使用角色插件增强参数"""
+        """使用角色插件增强参数 - 分离角色人设和参考资料"""
         enhanced_character = character_description
         enhanced_requirements = requirements
         
         try:
-            # 使用LLM生成搜索关键词
-            keywords = await self._generate_search_keywords(character_description, requirements)
+            # 第一步：确定最终的角色人设信息
+            role_context = await self.role_plugin_manager.get_role_context([])  # 先不用关键词，直接获取基础角色资料
             
-            # 获取角色上下文
-            role_context = await self.role_plugin_manager.get_role_context(keywords)
-            
-            # 处理角色资料
+            # 处理角色人设 - 确定角色的基础身份信息
+            final_character_profile = ""
             if "profile" in role_context and role_context["profile"]:
-                profile_content = role_context["profile"]
-                if enhanced_character:
-                    # 如果已有角色描述，在前面添加插件角色资料
-                    enhanced_character = f"{profile_content}\n\n【补充信息】\n{enhanced_character}"
-                else:
-                    # 如果没有角色描述，直接使用插件角色资料
-                    enhanced_character = profile_content
-                logger.info("✅ 已从角色资料插件获取角色信息")
-            
-            # 处理知识库搜索结果
-            if "knowledge" in role_context and role_context["knowledge"]:
-                knowledge_results = role_context["knowledge"]
-                knowledge_text = "\n".join([
-                    f"📚 相关知识 {i+1}: {result['content'][:200]}..." 
-                    if len(result['content']) > 200 
-                    else f"📚 相关知识 {i+1}: {result['content']}"
-                    for i, result in enumerate(knowledge_results[:3])  # 限制最多3条
-                ])
+                plugin_profile = role_context["profile"]
                 
-                if enhanced_requirements:
-                    # 如果已有要求，在后面添加知识库内容
-                    enhanced_requirements = f"{enhanced_requirements}\n\n【相关知识参考】\n{knowledge_text}"
+                if enhanced_character and enhanced_character.strip():
+                    # 用户提供了角色描述，以用户描述为准
+                    final_character_profile = enhanced_character
+                    logger.info("✅ 使用用户提供的角色描述作为人设")
                 else:
-                    # 如果没有要求，将知识库内容作为参考
-                    enhanced_requirements = f"【相关知识参考】\n{knowledge_text}"
-                logger.info(f"✅ 已从知识库插件获取 {len(knowledge_results)} 条相关知识")
+                    # 用户未提供角色描述，使用插件中的角色人设
+                    final_character_profile = plugin_profile
+                    enhanced_character = plugin_profile
+                    logger.info("✅ 使用插件中的角色人设作为基础")
+            else:
+                # 没有插件角色资料，使用用户提供的描述
+                final_character_profile = enhanced_character
+                logger.info("✅ 仅使用用户角色描述，无插件人设")
+            
+            # 第二步：基于确定的角色人设生成搜索关键词，获取参考资料
+            if final_character_profile:
+                keywords = await self._generate_search_keywords(final_character_profile, enhanced_requirements)
+                
+                # 重新获取角色上下文，这次带上关键词搜索知识库
+                role_context_with_search = await self.role_plugin_manager.get_role_context(keywords)
+                
+                # 处理知识库参考资料 - 仅作为背景参考，不影响角色人设
+                if "knowledge" in role_context_with_search and role_context_with_search["knowledge"]:
+                    knowledge_results = role_context_with_search["knowledge"]
+                    
+                    # 筛选和格式化参考资料
+                    reference_materials = []
+                    for i, result in enumerate(knowledge_results[:3], 1):  # 最多3条参考资料
+                        content = result['content']
+                        # 简化参考资料，突出关键信息
+                        if len(content) > 120:
+                            content = content[:120] + "..."
+                        reference_materials.append(f"参考资料{i}: {content}")
+                    
+                    if reference_materials:
+                        reference_section = f"\n\n【背景参考资料】\n" + "\n".join(reference_materials)
+                        enhanced_requirements = enhanced_requirements + reference_section if enhanced_requirements else f"请参考以下背景资料：{reference_section}"
+                        logger.info(f"✅ 已添加 {len(reference_materials)} 条背景参考资料")
+            
+            # 记录处理结果
+            if enhanced_character != character_description:
+                logger.info(f"✅ 角色人设已确定：{enhanced_character[:50]}...")
+            if enhanced_requirements != requirements:
+                logger.info(f"✅ 需求已增强，添加了参考资料（新长度: {len(enhanced_requirements)}）")
             
             return enhanced_character, enhanced_requirements
             
@@ -963,7 +981,7 @@ async def main():
         # MCP服务器模式
         server = RolePlayDataServer()
         logger.info("🚀 启动角色扮演数据生成MCP服务器...")
-        await server.run()
+        await server.start()
 
 
 if __name__ == "__main__":
