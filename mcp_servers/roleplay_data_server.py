@@ -225,6 +225,80 @@ class AnnualScheduleManager:
             logger.error(f"保存第{week_index + 1}周压缩摘要失败: {e}")
             return False
     
+    def save_schedule_csv_summary(self, daily_summaries: List[Dict[str, Any]], total_days: int) -> bool:
+        """保存日程CSV汇总文件"""
+        try:
+            filename = f"annual_schedule_summary_{total_days}days.csv"
+            filepath = self.output_dir / filename
+            
+            import csv
+            
+            with open(filepath, 'w', newline='', encoding='utf-8-sig') as csvfile:
+                fieldnames = [
+                    '天数', '日期', '星期', '日期类型', '当日摘要', '角色状态',
+                    '上午活动', '中午活动', '下午活动', '晚上活动', '夜间活动',
+                    '特别事件', '情绪状态', '天气', '主要地点'
+                ]
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                
+                # 写入表头
+                writer.writeheader()
+                
+                # 写入每日数据
+                for day_summary in daily_summaries:
+                    if not day_summary.get("success", False):
+                        continue
+                    
+                    daily_data = day_summary.get("daily_data", {})
+                    day_index = day_summary.get("day_index", 0)
+                    
+                    # 提取5个时间段的活动
+                    phases = ["morning", "noon", "afternoon", "evening", "night"]
+                    phase_activities = []
+                    
+                    for phase in phases:
+                        phase_data = daily_data.get(phase, {})
+                        if isinstance(phase_data, dict):
+                            activities = phase_data.get("activities", [])
+                            if activities and isinstance(activities, list):
+                                activity_text = "; ".join([str(act).strip() for act in activities[:2]])  # 只取前2个活动
+                            else:
+                                activity_text = str(phase_data.get("summary", "")).strip()
+                        else:
+                            activity_text = str(phase_data).strip()
+                        
+                        phase_activities.append(activity_text[:100])  # 限制长度
+                    
+                    # 提取环境信息
+                    env_context = daily_data.get("environmental_context", {})
+                    
+                    row = {
+                        '天数': day_index + 1,
+                        '日期': day_summary.get("date", ""),
+                        '星期': day_summary.get("weekday", ""),
+                        '日期类型': env_context.get("day_type", "普通日"),
+                        '当日摘要': daily_data.get("daily_summary", "")[:200],
+                        '角色状态': daily_data.get("character_state", "")[:100],
+                        '上午活动': phase_activities[0] if len(phase_activities) > 0 else "",
+                        '中午活动': phase_activities[1] if len(phase_activities) > 1 else "",
+                        '下午活动': phase_activities[2] if len(phase_activities) > 2 else "",
+                        '晚上活动': phase_activities[3] if len(phase_activities) > 3 else "",
+                        '夜间活动': phase_activities[4] if len(phase_activities) > 4 else "",
+                        '特别事件': "; ".join([str(e.get("activity", "")) for e in day_summary.get("scheduled_events", [])])[:150],
+                        '情绪状态': env_context.get("emotion", ""),
+                        '天气': env_context.get("weather", ""),
+                        '主要地点': env_context.get("location", "")
+                    }
+                    
+                    writer.writerow(row)
+            
+            logger.info(f"✅ 成功保存CSV汇总文件: {filepath}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"保存CSV汇总文件失败: {e}")
+            return False
+    
     def get_progress_summary(self) -> Dict[str, Any]:
         """获取生成进度摘要"""
         if not self.current_schedule_data:
@@ -308,7 +382,7 @@ class PromptManager:
     
     def __init__(self):
         # 单日详细日程生成提示词
-        self.daily_schedule_prompt = """你是一个专业的角色扮演日程规划专家。请为指定角色生成今天的详细5阶段日程安排。
+        self.daily_schedule_prompt = """你是一个专业的角色扮演日程规划专家。请为指定角色制定今天的详细5阶段日程计划（注意：这是未来的计划安排，不是已发生的事情）。
 
 【角色设定】
 {character_description}
@@ -318,19 +392,19 @@ class PromptManager:
 - 星期: {weekday}
 - 天数: 第{day_index}天
 
-【今日预定活动】
+【今日预定计划】
 {scheduled_events}
 
-【昨日活动摘要】
+【昨日活动摘要（过往参考）】
 {previous_day_summary}
 
-【近期背景信息】
+【近期背景信息（7天内摘要）】
 {recent_context}
 
 【知识库参考信息】
 {knowledge_references}
 
-请按照以下JSON格式生成今日详细5阶段日程：
+请按照以下JSON格式制定今日详细5阶段日程计划：
 
 ```json
 {{
@@ -379,14 +453,16 @@ class PromptManager:
 }}
 ```
 
-生成要求：
-1. **严格遵循角色设定**：所有活动安排必须符合角色的性格特点、生活习惯、职业特征
-2. **融合预定活动**：巧妙地将今日的预定活动融入到5个时间段中，确保活动的合理性和连贯性
-3. **考虑昨日衔接**：参考昨日活动摘要，确保今日安排的延续性和逻辑性
-4. **利用知识库信息**：结合知识库中的角色背景信息，丰富活动的细节和深度
-5. **时间安排合理**：每个时间段的活动要符合该时段的特点，活动间有自然过渡
-6. **细节生动具体**：details字段要包含角色的心理活动、具体行为、环境描述等
-7. **保持角色一致性**：整天的安排要体现角色的个人风格和生活节奏
+计划制定要求：
+1. **严格遵循角色设定**：所有计划安排必须符合角色的性格特点、生活习惯、职业特征
+2. **融合预定计划**：巧妙地将今日的预定计划融入到5个时间段中，确保计划的合理性和连贯性
+3. **参考昨日经验**：参考昨日活动摘要和近期7天背景，确保今日计划的延续性和逻辑性
+4. **利用环境信息**：结合天气、季节、节日等环境因素，制定更贴合实际的计划
+5. **利用知识库信息**：结合知识库中的角色背景信息，丰富计划的细节和深度
+6. **时间安排合理**：每个时间段的计划要符合该时段的特点，活动间有自然过渡
+7. **计划详尽具体**：details字段要包含计划的目的、预期效果、具体执行方式等
+8. **保持角色一致性**：整天的计划要体现角色的个人风格和生活节奏
+9. **体现未来性**：使用"计划"、"准备"、"打算"等未来时态的表达
 - 使用中文回复
 - 必须严格按照JSON格式输出"""
 
@@ -494,9 +570,41 @@ class PromptManager:
     def get_daily_schedule_prompt(self, character_description: str, current_date: str, 
                                  weekday: str, day_index: int, scheduled_events: str, 
                                  previous_day_summary: str, recent_context: str, 
-                                 knowledge_references: str) -> str:
+                                 knowledge_references: str, environmental_context: Dict[str, str] = None) -> str:
         """获取单日详细日程生成提示词"""
-        return self.daily_schedule_prompt.format(
+        
+        # 构建环境信息文本
+        env_text = ""
+        if environmental_context:
+            # 构建环境信息
+            holiday_text = environmental_context.get('holiday', '')
+            holiday_info = f"- 节日: {holiday_text}" if holiday_text else "- 节日: 无特殊节日"
+            
+            solar_term_text = environmental_context.get('solar_term', '')
+            solar_term_info = f"- 节气: {solar_term_text}" if solar_term_text else ""
+            
+            env_text = f"""
+【环境信息】
+- 日期: {environmental_context.get('date_info', '未知')}
+- 星期: {environmental_context.get('weekday', '未知')}
+- 季节: {environmental_context.get('season', '未知')}
+- 农历: {environmental_context.get('lunar_date', '农历信息不可用')}
+{holiday_info}
+{solar_term_info}
+- 天气: {environmental_context.get('weather', '晴朗')}
+- 建议情绪氛围: {environmental_context.get('emotion', '平静')}
+- 推荐地点参考: 
+  * 工作: {environmental_context.get('location_work', '办公室')}
+  * 居家: {environmental_context.get('location_home', '家中')}
+  * 休闲: {environmental_context.get('location_leisure', '公园')}"""
+        
+        # 更新基础提示词，加入环境信息
+        enhanced_prompt = self.daily_schedule_prompt.replace(
+            "【知识库参考信息】\n{knowledge_references}",
+            "【知识库参考信息】\n{knowledge_references}\n" + env_text
+        )
+        
+        return enhanced_prompt.format(
             character_description=character_description or "未指定角色设定",
             current_date=current_date,
             weekday=weekday,
@@ -838,7 +946,7 @@ class RolePlayDataGenerator:
             
             # 第四步：开始逐日生成
             logger.info("📅 第四步：开始逐日生成详细日程...")
-            base_date = datetime(2024, 1, 1)  # 基准日期
+            base_date = datetime(2025, 6, 24)  # 基准日期：从2025年6月24日开始
             
             total_generated = 0
             total_errors = 0
@@ -1008,6 +1116,20 @@ class RolePlayDataGenerator:
                         "size_kb": round(filepath.stat().st_size / 1024, 2)
                     })
 
+            # 保存CSV汇总文件
+            csv_saved = self.annual_manager.save_schedule_csv_summary(generation_results, end_day - start_from_day)
+            csv_file_info = None
+            if csv_saved:
+                csv_filename = f"annual_schedule_summary_{end_day - start_from_day}days.csv"
+                csv_filepath = self.annual_manager.output_dir / csv_filename
+                if csv_filepath.exists():
+                    csv_file_info = {
+                        "filename": csv_filename,
+                        "filepath": str(csv_filepath),
+                        "size_kb": round(csv_filepath.stat().st_size / 1024, 2),
+                        "description": f"年度日程CSV汇总文件（{end_day - start_from_day}天）"
+                    }
+
             result = {
                 "generation_id": generation_id,
                 "type": "annual_schedule",
@@ -1033,8 +1155,9 @@ class RolePlayDataGenerator:
                 "output_files": {
                     "daily_files": output_files,
                     "weekly_files": weekly_files,
-                    "total_files": len(output_files) + len(weekly_files),
-                    "total_size_kb": sum(f["size_kb"] for f in output_files + weekly_files)
+                    "csv_summary_file": csv_file_info,
+                    "total_files": len(output_files) + len(weekly_files) + (1 if csv_file_info else 0),
+                    "total_size_kb": sum(f["size_kb"] for f in output_files + weekly_files) + (csv_file_info["size_kb"] if csv_file_info else 0)
                 },
                 "daily_results_sample": generation_results[:3] if generation_results else []
             }
@@ -1067,19 +1190,20 @@ class RolePlayDataGenerator:
         """生成单日详细日程"""
         try:
             # 获取当日预定事件
-            day_events = self.annual_manager.get_day_events(day_index, datetime(2024, 1, 1))
+            day_events = self.annual_manager.get_day_events(day_index, datetime(2025, 6, 24))
             
-            # 格式化预定事件信息
+            # 格式化预定事件信息（强调这是计划，未发生的事情）
             if day_events:
-                events_text = "\n".join([
-                    f"- {event['activity_name']} ({event['activity_type']}) "
-                    f"{'[事件开始]' if event['is_event_start'] else ''}"
-                    f"{'[事件结束]' if event['is_event_end'] else ''}"
-                    f" 备注: {event['remarks']}" if event['remarks'] else ""
+                events_text = "今日预定计划安排:\n" + "\n".join([
+                    f"- 计划{event['activity_type']}: {event['activity_name']} "
+                    f"{'（计划开始）' if event['is_event_start'] else ''}"
+                    f"{'（计划结束）' if event['is_event_end'] else ''}"
+                    f"\n  地点: {event.get('location', '待确定')}"
+                    f"\n  备注: {event['remarks']}" if event['remarks'] else ""
                     for event in day_events
                 ])
             else:
-                events_text = "今日无特别预定活动，安排常规日程"
+                events_text = "今日无特别预定活动计划，需安排常规日程"
             
             # 获取昨日摘要
             previous_summary = schedule_data.daily_summaries.get(day_index - 1, "昨日信息不可用") if day_index > 0 else "这是第一天"
@@ -1090,7 +1214,10 @@ class RolePlayDataGenerator:
             # 搜索知识库获取相关信息
             knowledge_references = await self._search_knowledge_for_day(day_events, schedule_data.character_description)
             
-            # 构建提示词
+            # 生成环境上下文信息
+            env_context = self._generate_environmental_context(current_date, day_index)
+            
+            # 构建提示词（添加环境信息）
             prompt = self.prompt_manager.get_daily_schedule_prompt(
                 character_description=schedule_data.character_description,
                 current_date=current_date.strftime('%Y-%m-%d'),
@@ -1099,7 +1226,8 @@ class RolePlayDataGenerator:
                 scheduled_events=events_text,
                 previous_day_summary=previous_summary,
                 recent_context=recent_context,
-                knowledge_references=knowledge_references
+                knowledge_references=knowledge_references,
+                environmental_context=env_context
             )
             
             # 调用LLM生成
@@ -1199,6 +1327,187 @@ class RolePlayDataGenerator:
         else:
             return "近期背景信息不可用"
     
+    def _generate_environmental_context(self, current_date: datetime, day_index: int) -> Dict[str, str]:
+        """生成环境上下文信息（天气、地点、季节、节日、情绪等）"""
+        try:
+            # 获取星期几
+            weekday_cn = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+            weekday = weekday_cn[current_date.weekday()]
+            
+            # 季节判断
+            month = current_date.month
+            if month in [12, 1, 2]:
+                season = "冬季"
+            elif month in [3, 4, 5]:
+                season = "春季"
+            elif month in [6, 7, 8]:
+                season = "夏季"
+            else:
+                season = "秋季"
+            
+            # 获取农历和节日信息
+            lunar_info = self._get_calendar_info(current_date)
+            
+            # 使用配置管理器生成随机元素
+            weather = self.config_manager.get_random_weather()
+            emotion = self.config_manager.get_random_emotion()
+            
+            # 根据角色特点选择合适的地点
+            location_work = self.config_manager.get_random_location("工作场所")
+            location_home = self.config_manager.get_random_location("居住场所")
+            location_leisure = self.config_manager.get_random_location("休闲场所")
+            
+            return {
+                "season": season,
+                "weekday": weekday,
+                "lunar_date": lunar_info["lunar_date"],
+                "holiday": lunar_info["holiday"],
+                "solar_term": lunar_info["solar_term"],
+                "weather": weather,
+                "emotion": emotion,
+                "location_work": location_work,
+                "location_home": location_home,
+                "location_leisure": location_leisure,
+                "date_info": f"{current_date.strftime('%Y年%m月%d日')} {weekday} {season} {lunar_info['lunar_date']}"
+            }
+            
+        except Exception as e:
+            logger.error(f"生成环境上下文失败: {e}")
+            return self._get_fallback_context(current_date)
+
+    def _get_calendar_info(self, date: datetime) -> Dict[str, str]:
+        """获取日历信息（农历、节日、节气）"""
+        try:
+            # 尝试使用zhdate库获取农历
+            lunar_date = self._get_lunar_date(date)
+            
+            # 获取节日信息
+            holiday = self._get_holiday(date)
+            
+            # 获取节气信息
+            solar_term = self._get_solar_term(date)
+            
+            return {
+                "lunar_date": lunar_date,
+                "holiday": holiday,
+                "solar_term": solar_term
+            }
+            
+        except Exception as e:
+            logger.error(f"获取日历信息失败: {e}")
+            return {
+                "lunar_date": "农历信息不可用",
+                "holiday": "",
+                "solar_term": ""
+            }
+
+    def _get_lunar_date(self, date: datetime) -> str:
+        """获取农历日期"""
+        try:
+            from zhdate import ZhDate
+            lunar = ZhDate.from_datetime(date)
+            return f"农历{lunar.chinese()}"
+        except ImportError:
+            logger.warning("zhdate库未安装，使用简化农历")
+            return f"农历{date.month}月{date.day}日（近似）"
+        except Exception as e:
+            logger.error(f"农历转换失败: {e}")
+            return "农历信息不可用"
+
+    def _get_holiday(self, date: datetime) -> str:
+        """获取节日信息"""
+        try:
+            # 尝试使用holidays库
+            import holidays
+            
+            cn_holidays = holidays.China(years=date.year)
+            us_holidays = holidays.UnitedStates(years=date.year)
+            
+            date_obj = date.date()
+            
+            # 优先检查中国节日
+            if date_obj in cn_holidays:
+                return cn_holidays[date_obj]
+            # 检查国际节日
+            elif date_obj in us_holidays:
+                return f"{us_holidays[date_obj]}（国际）"
+            else:
+                return ""
+                
+        except ImportError:
+            logger.warning("holidays库未安装，使用简化节日")
+            return self._get_simple_holiday(date)
+        except Exception as e:
+            logger.error(f"节日查询失败: {e}")
+            return ""
+
+    def _get_simple_holiday(self, date: datetime) -> str:
+        """简化的节日查询"""
+        holidays_map = {
+            (1, 1): "元旦节",
+            (2, 14): "情人节",
+            (3, 8): "妇女节",
+            (5, 1): "劳动节",
+            (6, 1): "儿童节",
+            (10, 1): "国庆节",
+            (12, 24): "平安夜",
+            (12, 25): "圣诞节"
+        }
+        return holidays_map.get((date.month, date.day), "")
+
+    def _get_solar_term(self, date: datetime) -> str:
+        """获取节气信息"""
+        # 二十四节气（简化版）
+        solar_terms = {
+            (2, 4): "立春", (2, 19): "雨水", (3, 6): "惊蛰", (3, 21): "春分",
+            (4, 5): "清明", (4, 20): "谷雨", (5, 5): "立夏", (5, 21): "小满", 
+            (6, 6): "芒种", (6, 21): "夏至", (7, 7): "小暑", (7, 23): "大暑",
+            (8, 7): "立秋", (8, 23): "处暑", (9, 8): "白露", (9, 23): "秋分",
+            (10, 8): "寒露", (10, 23): "霜降", (11, 7): "立冬", (11, 22): "小雪",
+            (12, 7): "大雪", (12, 22): "冬至", (1, 6): "小寒", (1, 20): "大寒"
+        }
+        
+        # 查找最近的节气（前后3天内）
+        for (month, day), term in solar_terms.items():
+            try:
+                term_date = datetime(date.year, month, day)
+                diff = abs((date - term_date).days)
+                if diff <= 3:
+                    return term
+            except ValueError:
+                continue
+        
+        return ""
+
+    def _get_fallback_context(self, current_date: datetime) -> Dict[str, str]:
+        """备用上下文"""
+        weekday_cn = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+        weekday = weekday_cn[current_date.weekday()]
+        
+        month = current_date.month
+        if month in [12, 1, 2]:
+            season = "冬季"
+        elif month in [3, 4, 5]:
+            season = "春季"
+        elif month in [6, 7, 8]:
+            season = "夏季"
+        else:
+            season = "秋季"
+        
+        return {
+            "season": season,
+            "weekday": weekday,
+            "lunar_date": "农历信息不可用",
+            "holiday": "",
+            "solar_term": "",
+            "weather": "晴朗",
+            "emotion": "平静",
+            "location_work": "办公室",
+            "location_home": "家中",
+            "location_leisure": "公园",
+            "date_info": f"{current_date.strftime('%Y年%m月%d日')} {weekday} {season}"
+        }
+
     async def _search_knowledge_for_day(self, day_events: List[Dict[str, Any]], character_description: str) -> str:
         """为当日搜索相关知识库信息"""
         try:
@@ -1249,7 +1558,7 @@ class RolePlayDataGenerator:
             
             # 获取本周的每日摘要
             start_day = week_index * 7
-            end_day = min(start_day + 7, 365)
+            end_day = min(start_day + 7, 999)
             
             daily_summaries = []
             for day_idx in range(start_day, end_day):
@@ -1364,7 +1673,7 @@ class RolePlayDataGenerator:
             
             # 构建时间范围
             start_day = week_index * 7
-            end_day = min(start_day + 7, 365)
+            end_day = min(start_day + 7, 999)
             start_date = (datetime(2024, 1, 1) + timedelta(days=start_day)).strftime('%Y-%m-%d')
             end_date = (datetime(2024, 1, 1) + timedelta(days=end_day - 1)).strftime('%Y-%m-%d')
             time_range = f"第{week_index + 1}周 ({start_date} 至 {end_date})"
@@ -1388,7 +1697,7 @@ class RolePlayDataGenerator:
             
             # 调用LLM进行验证
             success, content = await self.llm_caller.call_llm(
-                prompt, max_tokens=2000, temperature=0.3
+                prompt,  temperature=0.3
             )
             
             if success:
@@ -1707,13 +2016,22 @@ class RolePlayDataServer(StdioMCPServer):
     def _register_roleplay_tools(self):
         """注册角色扮演数据生成工具"""
         
-        # 生成365天年度详细日程工具
+        # 生成999天年度详细日程工具
         self.register_tool(Tool(
             name="generate_annual_schedule",
-            description="基于CSV年度日程规划生成365天详细的每日5阶段日程安排。自动使用预设的角色配置和CSV文件，无需额外参数",
+            description="基于CSV年度日程规划生成指定天数的详细5阶段日程安排。从2025年6月24日开始生成，支持自定义生成天数",
             inputSchema=ToolInputSchema(
                 type="object",
-                properties={}
+                properties={
+                    "max_days": {
+                        "type": "integer",
+                        "description": "生成的天数，默认3天（演示模式），可设置1-999天",
+                        "minimum": 1,
+                        "maximum": 99,
+                        "default": 3
+                    }
+                },
+                required=[]
             )
         ))
         
@@ -1821,13 +2139,13 @@ class RolePlayDataServer(StdioMCPServer):
             logger.info(f"参数: {arguments}")
             
             if name == "generate_annual_schedule":
-                # 使用默认配置，无需参数
+                # 获取参数
+                max_days = arguments.get("max_days", 3)  # 默认3天（演示模式）
                 csv_file_path = "workspace/方知衡年度日程规划.csv"  # 默认CSV文件路径
                 character_description = ""  # 从角色插件中自动获取
                 start_from_day = 0  # 从第1天开始
-                max_days = 3  # 演示模式：只生成前3天
                 
-                logger.info(f"📋 开始生成年度日程）：CSV文件={csv_file_path}, 生成天数={max_days}")
+                logger.info(f"📋 开始生成年度日程：CSV文件={csv_file_path}, 生成天数={max_days}")
                 
                 return await self.generator.generate_annual_schedule(
                     csv_file_path, character_description, start_from_day, max_days
@@ -1974,7 +2292,7 @@ async def test_local_generation():
     print("📝 第四步：测试365天年度日程生成功能...")
     print(f"📂 CSV文件路径: {csv_file_path}")
     print(f"👤 角色设定: {test_character.strip()}")
-    print(f"🎯 测试生成天数: 前3天（演示模式）")
+
     print("-" * 80)
     
     try:
@@ -2056,16 +2374,16 @@ async def main():
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
-    # 检查启动模式
-    import sys
-    if len(sys.argv) > 1 and sys.argv[1] == "--test":
-        # 本地测试模式
-        await test_local_generation()
-    else:
+    # # 检查启动模式
+    # import sys
+    # if len(sys.argv) > 1 and sys.argv[1] == "--test":
+    #     # 本地测试模式
+    #     await test_local_generation()
+    # else:
         # MCP服务器模式
-        server = RolePlayDataServer()
-        logger.info("🚀 启动角色扮演数据生成MCP服务器...")
-        await server.start()
+    server = RolePlayDataServer()
+    logger.info("🚀 启动角色扮演数据生成MCP服务器...")
+    await server.start()
 
 
 if __name__ == "__main__":

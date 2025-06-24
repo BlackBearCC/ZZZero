@@ -162,7 +162,7 @@ class MCPToolManager:
         
         # 注册角色扮演数据生成工具
         roleplay_tools = [
-            MCPTool("generate_annual_schedule", "自动生成角色的年度日程安排（演示模式：前3天详细5阶段日程）", "roleplay"),
+            MCPTool("generate_annual_schedule", "生成指定天数的角色年度日程安排，支持1-999天。输出JSON和CSV汇总文件", "roleplay"),
             MCPTool("get_time_phases", "获取5阶段时间规划信息", "roleplay"),
             MCPTool("get_generation_history", "获取生成历史记录", "roleplay"),
             MCPTool("clear_generation_history", "清空生成历史记录", "roleplay"),
@@ -221,22 +221,18 @@ class MCPToolManager:
         try:
             logger.info(f"启动MCP服务器: {config.name}")
             
+            server_instance = None
+            
             if server_id == "csv":
                 # 直接导入并实例化CSV服务器
                 from mcp_servers.csv_crud_server import CSVCRUDServer
                 server_instance = CSVCRUDServer("./workspace/output")
-                self.server_instances[server_id] = server_instance
-                logger.info(f"✅ MCP服务器启动成功: {config.name}")
-                return True
                 
             elif server_id == "chromadb":
                 # 直接导入并实例化ChromaDB服务器
                 try:
                     from mcp_servers.chromadb_crud_server import ChromaDBCRUDServer
                     server_instance = ChromaDBCRUDServer("./workspace/vectordb")
-                    self.server_instances[server_id] = server_instance
-                    logger.info(f"✅ MCP服务器启动成功: {config.name}")
-                    return True
                 except ImportError as e:
                     logger.warning(f"ChromaDB服务器启动失败，可能缺少依赖: {e}")
                     logger.warning(f"可以运行以下命令安装依赖: pip install chromadb")
@@ -250,9 +246,6 @@ class MCPToolManager:
                 try:
                     from mcp_servers.python_executor_server import PythonExecutorServer
                     server_instance = PythonExecutorServer("./workspace/python_executor")
-                    self.server_instances[server_id] = server_instance
-                    logger.info(f"✅ MCP服务器启动成功: {config.name}")
-                    return True
                 except Exception as e:
                     logger.error(f"Python执行器服务器启动失败: {e}")
                     return False
@@ -262,19 +255,184 @@ class MCPToolManager:
                 try:
                     from mcp_servers.roleplay_data_server import RolePlayDataServer
                     server_instance = RolePlayDataServer()
-                    self.server_instances[server_id] = server_instance
-                    logger.info(f"✅ MCP服务器启动成功: {config.name}")
-                    return True
                 except Exception as e:
                     logger.error(f"角色扮演数据生成服务器启动失败: {e}")
                     return False
             else:
                 logger.error(f"未知服务器类型: {server_id}")
                 return False
+            
+            if server_instance is None:
+                logger.error(f"服务器实例创建失败: {server_id}")
+                return False
+            
+            self.server_instances[server_id] = server_instance
+            
+            # 获取并更新工具的真实schema信息
+            await self._update_tools_schema(server_id, server_instance)
+            
+            logger.info(f"✅ MCP服务器启动成功: {config.name}")
+            return True
                 
         except Exception as e:
             logger.error(f"启动MCP服务器失败 {config.name}: {e}")
             return False
+    
+    async def _update_tools_schema(self, server_id: str, server_instance) -> None:
+        """更新服务器工具的schema信息"""
+        try:
+            # 直接从服务器实例的_tools字典获取工具信息（MCP内部属性）
+            if hasattr(server_instance, '_tools') and server_instance._tools:
+                logger.info(f"从服务器 {server_id} 获取工具schema...")
+                
+                for tool_name, tool_def in server_instance._tools.items():
+                    tool_key = f"{server_id}_{tool_name}"
+                    
+                    if tool_key in self.all_available_tools:
+                        # 获取工具的inputSchema
+                        input_schema = None
+                        if hasattr(tool_def, 'inputSchema') and tool_def.inputSchema:
+                            # 转换ToolInputSchema为普通字典
+                            if hasattr(tool_def.inputSchema, 'type'):
+                                input_schema = {
+                                    "type": tool_def.inputSchema.type,
+                                    "properties": getattr(tool_def.inputSchema, 'properties', {}),
+                                    "required": getattr(tool_def.inputSchema, 'required', [])
+                                }
+                            elif isinstance(tool_def.inputSchema, dict):
+                                input_schema = tool_def.inputSchema
+                        
+                        # 更新工具的schema
+                        self.all_available_tools[tool_key].schema = input_schema
+                        
+                        logger.info(f"✅ 已更新工具 {tool_key} 的schema")
+                        if input_schema:
+                            properties_count = len(input_schema.get('properties', {}))
+                            logger.debug(f"Schema: {properties_count} 个参数")
+                    else:
+                        logger.warning(f"服务器 {server_id} 中的工具 {tool_name} 未在注册列表中")
+                        
+                logger.info(f"服务器 {server_id} 的工具schema更新完成")
+                
+            # 备用方案：检查是否有tools属性（标准MCP）
+            elif hasattr(server_instance, 'tools') and server_instance.tools:
+                logger.info(f"使用标准MCP tools属性获取schema...")
+                
+                for tool_def in server_instance.tools:
+                    tool_name = tool_def.name
+                    tool_key = f"{server_id}_{tool_name}"
+                    
+                    if tool_key in self.all_available_tools:
+                        # 处理标准MCP Tool对象
+                        input_schema = None
+                        if hasattr(tool_def, 'inputSchema') and tool_def.inputSchema:
+                            if hasattr(tool_def.inputSchema, 'properties'):
+                                input_schema = {
+                                    "type": getattr(tool_def.inputSchema, 'type', 'object'),
+                                    "properties": getattr(tool_def.inputSchema, 'properties', {}),
+                                    "required": getattr(tool_def.inputSchema, 'required', [])
+                                }
+                            elif isinstance(tool_def.inputSchema, dict):
+                                input_schema = tool_def.inputSchema
+                        
+                        self.all_available_tools[tool_key].schema = input_schema
+                        logger.info(f"✅ 已更新工具 {tool_key} 的schema（标准MCP）")
+                
+                logger.info(f"服务器 {server_id} 的标准MCP工具schema更新完成")
+            else:
+                logger.warning(f"服务器 {server_id} 没有_tools或tools属性，尝试手动定义schema")
+                
+                # 手动定义已知工具的schema
+                manual_schemas = self._get_manual_tool_schemas(server_id)
+                for tool_key, schema in manual_schemas.items():
+                    if tool_key in self.all_available_tools:
+                        self.all_available_tools[tool_key].schema = schema
+                        logger.info(f"✅ 已手动设置工具 {tool_key} 的schema")
+                
+        except Exception as e:
+            logger.error(f"更新服务器 {server_id} 工具schema失败: {e}")
+            import traceback
+            logger.debug(f"详细错误: {traceback.format_exc()}")
+    
+    def _get_manual_tool_schemas(self, server_id: str) -> Dict[str, Dict[str, Any]]:
+        """手动定义工具schema（备用方案）"""
+        schemas = {}
+        
+        if server_id == "roleplay":
+            schemas["roleplay_generate_annual_schedule"] = {
+                "type": "object",
+                "properties": {
+                    "max_days": {
+                        "type": "integer",
+                        "description": "生成的天数，默认3天（演示模式），可设置1-365天",
+                        "minimum": 1,
+                        "maximum": 365,
+                        "default": 3
+                    }
+                },
+                "required": []
+            }
+            
+            schemas["roleplay_get_generation_history"] = {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "返回的历史记录数量限制，默认20",
+                        "default": 20,
+                        "minimum": 1,
+                        "maximum": 50
+                    }
+                }
+            }
+            
+            schemas["roleplay_search_role_knowledge"] = {
+                "type": "object",
+                "properties": {
+                    "keywords": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "搜索关键词列表，用于在知识库中查找相关信息",
+                        "minItems": 1
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "返回结果数量限制，默认5",
+                        "minimum": 1,
+                        "maximum": 20,
+                        "default": 5
+                    },
+                    "min_score": {
+                        "type": "number",
+                        "description": "最小相似度分数阈值（0-1），低于此分数的结果将被过滤",
+                        "minimum": 0.0,
+                        "maximum": 1.0,
+                        "default": 0.0
+                    }
+                },
+                "required": ["keywords"]
+            }
+            
+            schemas["roleplay_query_role_profile"] = {
+                "type": "object",
+                "properties": {
+                    "include_metadata": {
+                        "type": "boolean",
+                        "description": "是否包含元数据信息（创建时间、更新时间、标签等）",
+                        "default": False
+                    }
+                }
+            }
+            
+            # 无参数工具
+            for tool_name in ["roleplay_clear_generation_history", "roleplay_get_time_phases", "roleplay_get_role_plugin_status"]:
+                schemas[tool_name] = {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+        
+        return schemas
     
     def _is_server_running(self, server_id: str) -> bool:
         """检查服务器是否运行"""
@@ -373,11 +531,57 @@ class MCPToolManager:
                 self._is_server_running(self.all_available_tools[tool_name].server_id)]
     
     def get_tools_description(self) -> str:
-        """获取工具描述"""
+        """获取工具描述 - 包含参数schema信息"""
         descriptions = []
         for tool_name in self.list_tools():
             tool = self.all_available_tools[tool_name]
-            descriptions.append(f"- {tool_name}: {tool.description}")
+            
+            # 基础描述
+            desc = f"- {tool_name}: {tool.description}"
+            
+            # 添加参数schema信息
+            if tool.schema:
+                desc += "\n  参数:"
+                if isinstance(tool.schema, dict):
+                    properties = tool.schema.get("properties", {})
+                    required = tool.schema.get("required", [])
+                    
+                    for param_name, param_info in properties.items():
+                        param_type = param_info.get("type", "unknown")
+                        param_desc = param_info.get("description", "")
+                        param_default = param_info.get("default")
+                        param_min = param_info.get("minimum")
+                        param_max = param_info.get("maximum")
+                        
+                        # 构建参数描述
+                        param_line = f"    - {param_name} ({param_type})"
+                        if param_name in required:
+                            param_line += " [必填]"
+                        else:
+                            param_line += " [可选]"
+                        
+                        if param_desc:
+                            param_line += f": {param_desc}"
+                        
+                        # 添加默认值和范围信息
+                        extras = []
+                        if param_default is not None:
+                            extras.append(f"默认值={param_default}")
+                        if param_min is not None and param_max is not None:
+                            extras.append(f"范围={param_min}-{param_max}")
+                        elif param_min is not None:
+                            extras.append(f"最小值={param_min}")
+                        elif param_max is not None:
+                            extras.append(f"最大值={param_max}")
+                        
+                        if extras:
+                            param_line += f" ({', '.join(extras)})"
+                        
+                        desc += f"\n{param_line}"
+            else:
+                desc += "\n  参数: 无参数"
+            
+            descriptions.append(desc)
         
         return "\n".join(descriptions)
     
