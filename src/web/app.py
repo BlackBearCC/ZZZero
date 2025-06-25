@@ -338,6 +338,9 @@ class AgentApp:
                 ]
             )
         
+        # 角色信息管理事件
+        self._bind_role_events(config_components)
+        
         # 页面加载事件
         app.load(
             fn=self._on_load,
@@ -503,6 +506,125 @@ class AgentApp:
             return (
                 f"❌ {error_msg}",
                 gr.update(choices=[], value=[])
+            )
+    
+    def _bind_role_events(self, config_components: Dict[str, Any]):
+        """绑定角色信息管理事件"""
+        import gradio as gr
+        
+        # 角色信息文件上传
+        if config_components.get('role_profile_file'):
+            config_components['role_profile_file'].change(
+                fn=self.event_handlers.on_role_profile_file_upload,
+                inputs=[config_components['role_profile_file']],
+                outputs=[config_components.get('role_profile_text')]
+            )
+        
+        # 加载角色按钮
+        if config_components.get('role_load_btn'):
+            config_components['role_load_btn'].click(
+                fn=self.event_handlers.on_role_load,
+                inputs=[config_components.get('role_name')],
+                outputs=[
+                    config_components.get('role_profile_text'),
+                    config_components.get('role_status')
+                ]
+            )
+        
+        # 保存角色按钮
+        if config_components.get('role_save_btn'):
+            config_components['role_save_btn'].click(
+                fn=self.event_handlers.on_role_save,
+                inputs=[
+                    config_components.get('role_name'),
+                    config_components.get('role_profile_text')
+                ],
+                outputs=[config_components.get('role_status')]
+            )
+        
+        # 清空角色内容按钮
+        if config_components.get('role_clear_btn'):
+            config_components['role_clear_btn'].click(
+                fn=lambda: "",
+                outputs=[config_components.get('role_profile_text')]
+            )
+        
+        # 知识文件上传
+        if config_components.get('knowledge_file'):
+            config_components['knowledge_file'].change(
+                fn=self.event_handlers.on_knowledge_file_upload,
+                inputs=[config_components['knowledge_file']],
+                outputs=[config_components.get('knowledge_text')]
+            )
+        
+        # 添加知识按钮
+        if config_components.get('knowledge_add_btn'):
+            config_components['knowledge_add_btn'].click(
+                fn=self.event_handlers.on_knowledge_add,
+                inputs=[
+                    config_components.get('role_name'),
+                    config_components.get('knowledge_category'),
+                    config_components.get('knowledge_text')
+                ],
+                outputs=[
+                    config_components.get('role_status'),
+                    config_components.get('knowledge_list')
+                ]
+            )
+        
+        # 搜索知识按钮
+        if config_components.get('knowledge_search_btn'):
+            config_components['knowledge_search_btn'].click(
+                fn=lambda role_name: self.event_handlers._get_knowledge_list(role_name),
+                inputs=[config_components.get('role_name')],
+                outputs=[config_components.get('knowledge_list')]
+            )
+        
+        # 世界书文件上传
+        if config_components.get('world_file'):
+            config_components['world_file'].change(
+                fn=self.event_handlers.on_world_file_upload,
+                inputs=[config_components['world_file']],
+                outputs=[config_components.get('world_text')]
+            )
+        
+        # 添加世界设定按钮
+        if config_components.get('world_add_btn'):
+            config_components['world_add_btn'].click(
+                fn=self.event_handlers.on_world_add,
+                inputs=[
+                    config_components.get('role_name'),
+                    config_components.get('world_category'),
+                    config_components.get('world_text')
+                ],
+                outputs=[
+                    config_components.get('role_status'),
+                    config_components.get('world_list')
+                ]
+            )
+        
+        # 搜索世界设定按钮
+        if config_components.get('world_search_btn'):
+            config_components['world_search_btn'].click(
+                fn=lambda role_name: self.event_handlers._get_world_list(role_name),
+                inputs=[config_components.get('role_name')],
+                outputs=[config_components.get('world_list')]
+            )
+        
+        # 预览完整上下文按钮
+        if config_components.get('role_preview_btn'):
+            def show_context(role_name):
+                import gradio as gr
+                content, visible = self.event_handlers.on_role_preview_context(role_name)
+                return content, gr.update(visible=visible)
+            
+            config_components['role_preview_btn'].click(
+                fn=show_context,
+                inputs=[config_components.get('role_name')],
+                outputs=[
+                    config_components.get('role_context_display'),
+                    config_components.get('role_context_display')  # 控制显示/隐藏
+                ]
             )
             
     def launch(self, **kwargs):

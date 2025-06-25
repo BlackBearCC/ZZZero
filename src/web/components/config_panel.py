@@ -124,26 +124,149 @@ class ConfigPanel:
         
         return {"available_tools": available_tools}
     
-    def create_role_info_section(self) -> None:
-        """创建角色信息管理说明"""
+    def create_role_info_section(self) -> Dict[str, Any]:
+        """创建角色信息管理界面"""
         with gr.Accordion("🎭 角色信息管理", open=False):
-            gr.Markdown("""
-            **角色信息现已通过MCP工具管理：**
+            gr.Markdown("### 📝 角色配置管理")
             
-            - **角色人设**: 使用 `role_info_create_profile` 创建角色，`role_info_query_profile` 查询角色
-            - **角色知识库**: 使用 `role_info_add_knowledge` 添加知识，`role_info_search_knowledge` 搜索知识
-            - **世界书**: 使用 `role_info_add_world_entry` 添加世界设定，`role_info_search_world` 搜索世界设定
-            - **完整上下文**: 使用 `role_info_get_role_context` 获取包含人设、知识库和世界书的完整角色上下文
+            with gr.Tabs():
+                # Tab 1: 角色信息
+                with gr.Tab("👤 角色信息"):
+                    gr.Markdown("**角色基础信息和人设描述**")
+                    
+                    with gr.Row():
+                        role_name = gr.Textbox(
+                            label="角色名称",
+                            placeholder="请输入角色名称，如：艾莉丝",
+                            scale=2
+                        )
+                        role_load_btn = gr.Button("加载角色", variant="secondary", scale=1)
+                    
+                    role_profile_file = gr.File(
+                        label="上传角色信息文件 (.txt)",
+                        file_types=[".txt"],
+                        file_count="single"
+                    )
+                    
+                    role_profile_text = gr.Textbox(
+                        label="角色信息内容",
+                        placeholder="输入或编辑角色的基础信息、性格、外貌、背景等...",
+                        lines=10,
+                        max_lines=20
+                    )
+                    
+                    with gr.Row():
+                        role_save_btn = gr.Button("保存角色信息", variant="primary", scale=1)
+                        role_clear_btn = gr.Button("清空内容", variant="secondary", scale=1)
+                    
+                    role_status = gr.HTML(label="操作状态")
+                
+                # Tab 2: 角色知识
+                with gr.Tab("📚 角色知识"):
+                    gr.Markdown("**角色相关的技能、经验、专业知识**")
+                    
+                    knowledge_category = gr.Textbox(
+                        label="知识分类",
+                        placeholder="如：咖啡制作、绘画技巧、历史知识等",
+                        scale=1
+                    )
+                    
+                    knowledge_file = gr.File(
+                        label="上传知识文件 (.txt)",
+                        file_types=[".txt"],
+                        file_count="multiple"
+                    )
+                    
+                    knowledge_text = gr.Textbox(
+                        label="知识内容",
+                        placeholder="输入角色掌握的知识、技能、经验等...",
+                        lines=8,
+                        max_lines=15
+                    )
+                    
+                    with gr.Row():
+                        knowledge_add_btn = gr.Button("添加知识", variant="primary", scale=1)
+                        knowledge_search_btn = gr.Button("搜索知识", variant="secondary", scale=1)
+                    
+                    knowledge_list = gr.HTML(
+                        label="已有知识列表",
+                        value="<div style='color: #666;'>暂无知识条目</div>"
+                    )
+                
+                # Tab 3: 世界书
+                with gr.Tab("🌍 世界书"):
+                    gr.Markdown("**故事背景、世界设定、规则体系**")
+                    
+                    world_category = gr.Textbox(
+                        label="世界设定分类",
+                        placeholder="如：地理环境、历史背景、魔法体系等"
+                    )
+                    
+                    world_file = gr.File(
+                        label="上传世界设定文件 (.txt)",
+                        file_types=[".txt"],
+                        file_count="multiple"
+                    )
+                    
+                    world_text = gr.Textbox(
+                        label="世界设定内容",
+                        placeholder="输入世界背景、设定、规则等...",
+                        lines=8,
+                        max_lines=15
+                    )
+                    
+                    with gr.Row():
+                        world_add_btn = gr.Button("添加设定", variant="primary", scale=1)
+                        world_search_btn = gr.Button("搜索设定", variant="secondary", scale=1)
+                    
+                    world_list = gr.HTML(
+                        label="已有世界设定",
+                        value="<div style='color: #666;'>暂无世界设定</div>"
+                    )
             
-            **优势：**
-            - ✅ 支持向量数据库搜索，更智能的相关性匹配
-            - ✅ 完整的CRUD操作（增删查改）
-            - ✅ 数据持久化存储，重启后自动恢复
-            - ✅ 分类管理：人设、知识库、世界书独立管理
-            - ✅ 可以通过Agent直接调用，无需手动配置
+            # 全局操作区
+            with gr.Row():
+                role_export_btn = gr.Button("导出全部", variant="secondary", scale=1)
+                role_import_btn = gr.Button("导入配置", variant="secondary", scale=1)
+                role_preview_btn = gr.Button("预览完整上下文", variant="primary", scale=2)
             
-            **使用方法：** 在对话中直接告诉Agent创建/查询角色信息即可
-            """)
+            role_context_display = gr.HTML(
+                label="完整角色上下文预览",
+                visible=False
+            )
+        
+        return {
+            # 角色信息相关
+            "role_name": role_name,
+            "role_load_btn": role_load_btn,
+            "role_profile_file": role_profile_file,
+            "role_profile_text": role_profile_text,
+            "role_save_btn": role_save_btn,
+            "role_clear_btn": role_clear_btn,
+            "role_status": role_status,
+            
+            # 角色知识相关
+            "knowledge_category": knowledge_category,
+            "knowledge_file": knowledge_file,
+            "knowledge_text": knowledge_text,
+            "knowledge_add_btn": knowledge_add_btn,
+            "knowledge_search_btn": knowledge_search_btn,
+            "knowledge_list": knowledge_list,
+            
+            # 世界书相关
+            "world_category": world_category,
+            "world_file": world_file,
+            "world_text": world_text,
+            "world_add_btn": world_add_btn,
+            "world_search_btn": world_search_btn,
+            "world_list": world_list,
+            
+            # 全局操作
+            "role_export_btn": role_export_btn,
+            "role_import_btn": role_import_btn,
+            "role_preview_btn": role_preview_btn,
+            "role_context_display": role_context_display
+        }
     
     def create_memory_config(self) -> Dict[str, Any]:
         """创建记忆管理组件"""
@@ -226,7 +349,7 @@ class ConfigPanel:
         agent_components = self.create_agent_config()
         mcp_components = self.create_mcp_server_config()
         tools_components = self.create_tools_config()
-        self.create_role_info_section()
+        role_components = self.create_role_info_section()
         memory_components = self.create_memory_config()
         file_components = self.create_file_management()
         config_status = self.create_config_status()
@@ -237,6 +360,7 @@ class ConfigPanel:
         all_components.update(agent_components)
         all_components.update(mcp_components)
         all_components.update(tools_components)
+        all_components.update(role_components)
         all_components.update(memory_components)
         all_components.update(file_components)
         all_components["config_status"] = config_status

@@ -555,6 +555,302 @@ class EventHandlers:
             error_html = f"<div style='color: red;'>❌ 刷新MCP服务器失败: {str(e)}</div>"
             return error_html, gr.update(choices=[])
     
+    # === 角色信息管理方法 ===
+    
+    async def on_role_profile_file_upload(self, file):
+        """处理角色信息文件上传"""
+        if not file:
+            return ""
+        
+        try:
+            with open(file.name, 'r', encoding='utf-8') as f:
+                content = f.read()
+            return content
+        except Exception as e:
+            logger.error(f"读取角色信息文件失败: {e}")
+            return f"读取文件失败: {str(e)}"
+    
+    async def on_role_save(self, role_name: str, role_content: str):
+        """保存角色信息"""
+        if not role_name or not role_name.strip():
+            return "<div style='color: red;'>❌ 请输入角色名称</div>"
+        
+        if not role_content or not role_content.strip():
+            return "<div style='color: red;'>❌ 请输入角色信息内容</div>"
+        
+        try:
+            if not self.app.tool_manager:
+                return "<div style='color: red;'>❌ 工具管理器未初始化</div>"
+            
+            # 调用MCP工具保存角色信息
+            result = await self.app.tool_manager.call_tool(
+                "role_info_create_profile",
+                {
+                    "name": role_name.strip(),
+                    "description": role_content.strip()
+                }
+            )
+            
+            if result.get('success', False):
+                return f"<div style='color: green;'>✅ 角色 '{role_name}' 保存成功</div>"
+            else:
+                error_msg = result.get('error', '未知错误')
+                return f"<div style='color: red;'>❌ 保存失败: {error_msg}</div>"
+                
+        except Exception as e:
+            logger.error(f"保存角色信息失败: {e}")
+            return f"<div style='color: red;'>❌ 保存失败: {str(e)}</div>"
+    
+    async def on_role_load(self, role_name: str):
+        """加载角色信息"""
+        if not role_name or not role_name.strip():
+            return "", "<div style='color: red;'>❌ 请输入角色名称</div>"
+        
+        try:
+            if not self.app.tool_manager:
+                return "", "<div style='color: red;'>❌ 工具管理器未初始化</div>"
+            
+            # 调用MCP工具查询角色信息
+            result = await self.app.tool_manager.call_tool(
+                "role_info_query_profile",
+                {"name": role_name.strip()}
+            )
+            
+            if result.get('success', False):
+                profile_data = result.get('result', {})
+                content = profile_data.get('description', '')
+                return content, f"<div style='color: green;'>✅ 角色 '{role_name}' 加载成功</div>"
+            else:
+                return "", f"<div style='color: orange;'>⚠️ 未找到角色 '{role_name}'</div>"
+                
+        except Exception as e:
+            logger.error(f"加载角色信息失败: {e}")
+            return "", f"<div style='color: red;'>❌ 加载失败: {str(e)}</div>"
+    
+    async def on_knowledge_file_upload(self, files):
+        """处理知识文件上传"""
+        if not files:
+            return ""
+        
+        try:
+            combined_content = []
+            for file in files:
+                with open(file.name, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    combined_content.append(f"=== {file.name} ===\n{content}")
+            
+            return "\n\n".join(combined_content)
+        except Exception as e:
+            logger.error(f"读取知识文件失败: {e}")
+            return f"读取文件失败: {str(e)}"
+    
+    async def on_knowledge_add(self, role_name: str, category: str, content: str):
+        """添加角色知识"""
+        if not role_name or not role_name.strip():
+            return "<div style='color: red;'>❌ 请先输入角色名称</div>", ""
+        
+        if not content or not content.strip():
+            return "<div style='color: red;'>❌ 请输入知识内容</div>", ""
+        
+        try:
+            if not self.app.tool_manager:
+                return "<div style='color: red;'>❌ 工具管理器未初始化</div>", ""
+            
+            # 调用MCP工具添加知识
+            result = await self.app.tool_manager.call_tool(
+                "role_info_add_knowledge",
+                {
+                    "role_name": role_name.strip(),
+                    "category": category.strip() if category else "通用知识",
+                    "content": content.strip()
+                }
+            )
+            
+            if result.get('success', False):
+                # 刷新知识列表
+                knowledge_html = await self._get_knowledge_list(role_name.strip())
+                return f"<div style='color: green;'>✅ 知识添加成功</div>", knowledge_html
+            else:
+                error_msg = result.get('error', '未知错误')
+                return f"<div style='color: red;'>❌ 添加失败: {error_msg}</div>", ""
+                
+        except Exception as e:
+            logger.error(f"添加知识失败: {e}")
+            return f"<div style='color: red;'>❌ 添加失败: {str(e)}</div>", ""
+    
+    async def on_world_file_upload(self, files):
+        """处理世界书文件上传"""
+        if not files:
+            return ""
+        
+        try:
+            combined_content = []
+            for file in files:
+                with open(file.name, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    combined_content.append(f"=== {file.name} ===\n{content}")
+            
+            return "\n\n".join(combined_content)
+        except Exception as e:
+            logger.error(f"读取世界书文件失败: {e}")
+            return f"读取文件失败: {str(e)}"
+    
+    async def on_world_add(self, role_name: str, category: str, content: str):
+        """添加世界设定"""
+        if not role_name or not role_name.strip():
+            return "<div style='color: red;'>❌ 请先输入角色名称</div>", ""
+        
+        if not content or not content.strip():
+            return "<div style='color: red;'>❌ 请输入世界设定内容</div>", ""
+        
+        try:
+            if not self.app.tool_manager:
+                return "<div style='color: red;'>❌ 工具管理器未初始化</div>", ""
+            
+            # 调用MCP工具添加世界设定
+            result = await self.app.tool_manager.call_tool(
+                "role_info_add_world_entry",
+                {
+                    "category": category.strip() if category else "通用设定",
+                    "content": content.strip(),
+                    "metadata": {"role_name": role_name.strip()}
+                }
+            )
+            
+            if result.get('success', False):
+                # 刷新世界设定列表
+                world_html = await self._get_world_list(role_name.strip())
+                return f"<div style='color: green;'>✅ 世界设定添加成功</div>", world_html
+            else:
+                error_msg = result.get('error', '未知错误')
+                return f"<div style='color: red;'>❌ 添加失败: {error_msg}</div>", ""
+                
+        except Exception as e:
+            logger.error(f"添加世界设定失败: {e}")
+            return f"<div style='color: red;'>❌ 添加失败: {str(e)}</div>", ""
+    
+    async def on_role_preview_context(self, role_name: str):
+        """预览完整角色上下文"""
+        if not role_name or not role_name.strip():
+            return "<div style='color: red;'>❌ 请输入角色名称</div>", False
+        
+        try:
+            if not self.app.tool_manager:
+                return "<div style='color: red;'>❌ 工具管理器未初始化</div>", False
+            
+            # 调用MCP工具获取完整上下文
+            result = await self.app.tool_manager.call_tool(
+                "role_info_get_role_context",
+                {"role_name": role_name.strip()}
+            )
+            
+            if result.get('success', False):
+                context_data = result.get('result', {})
+                
+                # 格式化显示
+                context_html = f"""
+                <div style='font-family: monospace; padding: 15px; border: 1px solid #ddd; border-radius: 8px; background-color: #f9f9f9;'>
+                    <h3>🎭 {role_name} - 完整角色上下文</h3>
+                    
+                    <div style='margin: 10px 0;'>
+                        <h4>👤 角色信息:</h4>
+                        <div style='background-color: #fff; padding: 10px; border-radius: 4px; margin: 5px 0;'>
+                            {context_data.get('profile', {}).get('description', '暂无角色信息')}
+                        </div>
+                    </div>
+                    
+                    <div style='margin: 10px 0;'>
+                        <h4>📚 角色知识 ({len(context_data.get('knowledge', []))} 条):</h4>
+                        <div style='background-color: #fff; padding: 10px; border-radius: 4px; margin: 5px 0;'>
+                """
+                
+                for knowledge in context_data.get('knowledge', []):
+                    context_html += f"<p><strong>{knowledge.get('category', '未分类')}:</strong> {knowledge.get('content', '')[:100]}{'...' if len(knowledge.get('content', '')) > 100 else ''}</p>"
+                
+                context_html += """
+                        </div>
+                    </div>
+                    
+                    <div style='margin: 10px 0;'>
+                        <h4>🌍 世界设定 ({} 条):</h4>
+                        <div style='background-color: #fff; padding: 10px; border-radius: 4px; margin: 5px 0;'>
+                """.format(len(context_data.get('world_entries', [])))
+                
+                for world_entry in context_data.get('world_entries', []):
+                    context_html += f"<p><strong>{world_entry.get('category', '未分类')}:</strong> {world_entry.get('content', '')[:100]}{'...' if len(world_entry.get('content', '')) > 100 else ''}</p>"
+                
+                context_html += """
+                        </div>
+                    </div>
+                </div>
+                """
+                
+                return context_html, True
+            else:
+                return f"<div style='color: red;'>❌ 获取上下文失败: {result.get('error', '未知错误')}</div>", False
+                
+        except Exception as e:
+            logger.error(f"预览角色上下文失败: {e}")
+            return f"<div style='color: red;'>❌ 预览失败: {str(e)}</div>", False
+    
+    async def _get_knowledge_list(self, role_name: str) -> str:
+        """获取知识列表HTML"""
+        try:
+            result = await self.app.tool_manager.call_tool(
+                "role_info_search_knowledge",
+                {"role_name": role_name, "query": "", "max_results": 20}
+            )
+            
+            if result.get('success', False):
+                knowledge_list = result.get('result', [])
+                if not knowledge_list:
+                    return "<div style='color: #666;'>暂无知识条目</div>"
+                
+                html = "<div style='font-family: monospace;'>"
+                for idx, knowledge in enumerate(knowledge_list, 1):
+                    html += f"""
+                    <div style='margin: 5px 0; padding: 8px; border: 1px solid #ddd; border-radius: 4px; background-color: #f9f9f9;'>
+                        <strong>{idx}. {knowledge.get('category', '未分类')}</strong><br/>
+                        <small>{knowledge.get('content', '')[:150]}{'...' if len(knowledge.get('content', '')) > 150 else ''}</small>
+                    </div>
+                    """
+                html += "</div>"
+                return html
+            else:
+                return "<div style='color: #666;'>暂无知识条目</div>"
+                
+        except Exception as e:
+            return f"<div style='color: red;'>获取知识列表失败: {str(e)}</div>"
+    
+    async def _get_world_list(self, role_name: str) -> str:
+        """获取世界设定列表HTML"""
+        try:
+            result = await self.app.tool_manager.call_tool(
+                "role_info_search_world",
+                {"query": role_name, "max_results": 20}
+            )
+            
+            if result.get('success', False):
+                world_list = result.get('result', [])
+                if not world_list:
+                    return "<div style='color: #666;'>暂无世界设定</div>"
+                
+                html = "<div style='font-family: monospace;'>"
+                for idx, world_entry in enumerate(world_list, 1):
+                    html += f"""
+                    <div style='margin: 5px 0; padding: 8px; border: 1px solid #ddd; border-radius: 4px; background-color: #f9f9f9;'>
+                        <strong>{idx}. {world_entry.get('category', '未分类')}</strong><br/>
+                        <small>{world_entry.get('content', '')[:150]}{'...' if len(world_entry.get('content', '')) > 150 else ''}</small>
+                    </div>
+                    """
+                html += "</div>"
+                return html
+            else:
+                return "<div style='color: #666;'>暂无世界设定</div>"
+                
+        except Exception as e:
+            return f"<div style='color: red;'>获取世界设定列表失败: {str(e)}</div>"
+    
     async def on_stream_chat(self, message: str, history: List[Dict[str, str]]):
         """处理流式聊天"""
         import gradio as gr
