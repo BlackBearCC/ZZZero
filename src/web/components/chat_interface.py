@@ -20,7 +20,7 @@ class ChatInterface:
             elem_classes=["chat-window"],
             type="messages",
             render_markdown=True,
-            sanitize_html=False
+            sanitize_html=True
         )
         
         # 动态表格显示区域

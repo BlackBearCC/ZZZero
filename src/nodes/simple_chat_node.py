@@ -74,16 +74,11 @@ class SimpleChatNode(BaseNode):
         
         # 添加记忆上下文
         if memory_context:
-            base_prompt += f"""=== 记忆上下文 ===
-{memory_context}
-
-"""
+            base_prompt += f"=== 记忆上下文 ===\n{memory_context}\n\n"
         
-        base_prompt += """你是一个有用的AI助手。请根据你的知识回答用户的问题。
-
-如果你不确定答案，请诚实地说明你不知道，而不是编造信息。
-请提供清晰、有帮助的回复。
-
-如果有记忆上下文，请充分利用这些历史信息为用户提供个性化的回复。"""
+        base_prompt += "你是一个有用的AI助手。请根据你的知识回答用户的问题。\n"
+        base_prompt += "如果你不确定答案，请诚实地说明你不知道，而不是编造信息。\n"
+        base_prompt += "请提供清晰、有帮助的回复。\n"
+        base_prompt += "如果有记忆上下文，请充分利用这些历史信息为用户提供个性化的回复。"
         
         return base_prompt 

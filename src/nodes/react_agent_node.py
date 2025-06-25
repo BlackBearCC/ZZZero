@@ -87,10 +87,7 @@ class ReactAgentNode(BaseNode):
         
         # 添加记忆上下文
         if memory_context:
-            base_prompt += f"""=== 记忆上下文 ===
-{memory_context}
-
-"""
+            base_prompt += f"=== 记忆上下文 ===\n{memory_context}\n\n"
         
         # 获取工具描述
         tools_desc = ""
@@ -103,41 +100,34 @@ class ReactAgentNode(BaseNode):
         
         # 标准ReAct提示词模板 - 基于LangChain ReAct模板
         if tools_desc:
-            base_prompt += f"""你是一个有用的AI助手。你可以使用以下工具来回答问题：
-
-{tools_desc}
-
-使用以下格式进行推理和行动：
-
-Question: 你需要回答的问题
-Thought: 你应该思考要做什么
-Action: 要采取的行动，应该是 [{', '.join(tool_names)}] 中的一个
-Action Input: 行动的输入
-Observation: 行动的结果
-... (这个 Thought/Action/Action Input/Observation 可以重复N次)
-Thought: 我现在知道最终答案了
-Final Answer: 对原始问题的最终答案
-
-重要规则：
-1. 如果你有足够信息回答问题，直接给出 Final Answer
-2. 如果需要更多信息，使用可用的工具
-3. 每次只使用一个工具
-4. 仔细分析工具的返回结果
-5. 充分利用记忆上下文中的历史信息
-6. 如需角色扮演，可使用role_info工具查询角色信息：
-   - role_info_query_profile: 查询角色人设
-   - role_info_search_knowledge: 搜索角色知识库
-   - role_info_get_role_context: 获取完整角色上下文
-7. 如果用户要求创建或管理角色信息，使用相应的role_info工具
-
-开始！"""
+            base_prompt += f"你是一个有用的AI助手。你可以使用以下工具来回答问题：\n\n{tools_desc}\n\n"
+            base_prompt += "使用以下格式进行推理和行动：\n\n"
+            base_prompt += "Question: 你需要回答的问题\n"
+            base_prompt += "Thought: 你应该思考要做什么\n"
+            base_prompt += f"Action: 要采取的行动，应该是 [{', '.join(tool_names)}] 中的一个\n"
+            base_prompt += "Action Input: 行动的输入\n"
+            base_prompt += "Observation: 行动的结果\n"
+            base_prompt += "... (这个 Thought/Action/Action Input/Observation 可以重复N次)\n"
+            base_prompt += "Thought: 我现在知道最终答案了\n"
+            base_prompt += "Final Answer: 对原始问题的最终答案\n\n"
+            base_prompt += "重要规则：\n"
+            base_prompt += "1. 如果你有足够信息回答问题，直接给出 Final Answer\n"
+            base_prompt += "2. 如果需要更多信息，使用可用的工具\n"
+            base_prompt += "3. 每次只使用一个工具\n"
+            base_prompt += "4. 仔细分析工具的返回结果\n"
+            base_prompt += "5. 充分利用记忆上下文中的历史信息\n"
+            base_prompt += "6. 如需角色扮演，可使用role_info工具查询角色信息：\n"
+            base_prompt += "   - role_info_query_profile: 查询角色人设\n"
+            base_prompt += "   - role_info_search_knowledge: 搜索角色知识库\n"
+            base_prompt += "   - role_info_get_role_context: 获取完整角色上下文\n"
+            base_prompt += "7. 如果用户要求创建或管理角色信息，使用相应的role_info工具\n"
+            base_prompt += "8. 回复时保持简洁，避免过多空行\n\n"
+            base_prompt += "开始！"
         else:
-            base_prompt += """你是一个有用的AI助手。请根据你的知识回答用户的问题。
-
-如果你不确定答案，请诚实地说明你不知道，而不是编造信息。
-请提供清晰、有帮助的回复。
-
-如果有记忆上下文或角色设定，请充分利用这些信息为用户提供个性化的回复。"""
+            base_prompt += "你是一个有用的AI助手。请根据你的知识回答用户的问题。\n\n"
+            base_prompt += "如果你不确定答案，请诚实地说明你不知道，而不是编造信息。\n"
+            base_prompt += "请提供清晰、有帮助的回复。\n\n"
+            base_prompt += "如果有记忆上下文或角色设定，请充分利用这些信息为用户提供个性化的回复。"
         
         return base_prompt
     
