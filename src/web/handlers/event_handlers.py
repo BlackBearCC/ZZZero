@@ -920,12 +920,12 @@ class EventHandlers:
         try:
             # 检查是否有Agent
             if not self.app.current_agent:
-                yield history + [{"role": "assistant", "content": "❌ Agent未初始化，请先配置LLM"}], "", gr.update(value=[], headers=None, visible=False), "", ""
+                yield history + [{"role": "assistant", "content": "❌ Agent未初始化，请先配置LLM"}], "", gr.update(value=[], headers=None, visible=False), "", "", gr.update(interactive=True)
                 return
             
             # 检查是否为空消息
             if not message or not message.strip():
-                yield history, message, gr.update(value=[], headers=None, visible=False), "", ""
+                yield history, message, gr.update(value=[], headers=None, visible=False), "", "", gr.update(interactive=True)
                 return
             
             # 添加用户消息到历史
@@ -938,56 +938,37 @@ class EventHandlers:
             # 初始化追踪数据
             full_response = ""
             tool_calls = []
-            chunk_buffer = ""  # 用于缓冲字符
-            last_update_time = time.time()
-            update_interval = 0.1  # 100ms更新一次，避免更新过于频繁
-            min_chars_for_update = 5  # 至少积累5个字符再更新
             
             # 启动流式处理
             async for chunk in self.app.current_agent.stream_run(message):
                 if chunk.get("type") == "text_chunk":
-                    # 获取新的文本内容
+                    # 获取新的文本内容，立即更新
                     text_content = chunk.get("content", "")
-                    chunk_buffer += text_content
+                    full_response += text_content
                     
-                    # 控制更新频率，实现打字机效果
-                    current_time = time.time()
-                    if current_time - last_update_time >= update_interval or len(chunk_buffer) > min_chars_for_update:
-                        # 将缓冲区内容添加到完整响应
-                        full_response += chunk_buffer
-                        chunk_buffer = ""
-                        last_update_time = current_time
-                        
-                        # 处理文本：提取表格和高亮关键词，标记为流式状态
-                        processed_text, tables_data = self.app.text_processor.highlight_agent_keywords(full_response, is_streaming=True)
-                        
-                        # 更新助手回复内容
-                        assistant_reply["content"] = processed_text
-                        
-                        # 准备表格更新
-                        table_update = self.app.text_processor.prepare_table_update(tables_data)
-                        
-                        # 生成指标
-                        metrics_text = self.app.text_processor.format_stream_metrics(tool_calls, full_response)
-                        
-                        # 实时更新界面
-                        yield new_history, "", table_update, metrics_text, ""
+                    # 处理文本：提取表格和高亮关键词，标记为流式状态
+                    processed_text, tables_data = self.app.text_processor.highlight_agent_keywords(full_response, is_streaming=True)
+                    
+                    # 更新助手回复内容
+                    assistant_reply["content"] = processed_text
+                    
+                    # 准备表格更新
+                    table_update = self.app.text_processor.prepare_table_update(tables_data)
+                    
+                    # 生成指标
+                    metrics_text = self.app.text_processor.format_stream_metrics(tool_calls, full_response)
+                    
+                    # 立即更新界面 - 保持输入框内容，禁用发送按钮
+                    yield new_history, message, table_update, metrics_text, "", gr.update(interactive=False)
                     
                 elif chunk.get("type") == "tool_result":
-                    # 处理剩余缓冲区内容
-                    if chunk_buffer:
-                        full_response += chunk_buffer
-                        chunk_buffer = ""
+                    # 处理剩余缓冲区内容 - 已移除缓冲机制
                     
-                    # 获取工具信息
+                    # 获取工具信息和结果
                     tool_name = chunk.get("tool_name", "未知工具")
                     tool_result_content = chunk.get("content", "")
                     
-                    # 先显示工具执行完成状态
-                    tool_status = self.app.text_processor.format_tool_execution_status(tool_name, "completed")
-                    full_response += f"\n{tool_status}\n"
-                    
-                    # 添加工具执行结果
+                    # 直接添加工具执行结果，不添加额外的状态信息
                     full_response += tool_result_content
                     
                     # 记录工具调用
@@ -1010,20 +991,13 @@ class EventHandlers:
                     # 生成指标
                     metrics_text = self.app.text_processor.format_stream_metrics(tool_calls, full_response)
                     
-                    yield new_history, "", table_update, metrics_text, ""
+                    yield new_history, message, table_update, metrics_text, "", gr.update(interactive=False)
                     
                 elif chunk.get("type") == "tool_call":
-                    # 处理剩余缓冲区内容
-                    if chunk_buffer:
-                        full_response += chunk_buffer
-                        chunk_buffer = ""
+                    # 处理剩余缓冲区内容 - 已移除缓冲机制
                     
-                    # 显示工具执行状态
+                    # 记录工具调用，但不显示执行状态
                     tool_name = chunk.get("tool_name", "未知工具")
-                    tool_status = self.app.text_processor.format_tool_execution_status(tool_name, "executing")
-                    full_response += f"\n{tool_status}\n"
-                    
-                    # 记录工具调用
                     tool_call_info = {
                         "tool_name": tool_name,
                         "args": chunk.get("args", {}),
@@ -1031,16 +1005,11 @@ class EventHandlers:
                     }
                     tool_calls.append(tool_call_info)
                     
-                    # 处理文本：提取表格和高亮关键词
-                    processed_text, tables_data = self.app.text_processor.highlight_agent_keywords(full_response, is_streaming=True)
-                    
-                    # 更新助手回复内容
-                    assistant_reply["content"] = processed_text
-                    
                     # 生成指标
                     metrics_text = self.app.text_processor.format_stream_metrics(tool_calls, full_response)
                     
-                    yield new_history, "", gr.update(), metrics_text, ""
+                    # 不更新文本内容，只更新指标
+                    yield new_history, message, gr.update(), metrics_text, "", gr.update(interactive=False)
                     
                 elif chunk.get("type") == "trace":
                     # 处理追踪信息
@@ -1052,7 +1021,7 @@ class EventHandlers:
                     # 生成流程图
                     flow_diagram = self.app.text_processor.generate_flow_diagram(trace_data)
                     
-                    yield new_history, "", gr.update(), "", flow_diagram
+                    yield new_history, message, gr.update(), "", flow_diagram, gr.update(interactive=False)
                     
                 elif chunk.get("type") in ["stream_error", "tool_error"]:
                     # 处理错误
@@ -1065,34 +1034,23 @@ class EventHandlers:
                     # 更新助手回复内容
                     assistant_reply["content"] = processed_text
                     
-                    yield new_history, "", gr.update(), f"错误: {chunk.get('error', '未知错误')}", ""
+                    yield new_history, message, gr.update(), f"错误: {chunk.get('error', '未知错误')}", "", gr.update(interactive=False)
             
-            # 处理最后的缓冲区内容
-            if chunk_buffer:
-                full_response += chunk_buffer
-                
-                # 处理文本：提取表格和高亮关键词，不再是流式状态
-                processed_text, tables_data = self.app.text_processor.highlight_agent_keywords(full_response, is_streaming=False)
-                
-                # 更新助手回复内容
-                assistant_reply["content"] = processed_text
-                
-                # 准备表格更新
-                table_update = self.app.text_processor.prepare_table_update(tables_data)
-                
-                # 生成指标
-                metrics_text = self.app.text_processor.format_stream_metrics(tool_calls, full_response)
-                
-                yield new_history, "", table_update, metrics_text, ""
-            else:
-                # 即使没有缓冲区内容，也要最终更新一次以移除流式指示器
-                processed_text, tables_data = self.app.text_processor.highlight_agent_keywords(full_response, is_streaming=False)
-                assistant_reply["content"] = processed_text + '<span class="response-complete"> ✨ 回复完成</span>'
-                
-                table_update = self.app.text_processor.prepare_table_update(tables_data)
-                metrics_text = self.app.text_processor.format_stream_metrics(tool_calls, full_response)
-                
-                yield new_history, "", table_update, metrics_text, ""
+            # 流式处理完成，最终更新
+            # 处理文本：提取表格和高亮关键词，不再是流式状态
+            processed_text, tables_data = self.app.text_processor.highlight_agent_keywords(full_response, is_streaming=False)
+            
+            # 更新助手回复内容，添加完成标记
+            assistant_reply["content"] = processed_text + '<span class="response-complete"> ✨ 回复完成</span>'
+            
+            # 准备表格更新
+            table_update = self.app.text_processor.prepare_table_update(tables_data)
+            
+            # 生成指标
+            metrics_text = self.app.text_processor.format_stream_metrics(tool_calls, full_response)
+            
+            # 最后清空输入框并启用发送按钮
+            yield new_history, "", table_update, metrics_text, "", gr.update(interactive=True)
             
         except Exception as e:
             error_msg = f"❌ 聊天处理失败: {str(e)}"
@@ -1104,4 +1062,4 @@ class EventHandlers:
                 {"role": "assistant", "content": error_msg}
             ]
             
-            yield error_history, "", gr.update(value=[], headers=None, visible=False), f"错误: {str(e)}", "" 
+            yield error_history, "", gr.update(value=[], headers=None, visible=False), f"错误: {str(e)}", "", gr.update(interactive=True) 

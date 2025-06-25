@@ -318,7 +318,8 @@ class AgentApp:
                     chat_components['msg_input'], 
                     chat_components.get('dynamic_table'), 
                     chat_components.get('metrics_display'), 
-                    chat_components.get('flow_diagram')
+                    chat_components.get('flow_diagram'),
+                    chat_components.get('send_btn')  # 添加发送按钮控制
                 ]
             )
         
@@ -334,7 +335,8 @@ class AgentApp:
                     chat_components['msg_input'], 
                     chat_components.get('dynamic_table'), 
                     chat_components.get('metrics_display'), 
-                    chat_components.get('flow_diagram')
+                    chat_components.get('flow_diagram'),
+                    chat_components.get('send_btn')  # 添加发送按钮控制
                 ]
             )
         
