@@ -393,6 +393,7 @@ class RoleInfoCRUDServer(StdioMCPServer):
                 type="object",
                 properties={
                     "profile_id": {"type": "string", "description": "指定角色ID"},
+                    "role_name": {"type": "string", "description": "按角色名称查询"},
                     "keywords": {"type": "array", "items": {"type": "string"}, "description": "搜索关键词"},
                     "knowledge_limit": {"type": "integer", "description": "知识库搜索限制", "default": 3},
                     "world_limit": {"type": "integer", "description": "世界书搜索限制", "default": 3}
@@ -928,6 +929,7 @@ class RoleInfoCRUDServer(StdioMCPServer):
     async def _get_role_context(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """获取完整的角色上下文"""
         profile_id = args.get("profile_id")
+        role_name = args.get("role_name")
         keywords = args.get("keywords", [])
         knowledge_limit = args.get("knowledge_limit", 3)
         world_limit = args.get("world_limit", 3)
@@ -940,11 +942,29 @@ class RoleInfoCRUDServer(StdioMCPServer):
                 context["profile"] = self.profiles[profile_id].to_dict()
             else:
                 return {"error": f"角色ID '{profile_id}' 不存在"}
+        elif role_name:
+            # 按名称查找角色
+            found_profile = None
+            for profile in self.profiles.values():
+                if profile.name.lower() == role_name.lower():
+                    found_profile = profile
+                    break
+            
+            if found_profile:
+                context["profile"] = found_profile.to_dict()
+                # 自动添加角色名称作为搜索关键词
+                if role_name not in keywords:
+                    keywords.append(role_name)
+            else:
+                return {"error": f"角色名称 '{role_name}' 不存在"}
         else:
             # 如果没有指定，获取最新的角色
             if self.profiles:
                 latest_profile = max(self.profiles.values(), key=lambda x: x.updated_at)
                 context["profile"] = latest_profile.to_dict()
+                # 自动添加角色名称作为搜索关键词
+                if latest_profile.name not in keywords:
+                    keywords.append(latest_profile.name)
         
         # 搜索相关知识
         if keywords:

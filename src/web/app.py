@@ -575,7 +575,7 @@ class AgentApp:
         # 搜索知识按钮
         if config_components.get('knowledge_search_btn'):
             config_components['knowledge_search_btn'].click(
-                fn=lambda role_name: self.event_handlers._get_knowledge_list(role_name),
+                fn=self.event_handlers._get_knowledge_list,
                 inputs=[config_components.get('role_name')],
                 outputs=[config_components.get('knowledge_list')]
             )
@@ -606,16 +606,16 @@ class AgentApp:
         # 搜索世界设定按钮
         if config_components.get('world_search_btn'):
             config_components['world_search_btn'].click(
-                fn=lambda role_name: self.event_handlers._get_world_list(role_name),
+                fn=self.event_handlers._get_world_list,
                 inputs=[config_components.get('role_name')],
                 outputs=[config_components.get('world_list')]
             )
         
         # 预览完整上下文按钮
         if config_components.get('role_preview_btn'):
-            def show_context(role_name):
+            async def show_context(role_name):
                 import gradio as gr
-                content, visible = self.event_handlers.on_role_preview_context(role_name)
+                content, visible = await self.event_handlers.on_role_preview_context(role_name)
                 return content, gr.update(visible=visible)
             
             config_components['role_preview_btn'].click(

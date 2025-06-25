@@ -12,10 +12,49 @@ CUSTOM_CSS = """
     border: 1px solid #e0e0e0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
 }
+
+/* 打字机效果样式 */
+.typing-cursor {
+    display: inline-block;
+    width: 2px;
+    height: 1.2em;
+    background-color: #333;
+    margin-left: 2px;
+    animation: blink 1s infinite;
+    vertical-align: text-bottom;
+}
+
+@keyframes blink {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0; }
+}
+
+/* 流式文本动画 */
+.streaming-text {
+    animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* 新文字高亮效果 */
+.new-text-highlight {
+    background-color: rgba(34, 197, 94, 0.1);
+    animation: highlightFade 2s ease-out forwards;
+}
+
+@keyframes highlightFade {
+    0% { background-color: rgba(34, 197, 94, 0.3); }
+    100% { background-color: transparent; }
+}
+
 .chat-window .message {
     padding: 10px;
     margin: 5px;
     border-radius: 10px;
+    transition: all 0.2s ease-in-out;
 }
 .chat-window .user {
     background-color: #e3f2fd;
@@ -165,51 +204,32 @@ CUSTOM_CSS = """
     margin: 2px 0 !important;
 }
 
-/* highlight.js 深色主题适配 */
-.chat-window .hljs {
-    background: #0d1117 !important;
-    color: #e6edf3 !important;
-}
-
-/* 语言标签样式 */
-.chat-window pre::before {
-    content: attr(data-language);
-    position: absolute;
-    top: 8px;
-    right: 12px;
-    background: rgba(255, 255, 255, 0.1);
-    color: #e6edf3;
-    padding: 2px 6px;
-    border-radius: 3px;
-    font-size: 11px;
-    text-transform: uppercase;
-    font-weight: bold;
-}
-
 /* 让消息内容可以正确显示HTML */
 .chat-window .message-content {
     white-space: pre-wrap;
     word-wrap: break-word;
-    line-height: 1.6 !important;
+    line-height: 1.4 !important;
+    margin: 0 !important;
+    padding: 0 !important;
 }
 
 /* 优化消息内容的段落间距 */
 .chat-window .message p {
-    margin: 0.5em 0 !important;
-    line-height: 1.6 !important;
+    margin: 0.3em 0 !important;
+    line-height: 1.4 !important;
 }
 
-.chat-window .message p:first-child {
-    margin-top: 0 !important;
+/* 修复Gradio聊天消息的默认样式 */
+.chat-window .message {
+    line-height: 1.4 !important;
+    margin: 8px 0 !important;
 }
 
-.chat-window .message p:last-child {
-    margin-bottom: 0 !important;
-}
-
-/* 减少空行的高度 */
-.chat-window .message br {
-    line-height: 0.8 !important;
+/* 确保内容紧凑显示 */
+.chat-window .message > div {
+    line-height: 1.4 !important;
+    margin: 0 !important;
+    padding: 0 !important;
 }
 
 /* 优化列表项间距 */
@@ -282,6 +302,95 @@ CUSTOM_CSS = """
         padding: 6px 4px !important;
         font-size: 11px !important;
     }
+}
+
+/* 流式输入指示器 */
+.streaming-indicator {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: #22c55e;
+    margin-left: 8px;
+    animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+    0% {
+        transform: scale(1);
+        opacity: 1;
+    }
+    50% {
+        transform: scale(1.2);
+        opacity: 0.7;
+    }
+    100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+/* 工具执行状态指示器 */
+.tool-executing {
+    display: inline-block;
+    padding: 2px 8px;
+    background-color: rgba(245, 158, 11, 0.1);
+    color: #f59e0b;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: bold;
+    margin: 2px 4px;
+    animation: bounce 1s infinite alternate;
+}
+
+/* 工具执行错误指示器 */
+.tool-error {
+    display: inline-block;
+    padding: 2px 8px;
+    background-color: rgba(220, 38, 38, 0.1);
+    color: #dc2626;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: bold;
+    margin: 2px 4px;
+}
+
+@keyframes bounce {
+    from { transform: translateY(0px); }
+    to { transform: translateY(-3px); }
+}
+
+/* 响应完成指示器 */
+.response-complete {
+    color: #22c55e;
+    font-weight: bold;
+    opacity: 0;
+    animation: fadeInComplete 0.5s ease-in forwards;
+}
+
+@keyframes fadeInComplete {
+    to { opacity: 1; }
+}
+
+/* highlight.js 深色主题适配 */
+.chat-window .hljs {
+    background: #0d1117 !important;
+    color: #e6edf3 !important;
+}
+
+/* 语言标签样式 */
+.chat-window pre::before {
+    content: attr(data-language);
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    background: rgba(255, 255, 255, 0.1);
+    color: #e6edf3;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 11px;
+    text-transform: uppercase;
+    font-weight: bold;
 }
 """
 

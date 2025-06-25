@@ -5,6 +5,8 @@ import asyncio
 import logging
 from typing import List, Dict, Any, Optional, Tuple
 import gradio as gr
+import re
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +22,39 @@ class EventHandlers:
             app_instance: AgentApp实例，用于访问应用状态和方法
         """
         self.app = app_instance
+        
+        # 预编译正则表达式（提高性能）
+        self.llm_config_pattern = re.compile(r'provider|model|temperature|agent_type|iterations|tools|servers')
+        self.batch_config_pattern = re.compile(r'batch|csv|concurrent|processing')
+    
+    def _handle_tool_result(self, result) -> tuple:
+        """统一处理ToolResult对象
+        
+        Returns:
+            tuple: (success: bool, data: dict, error_msg: str)
+        """
+        if hasattr(result, 'success') and hasattr(result, 'result'):
+            # 这是一个ToolResult对象
+            if result.success and isinstance(result.result, dict):
+                result_data = result.result
+                if result_data.get('success', False):
+                    return True, result_data, None
+                else:
+                    error_msg = result_data.get('error', '未知错误')
+                    return False, result_data, error_msg
+            else:
+                error_msg = getattr(result, 'error', '未知错误')
+                return False, {}, error_msg
+        elif hasattr(result, 'content'):
+            result_data = result.content
+        else:
+            result_data = result
+        
+        if isinstance(result_data, dict) and result_data.get('success', False):
+            return True, result_data, None
+        else:
+            error_msg = result_data.get('error', '未知错误') if isinstance(result_data, dict) else str(result_data)
+            return False, result_data if isinstance(result_data, dict) else {}, error_msg
     
     async def on_config_change(self, *args):
         """配置变化时自动应用"""
@@ -587,14 +622,17 @@ class EventHandlers:
                 "role_info_create_profile",
                 {
                     "name": role_name.strip(),
-                    "description": role_content.strip()
+                    "content": role_content.strip()  # 修改为content参数
                 }
             )
             
-            if result.get('success', False):
-                return f"<div style='color: green;'>✅ 角色 '{role_name}' 保存成功</div>"
+            # 处理ToolResult对象
+            success, result_data, error_msg = self._handle_tool_result(result)
+            
+            if success:
+                message = result_data.get('message', f"角色 '{role_name}' 保存成功")
+                return f"<div style='color: green;'>{message}</div>"
             else:
-                error_msg = result.get('error', '未知错误')
                 return f"<div style='color: red;'>❌ 保存失败: {error_msg}</div>"
                 
         except Exception as e:
@@ -616,12 +654,20 @@ class EventHandlers:
                 {"name": role_name.strip()}
             )
             
-            if result.get('success', False):
-                profile_data = result.get('result', {})
-                content = profile_data.get('description', '')
-                return content, f"<div style='color: green;'>✅ 角色 '{role_name}' 加载成功</div>"
+            # 处理ToolResult对象
+            success, result_data, error_msg = self._handle_tool_result(result)
+            
+            if success:
+                profiles = result_data.get('profiles', [])
+                if profiles:
+                    # 取第一个匹配的角色
+                    profile_data = profiles[0]
+                    content = profile_data.get('content', '')
+                    return content, f"<div style='color: green;'>✅ 角色 '{role_name}' 加载成功</div>"
+                else:
+                    return "", f"<div style='color: orange;'>⚠️ 未找到角色 '{role_name}'</div>"
             else:
-                return "", f"<div style='color: orange;'>⚠️ 未找到角色 '{role_name}'</div>"
+                return "", f"<div style='color: red;'>❌ 加载失败: {error_msg}</div>"
                 
         except Exception as e:
             logger.error(f"加载角色信息失败: {e}")
@@ -660,18 +706,21 @@ class EventHandlers:
             result = await self.app.tool_manager.call_tool(
                 "role_info_add_knowledge",
                 {
-                    "role_name": role_name.strip(),
-                    "category": category.strip() if category else "通用知识",
-                    "content": content.strip()
+                    "keyword": category.strip() if category else "通用知识",
+                    "content": content.strip(),
+                    "description": f"角色 {role_name.strip()} 的知识"
                 }
             )
             
-            if result.get('success', False):
+            # 处理ToolResult对象
+            success, result_data, error_msg = self._handle_tool_result(result)
+            
+            if success:
                 # 刷新知识列表
                 knowledge_html = await self._get_knowledge_list(role_name.strip())
-                return f"<div style='color: green;'>✅ 知识添加成功</div>", knowledge_html
+                status_msg = f"<div style='color: green;'>✅ 知识添加成功</div>"
+                return status_msg, knowledge_html
             else:
-                error_msg = result.get('error', '未知错误')
                 return f"<div style='color: red;'>❌ 添加失败: {error_msg}</div>", ""
                 
         except Exception as e:
@@ -711,18 +760,22 @@ class EventHandlers:
             result = await self.app.tool_manager.call_tool(
                 "role_info_add_world_entry",
                 {
-                    "category": category.strip() if category else "通用设定",
+                    "concept": category.strip() if category else "通用设定",
                     "content": content.strip(),
-                    "metadata": {"role_name": role_name.strip()}
+                    "category": "世界书",
+                    "keywords": [role_name.strip()]
                 }
             )
             
-            if result.get('success', False):
+            # 处理ToolResult对象
+            success, result_data, error_msg = self._handle_tool_result(result)
+            
+            if success:
                 # 刷新世界设定列表
                 world_html = await self._get_world_list(role_name.strip())
-                return f"<div style='color: green;'>✅ 世界设定添加成功</div>", world_html
+                status_msg = f"<div style='color: green;'>✅ 世界设定添加成功</div>"
+                return status_msg, world_html
             else:
-                error_msg = result.get('error', '未知错误')
                 return f"<div style='color: red;'>❌ 添加失败: {error_msg}</div>", ""
                 
         except Exception as e:
@@ -744,8 +797,11 @@ class EventHandlers:
                 {"role_name": role_name.strip()}
             )
             
-            if result.get('success', False):
-                context_data = result.get('result', {})
+            # 处理ToolResult对象
+            success, result_data, error_msg = self._handle_tool_result(result)
+            
+            if success:
+                context_data = result_data.get('context', {})
                 
                 # 格式化显示
                 context_html = f"""
@@ -787,7 +843,7 @@ class EventHandlers:
                 
                 return context_html, True
             else:
-                return f"<div style='color: red;'>❌ 获取上下文失败: {result.get('error', '未知错误')}</div>", False
+                return f"<div style='color: red;'>❌ 获取上下文失败: {error_msg}</div>", False
                 
         except Exception as e:
             logger.error(f"预览角色上下文失败: {e}")
@@ -798,11 +854,14 @@ class EventHandlers:
         try:
             result = await self.app.tool_manager.call_tool(
                 "role_info_search_knowledge",
-                {"role_name": role_name, "query": "", "max_results": 20}
+                {"query": role_name, "limit": 20}
             )
             
-            if result.get('success', False):
-                knowledge_list = result.get('result', [])
+            # 处理ToolResult对象
+            success, result_data, error_msg = self._handle_tool_result(result)
+            
+            if success:
+                knowledge_list = result_data.get('results', [])
                 if not knowledge_list:
                     return "<div style='color: #666;'>暂无知识条目</div>"
                 
@@ -810,7 +869,7 @@ class EventHandlers:
                 for idx, knowledge in enumerate(knowledge_list, 1):
                     html += f"""
                     <div style='margin: 5px 0; padding: 8px; border: 1px solid #ddd; border-radius: 4px; background-color: #f9f9f9;'>
-                        <strong>{idx}. {knowledge.get('category', '未分类')}</strong><br/>
+                        <strong>{idx}. {knowledge.get('keyword', '未分类')}</strong><br/>
                         <small>{knowledge.get('content', '')[:150]}{'...' if len(knowledge.get('content', '')) > 150 else ''}</small>
                     </div>
                     """
@@ -827,11 +886,14 @@ class EventHandlers:
         try:
             result = await self.app.tool_manager.call_tool(
                 "role_info_search_world",
-                {"query": role_name, "max_results": 20}
+                {"query": role_name, "limit": 20}
             )
             
-            if result.get('success', False):
-                world_list = result.get('result', [])
+            # 处理ToolResult对象
+            success, result_data, error_msg = self._handle_tool_result(result)
+            
+            if success:
+                world_list = result_data.get('results', [])
                 if not world_list:
                     return "<div style='color: #666;'>暂无世界设定</div>"
                 
@@ -839,7 +901,7 @@ class EventHandlers:
                 for idx, world_entry in enumerate(world_list, 1):
                     html += f"""
                     <div style='margin: 5px 0; padding: 8px; border: 1px solid #ddd; border-radius: 4px; background-color: #f9f9f9;'>
-                        <strong>{idx}. {world_entry.get('category', '未分类')}</strong><br/>
+                        <strong>{idx}. {world_entry.get('concept', '未分类')}</strong><br/>
                         <small>{world_entry.get('content', '')[:150]}{'...' if len(world_entry.get('content', '')) > 150 else ''}</small>
                     </div>
                     """
@@ -852,7 +914,7 @@ class EventHandlers:
             return f"<div style='color: red;'>获取世界设定列表失败: {str(e)}</div>"
     
     async def on_stream_chat(self, message: str, history: List[Dict[str, str]]):
-        """处理流式聊天"""
+        """处理流式聊天 - 实现打字机效果"""
         import gradio as gr
         
         try:
@@ -876,16 +938,68 @@ class EventHandlers:
             # 初始化追踪数据
             full_response = ""
             tool_calls = []
+            chunk_buffer = ""  # 用于缓冲字符
+            last_update_time = time.time()
+            update_interval = 0.1  # 100ms更新一次，避免更新过于频繁
+            min_chars_for_update = 5  # 至少积累5个字符再更新
             
             # 启动流式处理
             async for chunk in self.app.current_agent.stream_run(message):
-                if chunk.get("type") == "text":
-                    # 更新文本内容
+                if chunk.get("type") == "text_chunk":
+                    # 获取新的文本内容
                     text_content = chunk.get("content", "")
-                    full_response += text_content
+                    chunk_buffer += text_content
+                    
+                    # 控制更新频率，实现打字机效果
+                    current_time = time.time()
+                    if current_time - last_update_time >= update_interval or len(chunk_buffer) > min_chars_for_update:
+                        # 将缓冲区内容添加到完整响应
+                        full_response += chunk_buffer
+                        chunk_buffer = ""
+                        last_update_time = current_time
+                        
+                        # 处理文本：提取表格和高亮关键词，标记为流式状态
+                        processed_text, tables_data = self.app.text_processor.highlight_agent_keywords(full_response, is_streaming=True)
+                        
+                        # 更新助手回复内容
+                        assistant_reply["content"] = processed_text
+                        
+                        # 准备表格更新
+                        table_update = self.app.text_processor.prepare_table_update(tables_data)
+                        
+                        # 生成指标
+                        metrics_text = self.app.text_processor.format_stream_metrics(tool_calls, full_response)
+                        
+                        # 实时更新界面
+                        yield new_history, "", table_update, metrics_text, ""
+                    
+                elif chunk.get("type") == "tool_result":
+                    # 处理剩余缓冲区内容
+                    if chunk_buffer:
+                        full_response += chunk_buffer
+                        chunk_buffer = ""
+                    
+                    # 获取工具信息
+                    tool_name = chunk.get("tool_name", "未知工具")
+                    tool_result_content = chunk.get("content", "")
+                    
+                    # 先显示工具执行完成状态
+                    tool_status = self.app.text_processor.format_tool_execution_status(tool_name, "completed")
+                    full_response += f"\n{tool_status}\n"
+                    
+                    # 添加工具执行结果
+                    full_response += tool_result_content
+                    
+                    # 记录工具调用
+                    tool_call_info = {
+                        "tool_name": tool_name,
+                        "args": chunk.get("tool_input", {}),
+                        "result": chunk.get("tool_output", "")
+                    }
+                    tool_calls.append(tool_call_info)
                     
                     # 处理文本：提取表格和高亮关键词
-                    processed_text, tables_data = self.app.text_processor.highlight_agent_keywords(full_response)
+                    processed_text, tables_data = self.app.text_processor.highlight_agent_keywords(full_response, is_streaming=True)
                     
                     # 更新助手回复内容
                     assistant_reply["content"] = processed_text
@@ -896,19 +1010,32 @@ class EventHandlers:
                     # 生成指标
                     metrics_text = self.app.text_processor.format_stream_metrics(tool_calls, full_response)
                     
-                    # 生成节点状态（空的，因为还在处理中）
-                    node_status = []
-                    
                     yield new_history, "", table_update, metrics_text, ""
                     
                 elif chunk.get("type") == "tool_call":
+                    # 处理剩余缓冲区内容
+                    if chunk_buffer:
+                        full_response += chunk_buffer
+                        chunk_buffer = ""
+                    
+                    # 显示工具执行状态
+                    tool_name = chunk.get("tool_name", "未知工具")
+                    tool_status = self.app.text_processor.format_tool_execution_status(tool_name, "executing")
+                    full_response += f"\n{tool_status}\n"
+                    
                     # 记录工具调用
                     tool_call_info = {
-                        "tool_name": chunk.get("tool_name", ""),
+                        "tool_name": tool_name,
                         "args": chunk.get("args", {}),
                         "result": chunk.get("result", "")
                     }
                     tool_calls.append(tool_call_info)
+                    
+                    # 处理文本：提取表格和高亮关键词
+                    processed_text, tables_data = self.app.text_processor.highlight_agent_keywords(full_response, is_streaming=True)
+                    
+                    # 更新助手回复内容
+                    assistant_reply["content"] = processed_text
                     
                     # 生成指标
                     metrics_text = self.app.text_processor.format_stream_metrics(tool_calls, full_response)
@@ -926,15 +1053,46 @@ class EventHandlers:
                     flow_diagram = self.app.text_processor.generate_flow_diagram(trace_data)
                     
                     yield new_history, "", gr.update(), "", flow_diagram
+                    
+                elif chunk.get("type") in ["stream_error", "tool_error"]:
+                    # 处理错误
+                    error_content = chunk.get("content", "")
+                    full_response += error_content
+                    
+                    # 处理文本：提取表格和高亮关键词
+                    processed_text, tables_data = self.app.text_processor.highlight_agent_keywords(full_response)
+                    
+                    # 更新助手回复内容
+                    assistant_reply["content"] = processed_text
+                    
+                    yield new_history, "", gr.update(), f"错误: {chunk.get('error', '未知错误')}", ""
             
-            # 流处理完成，最终更新
-            processed_text, tables_data = self.app.text_processor.highlight_agent_keywords(full_response)
-            assistant_reply["content"] = processed_text
-            
-            table_update = self.app.text_processor.prepare_table_update(tables_data)
-            metrics_text = self.app.text_processor.format_stream_metrics(tool_calls, full_response)
-            
-            yield new_history, "", table_update, metrics_text, ""
+            # 处理最后的缓冲区内容
+            if chunk_buffer:
+                full_response += chunk_buffer
+                
+                # 处理文本：提取表格和高亮关键词，不再是流式状态
+                processed_text, tables_data = self.app.text_processor.highlight_agent_keywords(full_response, is_streaming=False)
+                
+                # 更新助手回复内容
+                assistant_reply["content"] = processed_text
+                
+                # 准备表格更新
+                table_update = self.app.text_processor.prepare_table_update(tables_data)
+                
+                # 生成指标
+                metrics_text = self.app.text_processor.format_stream_metrics(tool_calls, full_response)
+                
+                yield new_history, "", table_update, metrics_text, ""
+            else:
+                # 即使没有缓冲区内容，也要最终更新一次以移除流式指示器
+                processed_text, tables_data = self.app.text_processor.highlight_agent_keywords(full_response, is_streaming=False)
+                assistant_reply["content"] = processed_text + '<span class="response-complete"> ✨ 回复完成</span>'
+                
+                table_update = self.app.text_processor.prepare_table_update(tables_data)
+                metrics_text = self.app.text_processor.format_stream_metrics(tool_calls, full_response)
+                
+                yield new_history, "", table_update, metrics_text, ""
             
         except Exception as e:
             error_msg = f"❌ 聊天处理失败: {str(e)}"

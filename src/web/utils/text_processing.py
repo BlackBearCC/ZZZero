@@ -73,7 +73,7 @@ class TextProcessor:
         return text, tables_data
     
     @staticmethod
-    def highlight_agent_keywords(text: str) -> Tuple[str, List[Dict]]:
+    def highlight_agent_keywords(text: str, is_streaming: bool = False) -> Tuple[str, List[Dict]]:
         """为Agent关键词添加高亮样式，同时提取表格数据，返回(处理后的文本, 表格数据列表)"""
         # 首先提取表格数据
         text, tables_data = TextProcessor.extract_tables_from_text(text)
@@ -112,6 +112,12 @@ class TextProcessor:
         # 恢复保护的块
         for i, block in enumerate(preserved_blocks):
             text_without_blocks = text_without_blocks.replace(f"__PRESERVED_BLOCK_{i}__", block)
+        
+        # 如果正在流式传输，添加流式指示器
+        if is_streaming:
+            # 简化判断，只在文本末尾添加打字机光标
+            if text_without_blocks.strip():
+                text_without_blocks += '<span class="typing-cursor"></span>'
         
         return text_without_blocks, tables_data
     
@@ -256,4 +262,30 @@ class TextProcessor:
         </style>
         """
         
-        return html 
+        return html
+    
+    @staticmethod
+    def add_streaming_wrapper(text: str, is_new_content: bool = False) -> str:
+        """为流式文本添加包装器和动画效果"""
+        wrapper_class = "streaming-text"
+        if is_new_content:
+            wrapper_class += " new-text-highlight"
+        
+        return f'<span class="{wrapper_class}">{text}</span>'
+    
+    @staticmethod
+    def format_tool_execution_status(tool_name: str, status: str = "executing") -> str:
+        """格式化工具执行状态"""
+        status_text = {
+            "executing": f"🔧 正在执行 {tool_name}...",
+            "completed": f"✅ {tool_name} 执行完成",
+            "failed": f"❌ {tool_name} 执行失败"
+        }.get(status, f"⚠️ {tool_name} 状态未知")
+        
+        css_class = {
+            "executing": "tool-executing",
+            "completed": "response-complete", 
+            "failed": "tool-error"
+        }.get(status, "")
+        
+        return f'<span class="{css_class}">{status_text}</span>' 

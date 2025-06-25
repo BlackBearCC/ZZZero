@@ -145,7 +145,6 @@ class MCPToolManager:
             MCPTool("list_installed_packages", "列出已安装的包", "python"),
             MCPTool("get_execution_history", "获取执行历史", "python"),
             MCPTool("clear_execution_history", "清空执行历史", "python"),
-            MCPTool("check_code_safety", "检查代码安全性", "python"),
         ]
         
         for tool in python_tools:
