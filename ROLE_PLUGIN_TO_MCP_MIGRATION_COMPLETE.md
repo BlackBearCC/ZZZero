@@ -26,12 +26,16 @@
 - ✅ 删除`ROLE_PLUGINS_README.md` (角色插件使用文档)
 - ✅ 删除`ROLEPLAY_TOOL_FIX_SUMMARY.md` (修复总结文档)
 - ✅ 删除`ROLEPLAY_SERVICE_INTEGRATION.md` (服务集成文档)
+- ✅ 删除`ROLE_PROFILE_FILE_LOADING.md` (角色资料文件加载文档)
+- ✅ 删除`test_role_profile.txt` (角色插件测试数据)
 - ✅ 更新`mcp_servers/USAGE.md` (移除角色插件引用)
 
 ### 5. 代码重构
-- ✅ 移除`src/core/plugins.py`中的`RolePluginManager`类
+- ✅ 移除`src/core/plugins.py`中的所有插件类（BaseRolePlugin、RoleProfilePlugin、RoleKnowledgeBasePlugin）
 - ✅ 移除`get_role_plugin_manager()`全局函数
+- ✅ 完全删除`src/core/plugins.py`文件（数据结构已在MCP服务器中重新实现）
 - ✅ 清理所有角色插件相关的导入和引用
+- ✅ 数据结构升级：MCP服务器中的数据类更完善，包含ID字段和更多方法
 
 ## 🆕 新系统特性
 

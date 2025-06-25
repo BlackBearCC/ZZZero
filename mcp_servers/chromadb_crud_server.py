@@ -45,7 +45,7 @@ class ChromaDBManager:
             raise ImportError("ChromaDB未安装，请运行: pip install chromadb")
         
         self.data_dir = Path(data_dir)
-        self.data_dir.mkdir(exist_ok=True)
+        self.data_dir.mkdir(parents=True, exist_ok=True)
         
         # 初始化ChromaDB客户端
         self.client = chromadb.PersistentClient(

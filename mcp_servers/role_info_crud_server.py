@@ -105,10 +105,14 @@ class RoleInfoCRUDServer(StdioMCPServer):
         self.workspace_dir = Path(workspace_dir)
         self.workspace_dir.mkdir(exist_ok=True)
         
-        # 数据存储文件
-        self.profiles_file = self.workspace_dir / "role_profiles.json"
-        self.knowledge_file = self.workspace_dir / "role_knowledge.json"
-        self.worldbook_file = self.workspace_dir / "world_book.json"
+        # 确保output目录存在
+        self.output_dir = self.workspace_dir / "output"
+        self.output_dir.mkdir(exist_ok=True)
+        
+        # 数据存储文件 - 统一存储到output目录
+        self.profiles_file = self.output_dir / "role_profiles.json"
+        self.knowledge_file = self.output_dir / "role_knowledge.json"
+        self.worldbook_file = self.output_dir / "world_book.json"
         
         # 内存数据
         self.profiles: Dict[str, RoleProfile] = {}
@@ -178,9 +182,9 @@ class RoleInfoCRUDServer(StdioMCPServer):
             import chromadb
             from chromadb.config import Settings
             
-            # 创建ChromaDB客户端
+            # 创建ChromaDB客户端 - 统一使用workspace/vectordb目录
             db_path = self.workspace_dir / "vectordb"
-            db_path.mkdir(exist_ok=True)
+            db_path.mkdir(parents=True, exist_ok=True)
             
             self.chroma_client = chromadb.PersistentClient(
                 path=str(db_path),

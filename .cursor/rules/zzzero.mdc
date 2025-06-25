@@ -11,7 +11,6 @@ alwaysApply: true
 ## 需求处理流程
 1. 先阅读项目 README 和现有代码
 2. 与用户确认需求细节（至少提出 3 个补充问题）
-3. 选择最简实现方案（禁止过度设计）
 
 ## 代码安全
 - 涉及敏感数据时必须调用 `utils/encrypt.py` 的 AES 加密方法
@@ -26,7 +25,6 @@ alwaysApply: true
 ## 重要
 开发环境是windows，不使用linux语法调试
 遵循PEP 8：遵守Python Enhancement Proposal 8的风格指南进行格式化。
-使用文档字符串：使用文档字符串（docstrings）来记录函数和类的用途。
 保持简单：编写简单明了的代码；避免不必要的复杂性。
 使用列表推导式：在适当的情况下，优先使用列表推导式（list comprehensions）来创建列表，而不是传统的循环。
 处理异常：使用try-except块来优雅地处理异常。

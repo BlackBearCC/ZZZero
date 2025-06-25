@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 class PythonExecutor:
     """Python代码执行器 - 在隔离环境中安全执行Python代码"""
     
-    def __init__(self, workspace_dir: str = "./workspace/python_executor"):
+    def __init__(self, workspace_dir: str = "./workspace"):
         """
         初始化Python执行器
         
@@ -52,17 +52,24 @@ class PythonExecutor:
         self.workspace_dir = Path(workspace_dir)
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
         
+        # 确保output目录存在
+        self.output_dir = self.workspace_dir / "output"
+        self.output_dir.mkdir(exist_ok=True)
+        
         # 执行历史
         self.execution_history = []
         
-        # 虚拟环境路径
-        self.venv_dir = self.workspace_dir / "venv"
+        # 虚拟环境路径 - 存储在workspace根目录
+        self.venv_dir = self.workspace_dir / "python_executor" / "venv"
         
         # 初始化虚拟环境
         self._setup_virtual_environment()
     
     def _setup_virtual_environment(self):
         """设置虚拟环境"""
+        # 确保python_executor目录存在
+        self.venv_dir.parent.mkdir(parents=True, exist_ok=True)
+        
         if not self.venv_dir.exists():
             logger.info("创建Python虚拟环境...")
             venv.create(self.venv_dir, with_pip=True)
@@ -228,7 +235,7 @@ class PythonExecutor:
             with tempfile.NamedTemporaryFile(
                 mode='w', 
                 suffix='.py', 
-                dir=str(self.workspace_dir),
+                dir=str(self.output_dir),  # 临时文件创建在output目录
                 delete=False,
                 encoding='utf-8'
             ) as f:
@@ -244,7 +251,7 @@ class PythonExecutor:
                     capture_output=True,
                     text=True,
                     timeout=timeout,
-                    cwd=str(self.workspace_dir)
+                    cwd=str(self.output_dir)  # 在output目录中执行，便于文件操作
                 )
                 
                 end_time = datetime.now()
@@ -363,7 +370,7 @@ class PythonExecutor:
 class PythonExecutorServer(StdioMCPServer):
     """Python代码执行MCP服务器"""
     
-    def __init__(self, workspace_dir: str = "./workspace/python_executor"):
+    def __init__(self, workspace_dir: str = "./workspace"):
         """初始化服务器"""
         super().__init__("python-executor-server")
         self.executor = PythonExecutor(workspace_dir)
