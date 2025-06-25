@@ -83,7 +83,7 @@ class ReactAgent(BaseAgent):
         # 判断是否有工具可用
         if self.tool_manager and self.tool_manager.list_tools():
             if use_stream:
-                # 使用流式节点
+                # 使用流式节点（保持向后兼容）
                 from nodes.stream_react_agent_node import StreamReactAgentNode
                 agent_node = StreamReactAgentNode("agent", self.llm, self.tool_manager)
                 
@@ -94,21 +94,31 @@ class ReactAgent(BaseAgent):
                     .build()
                 )
             else:
-                # 使用标准ReAct节点
-                from nodes.react_agent_node import ReactAgentNode
-                from nodes.react_tool_node import ReactToolNode
+                # 使用新的分离式ReAct节点架构
+                from nodes.thought_node import ThoughtNode
+                from nodes.action_node import ActionNode
+                from nodes.observation_node import ObservationNode
+                from nodes.final_answer_node import FinalAnswerNode
                 
-                agent_node = ReactAgentNode("agent", self.llm, self.tool_manager)
-                tool_node = ReactToolNode("tools", self.tool_manager)
+                # 创建各个节点
+                thought_node = ThoughtNode("thought", self.llm)
+                action_node = ActionNode("action", self.llm, self.tool_manager)
+                observation_node = ObservationNode("observation", self.llm, self.max_iterations)
+                final_answer_node = FinalAnswerNode("final_answer", self.llm)
                 
-                # 构建标准双节点ReAct图
+                # 构建分离式ReAct图
                 graph = (builder
-                    .add_node(agent_node)
-                    .add_node(tool_node) 
-                    .entry("agent")
-                    .connect("agent", "tools", condition="output.get('has_tool_calls', False)")
-                    .connect("tools", "agent")
-                    .exit("agent")
+                    .add_node(thought_node)
+                    .add_node(action_node)
+                    .add_node(observation_node)
+                    .add_node(final_answer_node)
+                    .entry("thought")
+                    .connect("thought", "action", condition="output.get('needs_tools', False)")
+                    .connect("thought", "final_answer", condition="not output.get('needs_tools', False)")
+                    .connect("action", "observation")
+                    .connect("observation", "thought", condition="output.get('next_action') == 'thought'")
+                    .connect("observation", "final_answer", condition="output.get('next_action') == 'final_answer'")
+                    .exit("final_answer")
                     .build()
                 )
         else:
@@ -198,11 +208,19 @@ class ReactAgent(BaseAgent):
         
         # 提取最终结果 - 从最后一个有效的输出节点获取结果
         if node_results:
-            # 寻找最后一个成功执行的agent或chat节点
+            # 寻找最后一个成功执行的final_answer、agent或chat节点
             for node_result in reversed(node_results):
-                if (node_result.node_name in ["agent", "chat"] and 
+                if (node_result.node_name in ["final_answer", "agent", "chat"] and 
                     node_result.output and 
                     node_result.output.data):
+                    
+                    # 优先从final_answer字段获取最终答案
+                    if node_result.node_name == "final_answer":
+                        final_answer = node_result.output.data.get("final_answer")
+                        if final_answer:
+                            result.result = final_answer
+                            result.success = True
+                            break
                     
                     # 从消息中提取最终回答
                     messages = node_result.output.data.get("messages", [])
@@ -251,8 +269,9 @@ class ReactAgent(BaseAgent):
         # 计算指标
         result.metrics = {
             "total_nodes": len(node_results),
-            "iterations": sum(1 for nr in node_results if nr.node_name == "think"),
-            "tool_calls": sum(1 for nr in node_results if nr.node_name == "act"),
+            "iterations": sum(1 for nr in node_results if nr.node_name == "thought"),
+            "tool_calls": sum(1 for nr in node_results if nr.node_name == "action"),
+            "observations": sum(1 for nr in node_results if nr.node_name == "observation"),
             "total_duration": sum(nr.duration or 0 for nr in node_results)
         }
         

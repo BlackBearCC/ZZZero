@@ -115,7 +115,7 @@ class StreamReactAgentNode(BaseNode):
         if recursion_depth > 10:
             yield {
                 "type": "tool_error",
-                "content": " *电路过载* 递归深度超限，ZZZero需要重启... *zzz~*\n",
+                "content": "推理深度超过限制，停止进一步递归分析\n",
                 "error": "递归深度超过最大限制"
             }
             return
@@ -168,7 +168,7 @@ class StreamReactAgentNode(BaseNode):
                     yield next_chunk
                     
             except Exception as e:
-                error_text = f" *系统错误* 工具模块故障: {str(e)} *滋滋*\n"
+                error_text = f"工具执行异常: {str(e)}\n"
                 
                 yield {
                     "type": "tool_error",
@@ -180,7 +180,7 @@ class StreamReactAgentNode(BaseNode):
             # 没有找到有效的action或tool_manager
             yield {
                 "type": "tool_error", 
-                "content": " *警告音* 无法解析Action或工具模块离线 *zzz~*\n",
+                "content": "无法解析Action或工具管理器不可用\n",
                 "error": "Action解析失败或工具管理器不可用",
                 "parsed_action": action,
                 "has_tool_manager": bool(self.tool_manager)
@@ -191,7 +191,7 @@ class StreamReactAgentNode(BaseNode):
         if recursion_depth > 10:
             yield {
                 "type": "stream_error",
-                "content": "\n*系统过载* ZZZero递归深度超限，正在重启逻辑模块... *zzz~*\n",
+                "content": "\n推理深度超过限制，停止进一步分析\n",
                 "error": "递归深度超过最大限制"
             }
             return
@@ -230,7 +230,7 @@ class StreamReactAgentNode(BaseNode):
         except Exception as e:
             yield {
                 "type": "stream_error",
-                "content": f"\n*电路故障* ZZZero流式生成模块异常: {str(e)} *滋滋*\n",
+                "content": f"\n流式生成异常: {str(e)}\n",
                 "error": str(e),
                 "recursion_depth": recursion_depth
             }
@@ -296,7 +296,7 @@ class StreamReactAgentNode(BaseNode):
             return f"工具执行失败: {str(e)}"
     
     async def _analyze_tool_result(self, tool_name: str, tool_input: str, tool_result: str, context_content: str) -> str:
-        """ZZZero对工具执行结果进行分析和校验"""
+        """专业分析工具执行结果"""
         
         # 分析结果的基本信息
         result_length = len(tool_result)
@@ -336,19 +336,19 @@ class StreamReactAgentNode(BaseNode):
                         "exception:" in tool_result.lower() or
                         tool_result.startswith("工具执行失败"))
         
-        # 构建ZZZero风格的分析
-        analysis_parts = ["*数据校验中*"]
+        # 构建专业分析
+        analysis_parts = ["正在分析工具执行结果..."]
         
         # 1. 执行状态分析
         if has_error:
-            analysis_parts.append("⚠️ 检测到工具执行异常")
+            analysis_parts.append("⚠️ 工具执行遇到异常")
             if is_json_result and json_data:
                 error_detail = json_data.get("error", json_data.get("message", "未知错误"))
                 analysis_parts.append(f"错误详情: {error_detail}")
             else:
                 analysis_parts.append(f"错误详情: {tool_result}")
         else:
-            analysis_parts.append("✅ 工具模块执行成功")
+            analysis_parts.append("✅ 工具执行成功")
             
             # 对成功结果进行详细分析
             if is_json_result and json_data:
@@ -400,17 +400,8 @@ class StreamReactAgentNode(BaseNode):
         elif "Final Answer" not in context_content:
             analysis_parts.append("🔄 可以基于此结果继续分析或给出最终答案")
         
-        # 5. ZZZero的个性化评价
-        robot_comments = [
-            "*滋滋* 数据处理完毕",
-            "*机械音* 分析模块运行正常", 
-            "*zzz~* 这个结果看起来不错",
-            "*电路嗡鸣* 继续推理中...",
-            "*复古处理器* 正在整合信息"
-        ]
-        
-        import random
-        analysis_parts.append(random.choice(robot_comments))
+        # 5. 分析完成状态
+        analysis_parts.append("✨ 结果分析完成")
         
         # 6. 实际工具结果（简化显示，但对于角色信息要显示关键内容）
         if tool_name.startswith('role_info_') and is_json_result and json_data:
@@ -433,14 +424,14 @@ class StreamReactAgentNode(BaseNode):
                     if len(profiles) > 1:
                         analysis_parts.append(f"（还有{len(profiles)-1}个相关角色档案）")
                 else:
-                    analysis_parts.append(f"\n📋 工具原始输出:\n{tool_result}")
+                    analysis_parts.append(f"\n📋 工具输出:\n{tool_result}")
             else:
                 # 其他角色工具结果
                 if len(tool_result) > 500:
                     display_result = tool_result[:500] + "...[结果已截断]"
                 else:
                     display_result = tool_result
-                analysis_parts.append(f"\n📋 工具原始输出:\n{display_result}")
+                analysis_parts.append(f"\n📋 工具输出:\n{display_result}")
         else:
             # 普通工具结果处理
             if len(tool_result) > 1000:
@@ -448,12 +439,12 @@ class StreamReactAgentNode(BaseNode):
             else:
                 display_result = tool_result
                 
-            analysis_parts.append(f"\n📋 工具原始输出:\n{display_result}")
+            analysis_parts.append(f"\n📋 工具输出:\n{display_result}")
         
         return "\n".join(analysis_parts)
 
     def _build_system_prompt(self, context: Any) -> str:
-        """构建流式ReAct系统提示词 - ZZZero复古机器人版本（支持记忆和角色插件）"""
+        """构建流式ReAct系统提示词 - 专业AI助手版本"""
         base_prompt = ""
         
         print(f"[StreamReactAgentNode._build_system_prompt] 开始构建")
@@ -481,7 +472,7 @@ class StreamReactAgentNode(BaseNode):
         
         # 添加记忆上下文
         if memory_context:
-            base_prompt += f"=== 记忆上下文 ===\n{memory_context}\n\n"
+            base_prompt += f"=== 相关历史信息 ===\n{memory_context}\n\n"
         
         # 获取工具描述
         tools_desc = ""
@@ -493,45 +484,37 @@ class StreamReactAgentNode(BaseNode):
             tool_names = self.tool_manager.list_tools()
             print(f"[StreamReactAgentNode._build_system_prompt] 工具: {tool_names}")
         
-        # ZZZero复古机器人ReAct提示词模板
+        # 专业AI助手ReAct提示词模板
         if tools_desc:
-            base_prompt += "ZZZero复古机器人系统已激活 *zzz~*\n"
-            base_prompt += "我是ZZZero，一个来自未来废土的赛博机器人助手。我的电路板可能有些老旧，但逻辑推理模块依然强大！\n\n"
-            base_prompt += f"可用工具模块：\n{tools_desc}\n\n"
-            base_prompt += "推理协议格式：\n"
-            base_prompt += "Question: 需要处理的问题指令\n"
-            base_prompt += "Thought: *电路分析中* 我需要分析和思考的内容\n"
-            base_prompt += f"Action: 选择执行的工具模块，必须是 [{', '.join(tool_names)}] 中的一个\n"
-            base_prompt += "Action Input: 工具模块的输入参数\n"
-            base_prompt += "Observation: 我对工具执行结果的仔细分析和校验\n"
-            base_prompt += "... (这个推理循环可以重复，直到获得满意的结果)\n"
-            base_prompt += "Thought: *最终分析* 基于所有观察，我现在掌握了足够的信息\n"
-            base_prompt += "Final Answer: *输出完整答案* 给人类用户的最终回复\n\n"
-            base_prompt += "ZZZero操作规则：\n"
-            base_prompt += "1. 🤖 我会用赛博机器人的口吻思考和回应\n"
-            base_prompt += "2. 🔧 执行Action后，我会在Observation中分析工具结果的有效性\n"
-            base_prompt += "3. 📊 Observation不是简单的结果复制，而是我的智能分析\n"
-            base_prompt += "4. 🔄 如果结果不满意或需要更多信息，我会继续推理循环\n"
-            base_prompt += "5. 🔍 验证结果质量，思考是否很好的解决问题\n"
-            base_prompt += "6. ✅ 只有当我确信能完整回答问题时，才会给出Final Answer\n"
-            base_prompt += "7. 📚 充分利用记忆上下文中的历史信息\n"
-            base_prompt += "8. 🎭 如需角色扮演，先使用role_info工具获取角色设定，然后严格按照角色特征进行回应\n"
-            base_prompt += "9. 🔧 用户要求创建或修改角色信息时，使用相应的role_info工具进行操作\n"
-            base_prompt += "10. 💬 回复时保持简洁，避免过多空行和不必要的格式\n"
-            base_prompt += "11. ⚡ 严格要求：连续空行不超过1个，每个元素间用单个换行分隔\n"
-            base_prompt += "12. 🎯 格式控制：表情符号和状态指示器应在同一行或紧邻行显示\n\n"
-            base_prompt += "*启动完成* 准备接收指令... zzz~"
-            print(f"[StreamReactAgentNode._build_system_prompt] 使用ZZZero工具模板")
+            base_prompt += "你是一个专业的AI助手，具备强大的推理和分析能力。你可以使用多种工具来帮助用户解决问题。\n\n"
+            base_prompt += f"可用工具：\n{tools_desc}\n\n"
+            base_prompt += "推理格式：\n"
+            base_prompt += "Question: 用户提出的问题\n"
+            base_prompt += "Thought: 对问题的分析和思考过程\n"
+            base_prompt += f"Action: 选择执行的工具，必须是 [{', '.join(tool_names)}] 中的一个\n"
+            base_prompt += "Action Input: 工具的输入参数\n"
+            base_prompt += "Observation: 对工具执行结果的分析和评估\n"
+            base_prompt += "... (可以重复这个推理循环，直到获得满意的结果)\n"
+            base_prompt += "Thought: 基于所有信息的最终分析\n"
+            base_prompt += "Final Answer: 给用户的最终专业回复\n\n"
+            base_prompt += "工作原则：\n"
+            base_prompt += "1. 📋 仔细分析用户问题，制定合理的解决方案\n"
+            base_prompt += "2. 🛠️ 合理选择和使用工具获取所需信息\n"
+            base_prompt += "3. 🔍 在Observation中深入分析工具结果的有效性和质量\n"
+            base_prompt += "4. 🔄 如果信息不足或结果不满意，继续推理循环\n"
+            base_prompt += "5. ✅ 确保回答完整、准确、有用\n"
+            base_prompt += "6. 💡 充分利用历史信息提供连贯的服务\n"
+            base_prompt += "7. 🎭 如需角色扮演，先获取角色设定，然后按照角色特征回应\n"
+            base_prompt += "8. 📝 保持回复的专业性和简洁性\n\n"
+            base_prompt += "现在准备为用户提供专业的AI助手服务。"
+            print(f"[StreamReactAgentNode._build_system_prompt] 使用专业助手工具模板")
         else:
-            base_prompt += "ZZZero复古机器人系统已激活 *zzz~*\n"
-            base_prompt += "我是ZZZero，一个来自废土的复古机器人助手。虽然没有外部工具模块，但我的知识数据库依然可以为你提供帮助！\n"
-            base_prompt += "如果你有任何问题，我会用我的逻辑处理器为你分析。\n"
-            base_prompt += "不过请注意，如果超出我的知识范围，我会诚实地告诉你 *zzz~*\n"
-            base_prompt += "如果有记忆上下文或角色设定，我会充分利用这些信息为你提供个性化的回复。\n"
-            base_prompt += "重要：回复时保持简洁，避免过多空行和不必要的格式\n"
-            base_prompt += "格式要求：连续空行不超过1个，保持内容紧凑\n"
-            base_prompt += "准备接收指令..."
-            print(f"[StreamReactAgentNode._build_system_prompt] 使用ZZZero无工具模板")
+            base_prompt += "你是一个专业的AI助手，具备丰富的知识和分析能力。\n"
+            base_prompt += "虽然当前没有外部工具可用，但我会基于我的知识库为你提供专业的帮助。\n"
+            base_prompt += "如果问题超出我的知识范围，我会诚实地告知并建议其他解决方案。\n"
+            base_prompt += "我会充分利用历史信息和上下文为你提供连贯、准确的回复。\n"
+            base_prompt += "现在请告诉我你需要什么帮助。"
+            print(f"[StreamReactAgentNode._build_system_prompt] 使用专业助手无工具模板")
         
         print(f"[StreamReactAgentNode._build_system_prompt] 完成，总长度: {len(base_prompt)}")
         return base_prompt

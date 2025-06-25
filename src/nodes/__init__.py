@@ -8,6 +8,10 @@ from .react_tool_node import ReactToolNode
 from .router_node import RouterNode
 from .simple_chat_node import SimpleChatNode
 from .stream_react_agent_node import StreamReactAgentNode
+from .thought_node import ThoughtNode
+from .action_node import ActionNode
+from .observation_node import ObservationNode
+from .final_answer_node import FinalAnswerNode
 
 __all__ = [
     "ParallelNode",
@@ -15,5 +19,9 @@ __all__ = [
     "ReactToolNode",
     "RouterNode",
     "SimpleChatNode",
-    "StreamReactAgentNode"
+    "StreamReactAgentNode",
+    "ThoughtNode",
+    "ActionNode",
+    "ObservationNode",
+    "FinalAnswerNode"
 ]

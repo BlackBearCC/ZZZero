@@ -203,6 +203,9 @@ class Graph:
         # 2. 标准LangGraph ReAct循环 (agent, tools)
         langgraph_react_pattern = {"agent", "tools"}
         
+        # 3. 新的分离式ReAct循环 (thought, action, observation)
+        separated_react_pattern = {"thought", "action", "observation"}
+        
         # 如果循环包含ReAct模式的子集，则允许
         if component.issubset(react_pattern) and len(component) >= 2:
             return True
@@ -211,8 +214,12 @@ class Graph:
         if component.issubset(langgraph_react_pattern) and len(component) >= 2:
             return True
             
-        # 允许包含finalize节点的循环（可能的路径）
-        if "finalize" in component:
+        # 如果循环包含分离式ReAct模式，则允许
+        if component.issubset(separated_react_pattern) and len(component) >= 2:
+            return True
+            
+        # 允许包含finalize或final_answer节点的循环（可能的路径）
+        if "finalize" in component or "final_answer" in component:
             return True
             
         # 其他情况需要具体判断，暂时允许所有包含条件连接的循环
@@ -262,6 +269,9 @@ class GraphBuilder:
                to_node: str,
                **kwargs) -> "GraphBuilder":
         """连接节点"""
+        # 如果有条件，自动设置为条件连接
+        if 'condition' in kwargs and kwargs['condition']:
+            kwargs['connection_type'] = ConnectionType.CONDITIONAL
         self.graph.add_connection(from_node, to_node, **kwargs)
         return self
         
@@ -337,21 +347,23 @@ class GraphExecutor(BaseExecutor):
                     # 根据结果决定下一步
                     if result.state == ExecutionState.SUCCESS:
                         if result.output.should_continue:
-                            # 获取下一个节点
-                            eval_context = {
-                                "output": result.output.data,
-                                "metadata": result.output.metadata
-                            }
-                            next_candidates = graph.get_next_nodes(
-                                node_name, 
-                                eval_context
-                            )
-                            next_nodes.extend(next_candidates)
-                            
-                            # 如果输出指定了下一个节点
+                            # 优先使用节点输出指定的下一个节点
                             if result.output.next_node:
                                 if result.output.next_node in graph.nodes:
                                     next_nodes.append(result.output.next_node)
+                                    print(f"[GraphExecutor] {node_name} -> {result.output.next_node} (节点指定)")
+                            else:
+                                # 回退到基于连接条件的路由
+                                eval_context = {
+                                    "output": result.output.data,
+                                    "metadata": result.output.metadata
+                                }
+                                next_candidates = graph.get_next_nodes(
+                                    node_name, 
+                                    eval_context
+                                )
+                                next_nodes.extend(next_candidates)
+                                print(f"[GraphExecutor] {node_name} -> {next_candidates} (条件路由)")
                 
                 # 去重并更新当前节点列表
                 current_nodes = list(set(next_nodes))
