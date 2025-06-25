@@ -140,15 +140,15 @@ class ChatInterface:
         return {
             "batch_enabled": batch_enabled,
             "processing_mode": processing_mode,
-            "csv_file_upload": csv_file_upload,
-            "csv_fields_section": csv_fields_section,
-            "csv_info_display": csv_info_display,
-            "csv_preview_table": csv_preview_table,
-            "csv_fields_selection": csv_fields_selection,
+            "batch_csv_file": csv_file_upload,  # 改名为batch_csv_file
+            "batch_fields_group": csv_fields_section,  # 改名为batch_fields_group
+            "batch_structure_display": csv_info_display,  # 改名为batch_structure_display
+            "batch_preview_table": csv_preview_table,
+            "batch_fields_checkbox": csv_fields_selection,  # 改名为batch_fields_checkbox
             "fields_update_btn": fields_update_btn,
             "batch_size": batch_size,
             "concurrent_tasks": concurrent_tasks,
-            "batch_status": batch_status
+            "batch_config_display": batch_status  # 改名为batch_config_display
         }
     
     def create_execution_details(self) -> Dict[str, Any]:

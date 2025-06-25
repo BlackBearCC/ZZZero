@@ -215,90 +215,7 @@ class ConfigPanel:
             value="✅ 配置已自动应用"
         )
     
-    def create_batch_config(self) -> Dict[str, Any]:
-        """创建批处理配置组件"""
-        with gr.Accordion("📊 批处理配置", open=False):
-            with gr.Row():
-                batch_enabled = gr.Checkbox(
-                    label="启用批处理模式",
-                    value=False
-                )
-                processing_mode = gr.Dropdown(
-                    choices=[
-                        ("并行模式 - 快速高效", "parallel"),
-                        ("遍历模式 - 顺序执行", "sequential")
-                    ],
-                    value="parallel",
-                    label="处理模式"
-                )
-            
-            with gr.Row():
-                batch_csv_file = gr.File(
-                    label="上传CSV文件",
-                    file_types=[".csv"],
-                    file_count="single"
-                )
-            
-            # 批处理参数
-            with gr.Row():
-                batch_size = gr.Slider(
-                    minimum=1,
-                    maximum=50,
-                    value=5,
-                    step=1,
-                    label="每批处理行数"
-                )
-                concurrent_tasks = gr.Slider(
-                    minimum=1,
-                    maximum=50,
-                    value=10,
-                    step=1,
-                    label="并发任务数"
-                )
-            
-            # 批处理状态显示
-            batch_config_display = gr.HTML(
-                value="<div style='color: #666;'>📋 批处理模式未启用</div>",
-                label="批处理状态"
-            )
-            
-            # CSV字段选择区域
-            batch_fields_group = gr.Column(visible=False)
-            with batch_fields_group:
-                gr.Markdown("### 📋 CSV字段选择")
-                batch_structure_display = gr.HTML(
-                    value="<div>等待CSV文件解析...</div>",
-                    label="CSV结构信息"
-                )
-                
-                # 数据预览表格
-                batch_preview_table = gr.DataFrame(
-                    value=[],
-                    headers=None,
-                    label="📊 数据预览（前5行）",
-                    interactive=False,
-                    wrap=True
-                )
-                
-                batch_fields_checkbox = gr.CheckboxGroup(
-                    choices=[],
-                    value=[],
-                    label="选择要在批处理中使用的字段",
-                    interactive=True
-                )
-        
-        return {
-            "batch_enabled": batch_enabled,
-            "processing_mode": processing_mode,
-            "batch_csv_file": batch_csv_file,
-            "batch_size": batch_size,
-            "concurrent_tasks": concurrent_tasks,
-            "batch_config_display": batch_config_display,
-            "batch_fields_group": batch_fields_group,
-            "batch_structure_display": batch_structure_display,
-            "batch_preview_table": batch_preview_table,
-            "batch_fields_checkbox": batch_fields_checkbox
-        }
+
     
     def create_full_panel(self) -> Dict[str, Any]:
         """创建完整的配置面板"""
@@ -309,7 +226,6 @@ class ConfigPanel:
         agent_components = self.create_agent_config()
         mcp_components = self.create_mcp_server_config()
         tools_components = self.create_tools_config()
-        batch_components = self.create_batch_config()
         self.create_role_info_section()
         memory_components = self.create_memory_config()
         file_components = self.create_file_management()
@@ -321,7 +237,6 @@ class ConfigPanel:
         all_components.update(agent_components)
         all_components.update(mcp_components)
         all_components.update(tools_components)
-        all_components.update(batch_components)
         all_components.update(memory_components)
         all_components.update(file_components)
         all_components["config_status"] = config_status

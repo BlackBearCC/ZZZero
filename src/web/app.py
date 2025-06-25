@@ -194,39 +194,39 @@ class AgentApp:
                     outputs=[]
                 )
         
-        # 批处理配置事件
+        # 批处理配置事件 - 从chat_components获取
         for component in [
-            config_components.get('batch_enabled'), 
-            config_components.get('batch_csv_file'), 
-            config_components.get('batch_size'), 
-            config_components.get('concurrent_tasks'), 
-            config_components.get('processing_mode')
+            chat_components.get('batch_enabled'), 
+            chat_components.get('batch_csv_file'), 
+            chat_components.get('batch_size'), 
+            chat_components.get('concurrent_tasks'), 
+            chat_components.get('processing_mode')
         ]:
             if component:
                 component.change(
                     fn=self.event_handlers.on_batch_config_change,
                     inputs=[
-                        config_components.get('batch_enabled'), 
-                        config_components.get('batch_csv_file'), 
-                        config_components.get('batch_size'), 
-                        config_components.get('concurrent_tasks'), 
-                        config_components.get('processing_mode')
+                        chat_components.get('batch_enabled'), 
+                        chat_components.get('batch_csv_file'), 
+                        chat_components.get('batch_size'), 
+                        chat_components.get('concurrent_tasks'), 
+                        chat_components.get('processing_mode')
                     ],
                     outputs=[
-                        config_components.get('batch_config_display'),
-                        config_components.get('batch_fields_group'),
-                        config_components.get('batch_structure_display'),
-                        config_components.get('batch_preview_table'),
-                        config_components.get('batch_fields_checkbox')
+                        chat_components.get('batch_config_display'),
+                        chat_components.get('batch_fields_group'),
+                        chat_components.get('batch_structure_display'),
+                        chat_components.get('batch_preview_table'),
+                        chat_components.get('batch_fields_checkbox')
                     ]
                 )
         
-        # 字段选择事件
-        if config_components.get('batch_fields_checkbox'):
-            config_components['batch_fields_checkbox'].change(
+        # 字段选择事件 - 从chat_components获取
+        if chat_components.get('batch_fields_checkbox'):
+            chat_components['batch_fields_checkbox'].change(
                 fn=self.event_handlers.on_fields_update,
-                inputs=[config_components['batch_fields_checkbox']],
-                outputs=[config_components.get('batch_config_display')]
+                inputs=[chat_components['batch_fields_checkbox']],
+                outputs=[chat_components.get('batch_config_display')]
             )
         
         # MCP服务器变化事件

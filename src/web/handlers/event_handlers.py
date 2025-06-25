@@ -48,7 +48,8 @@ class EventHandlers:
         if not config_changed:
             status_text += " (无变化)"
         
-        return status_text
+        logger.info(status_text)
+        # 不返回任何值，因为outputs=[]
     
     async def on_batch_config_change(self, enabled, csv_file, batch_size_val, concurrent_tasks_val, processing_mode_val):
         """批处理配置变化处理"""
@@ -346,7 +347,7 @@ class EventHandlers:
         import os
         
         if not files:
-            return "❌ 请选择要上传的文件", self.app._format_file_list_html([], "输入文件夹")
+            return "❌ 请选择要上传的文件", self.app.file_utils.format_file_list_html([], "输入文件夹")
         
         try:
             uploaded_count = 0
@@ -365,29 +366,29 @@ class EventHandlers:
             status_msg = f"✅ 成功上传 {uploaded_count} 个文件到输入目录"
             
             # 刷新输入文件列表
-            input_files = self.app._list_files_in_dir(self.app.workspace_config['input_dir'])
-            input_files_html = self.app._format_file_list_html(input_files, "输入文件夹")
+            input_files = self.app.file_utils.list_files_in_dir(self.app.workspace_config['input_dir'])
+            input_files_html = self.app.file_utils.format_file_list_html(input_files, "输入文件夹")
             
             return status_msg, input_files_html
             
         except Exception as e:
             error_msg = f"❌ 文件上传失败: {str(e)}"
             logger.error(error_msg)
-            return error_msg, self.app._format_file_list_html([], "输入文件夹")
+            return error_msg, self.app.file_utils.format_file_list_html([], "输入文件夹")
     
     async def on_refresh_file_lists(self):
         """刷新文件列表"""
         try:
             # 确保目录存在
-            self.app._ensure_workspace_dirs()
+            self.app.file_utils.ensure_workspace_dirs(self.app.workspace_config)
             
             # 获取输入文件
-            input_files = self.app._list_files_in_dir(self.app.workspace_config['input_dir'])
-            input_files_html = self.app._format_file_list_html(input_files, "输入文件夹")
+            input_files = self.app.file_utils.list_files_in_dir(self.app.workspace_config['input_dir'])
+            input_files_html = self.app.file_utils.format_file_list_html(input_files, "输入文件夹")
             
             # 获取输出文件
-            output_files = self.app._list_files_in_dir(self.app.workspace_config['output_dir'])
-            output_files_html = self.app._format_file_list_html(output_files, "输出文件夹")
+            output_files = self.app.file_utils.list_files_in_dir(self.app.workspace_config['output_dir'])
+            output_files_html = self.app.file_utils.format_file_list_html(output_files, "输出文件夹")
             
             return input_files_html, output_files_html
             
