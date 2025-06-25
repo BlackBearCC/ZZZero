@@ -239,7 +239,7 @@ CUSTOM_CSS = """
 
 /* 让消息内容可以正确显示HTML */
 .chat-window .message-content {
-    white-space: pre-wrap;
+    white-space: pre-line;
     word-wrap: break-word;
     line-height: 1.4 !important;
     margin: 0 !important;
@@ -251,16 +251,23 @@ CUSTOM_CSS = """
     min-height: 1.4em !important; /* 最小高度，防止跳动 */
 }
 
+/* 针对机器人回复进行特殊优化 */
+.chat-window .bot .message-content {
+    white-space: pre-line !important;
+    overflow-wrap: break-word !important;
+    max-width: 100% !important;
+}
+
 /* 优化消息内容的段落间距 */
 .chat-window .message p {
-    margin: 0.3em 0 !important;
+    margin: 0.2em 0 !important;
     line-height: 1.4 !important;
 }
 
 /* 修复Gradio聊天消息的默认样式 */
 .chat-window .message {
     line-height: 1.4 !important;
-    margin: 8px 0 !important;
+    margin: 6px 0 !important;
 }
 
 /* 确保内容紧凑显示 */
@@ -475,7 +482,7 @@ CUSTOM_CSS = """
 
 /* 工具输出内容 */
 .tool-output-content {
-    white-space: pre-wrap !important;
+    white-space: pre-line !important; /* 改为pre-line避免过多空行 */
     word-wrap: break-word !important;
     color: #334155 !important;
     margin: 0 !important;

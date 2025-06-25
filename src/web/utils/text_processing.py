@@ -73,8 +73,49 @@ class TextProcessor:
         return text, tables_data
     
     @staticmethod
+    def clean_text_for_display(text: str) -> str:
+        """清理文本中的多余空行和空格，专门为聊天显示优化"""
+        if not text:
+            return text
+        
+        # 将连续的多个换行符替换为最多1个换行符
+        # 这样保留基本段落间距，但消除过多空行
+        text = re.sub(r'\n{2,}', '\n', text)
+        
+        # 清理每行末尾的空格
+        lines = text.split('\n')
+        cleaned_lines = [line.rstrip() for line in lines]
+        
+        # 移除开头和结尾的空行
+        while cleaned_lines and not cleaned_lines[0].strip():
+            cleaned_lines.pop(0)
+        while cleaned_lines and not cleaned_lines[-1].strip():
+            cleaned_lines.pop()
+        
+        # 重新组合文本
+        cleaned_text = '\n'.join(cleaned_lines)
+        
+        # 机器人风格特殊处理：将分散在多行的表情符号和状态合并
+        # 例如：将独立成行的 📶 🤖 ✨ 等合并到前一行
+        cleaned_text = re.sub(r'\n([\s]*[🔧✨📶😊🤖⚡🔋💾💻📊🔄⏳❓❌✅💬🎯bzzzt~zzz~])', r' \1', cleaned_text)
+        
+        # 处理机器人状态行：将类似 "动力核心：98%" 这样的状态行保持紧凑
+        cleaned_text = re.sub(r'\n([\s]*[动力核心记忆模块情感模拟器].*?[：:]\s*.*?[%℃])', r' \1', cleaned_text)
+        
+        # 处理ZZZero的音效描述，让它们保持在同一段落
+        cleaned_text = re.sub(r'\n([\s]*[系统启动音效机械眼闪烁问候协议激活电子音状态检查散热风扇].*)', r' \1', cleaned_text)
+        
+        # 最后再次确保不会有连续空行
+        cleaned_text = re.sub(r'\n{2,}', '\n\n', cleaned_text)
+        
+        return cleaned_text
+    
+    @staticmethod
     def highlight_agent_keywords(text: str, is_streaming: bool = False, last_char_index: int = -1) -> Tuple[str, List[Dict]]:
         """为Agent关键词添加高亮样式，同时提取表格数据，返回(处理后的文本, 表格数据列表)"""
+        # 首先清理文本格式
+        text = TextProcessor.clean_text_for_display(text)
+        
         # 首先提取表格数据
         text, tables_data = TextProcessor.extract_tables_from_text(text)
         

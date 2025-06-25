@@ -300,7 +300,41 @@ class StreamReactAgentNode(BaseNode):
         
         # 分析结果的基本信息
         result_length = len(tool_result)
-        has_error = "错误" in tool_result or "失败" in tool_result or "error" in tool_result.lower()
+        
+        # 智能检测执行状态 - 优先解析JSON结构
+        has_error = False
+        is_json_result = False
+        json_data = None
+        
+        try:
+            # 尝试解析JSON结果
+            json_data = json.loads(tool_result)
+            is_json_result = True
+            
+            # 检查JSON结构中的成功/错误标志
+            if isinstance(json_data, dict):
+                # 优先检查success字段
+                if "success" in json_data:
+                    has_error = not json_data["success"]
+                # 检查error字段是否为真值
+                elif "error" in json_data:
+                    has_error = bool(json_data["error"])
+                # 检查status字段
+                elif "status" in json_data:
+                    has_error = json_data["status"] not in ["success", "ok", "200"]
+                else:
+                    # 没有明确标志，基于数据内容判断
+                    has_error = False
+            else:
+                # 非字典类型的JSON，基本认为是成功的
+                has_error = False
+                
+        except json.JSONDecodeError:
+            # 非JSON结果，使用传统的文本检测
+            has_error = ("错误" in tool_result or "失败" in tool_result or 
+                        "error:" in tool_result.lower() or
+                        "exception:" in tool_result.lower() or
+                        tool_result.startswith("工具执行失败"))
         
         # 构建ZZZero风格的分析
         analysis_parts = ["*数据校验中*"]
@@ -308,9 +342,35 @@ class StreamReactAgentNode(BaseNode):
         # 1. 执行状态分析
         if has_error:
             analysis_parts.append("⚠️ 检测到工具执行异常")
-            analysis_parts.append(f"错误详情: {tool_result}")
+            if is_json_result and json_data:
+                error_detail = json_data.get("error", json_data.get("message", "未知错误"))
+                analysis_parts.append(f"错误详情: {error_detail}")
+            else:
+                analysis_parts.append(f"错误详情: {tool_result}")
         else:
             analysis_parts.append("✅ 工具模块执行成功")
+            
+            # 对成功结果进行详细分析
+            if is_json_result and json_data:
+                if isinstance(json_data, dict):
+                    # 分析返回的数据结构
+                    if "count" in json_data:
+                        count = json_data["count"]
+                        analysis_parts.append(f"📊 数据量: 返回{count}条记录")
+                    
+                    if "profiles" in json_data:
+                        profiles = json_data["profiles"]
+                        if profiles:
+                            analysis_parts.append(f"👤 角色信息: 找到{len(profiles)}个角色档案")
+                        else:
+                            analysis_parts.append("👤 角色信息: 未找到匹配的角色")
+                    
+                    if "data" in json_data:
+                        data = json_data["data"]
+                        if isinstance(data, list):
+                            analysis_parts.append(f"📋 数据集: {len(data)}个条目")
+                        elif isinstance(data, dict):
+                            analysis_parts.append("📋 结构化数据对象")
         
         # 2. 数据质量评估
         if result_length == 0:
@@ -322,17 +382,14 @@ class StreamReactAgentNode(BaseNode):
         else:
             analysis_parts.append("📊 返回适量数据")
         
-        # 3. 结果内容分析
-        if tool_result.strip():
-            # 尝试检测结果类型
-            try:
-                json.loads(tool_result)
-                analysis_parts.append("🔍 结果为结构化JSON数据")
-            except:
-                if "\n" in tool_result:
-                    analysis_parts.append("🔍 结果为多行文本数据")
-                else:
-                    analysis_parts.append("🔍 结果为单行文本数据")
+        # 3. 结果类型分析
+        if is_json_result:
+            analysis_parts.append("🔍 结果为结构化JSON数据")
+        elif tool_result.strip():
+            if "\n" in tool_result:
+                analysis_parts.append("🔍 结果为多行文本数据")
+            else:
+                analysis_parts.append("🔍 结果为单行文本数据")
         
         # 4. 基于上下文判断是否需要继续
         thought_count = context_content.count("Thought:")
@@ -355,13 +412,43 @@ class StreamReactAgentNode(BaseNode):
         import random
         analysis_parts.append(random.choice(robot_comments))
         
-        # 6. 实际工具结果（简化显示）
-        if len(tool_result) > 3000:
-            display_result = tool_result[:3000] + "...[结果已截断]"
+        # 6. 实际工具结果（简化显示，但对于角色信息要显示关键内容）
+        if tool_name.startswith('role_info_') and is_json_result and json_data:
+            # 角色信息工具的特殊处理
+            if isinstance(json_data, dict) and "profiles" in json_data:
+                profiles = json_data["profiles"]
+                if profiles:
+                    # 显示第一个角色的关键信息
+                    first_profile = profiles[0]
+                    key_info = []
+                    for key in ["name", "age", "personality", "background", "description"]:
+                        if key in first_profile:
+                            value = first_profile[key]
+                            if len(str(value)) > 100:
+                                value = str(value)[:100] + "..."
+                            key_info.append(f"{key}: {value}")
+                    
+                    analysis_parts.append(f"\n📋 角色档案预览:\n" + "\n".join(key_info))
+                    
+                    if len(profiles) > 1:
+                        analysis_parts.append(f"（还有{len(profiles)-1}个相关角色档案）")
+                else:
+                    analysis_parts.append(f"\n📋 工具原始输出:\n{tool_result}")
+            else:
+                # 其他角色工具结果
+                if len(tool_result) > 500:
+                    display_result = tool_result[:500] + "...[结果已截断]"
+                else:
+                    display_result = tool_result
+                analysis_parts.append(f"\n📋 工具原始输出:\n{display_result}")
         else:
-            display_result = tool_result
-            
-        analysis_parts.append(f"\n📋 工具原始输出:\n{display_result}")
+            # 普通工具结果处理
+            if len(tool_result) > 1000:
+                display_result = tool_result[:1000] + "...[结果已截断]"
+            else:
+                display_result = tool_result
+                
+            analysis_parts.append(f"\n📋 工具原始输出:\n{display_result}")
         
         return "\n".join(analysis_parts)
 
@@ -430,7 +517,9 @@ class StreamReactAgentNode(BaseNode):
             base_prompt += "7. 📚 充分利用记忆上下文中的历史信息\n"
             base_prompt += "8. 🎭 如需角色扮演，先使用role_info工具获取角色设定，然后严格按照角色特征进行回应\n"
             base_prompt += "9. 🔧 用户要求创建或修改角色信息时，使用相应的role_info工具进行操作\n"
-            base_prompt += "10. 💬 回复时保持简洁，避免过多空行和不必要的格式\n\n"
+            base_prompt += "10. 💬 回复时保持简洁，避免过多空行和不必要的格式\n"
+            base_prompt += "11. ⚡ 严格要求：连续空行不超过1个，每个元素间用单个换行分隔\n"
+            base_prompt += "12. 🎯 格式控制：表情符号和状态指示器应在同一行或紧邻行显示\n\n"
             base_prompt += "*启动完成* 准备接收指令... zzz~"
             print(f"[StreamReactAgentNode._build_system_prompt] 使用ZZZero工具模板")
         else:
@@ -440,6 +529,7 @@ class StreamReactAgentNode(BaseNode):
             base_prompt += "不过请注意，如果超出我的知识范围，我会诚实地告诉你 *zzz~*\n"
             base_prompt += "如果有记忆上下文或角色设定，我会充分利用这些信息为你提供个性化的回复。\n"
             base_prompt += "重要：回复时保持简洁，避免过多空行和不必要的格式\n"
+            base_prompt += "格式要求：连续空行不超过1个，保持内容紧凑\n"
             base_prompt += "准备接收指令..."
             print(f"[StreamReactAgentNode._build_system_prompt] 使用ZZZero无工具模板")
         
