@@ -7,6 +7,10 @@ from typing import List, Dict, Any, Optional, Tuple
 import gradio as gr
 import re
 import time
+import pandas as pd
+import hashlib
+import json
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +30,59 @@ class EventHandlers:
         # 预编译正则表达式（提高性能）
         self.llm_config_pattern = re.compile(r'provider|model|temperature|agent_type|iterations|tools|servers')
         self.batch_config_pattern = re.compile(r'batch|csv|concurrent|processing')
+        
+        # 初始化文件内容记录存储
+        self.workspace_dir = Path("./workspace")
+        self.workspace_dir.mkdir(exist_ok=True)
+        self.file_hash_record = self.workspace_dir / "file_content_hashes.json"
+        self._load_file_hashes()
+    
+    def _load_file_hashes(self):
+        """加载已处理文件的哈希记录"""
+        try:
+            if self.file_hash_record.exists():
+                with open(self.file_hash_record, 'r', encoding='utf-8') as f:
+                    self.processed_files = json.load(f)
+            else:
+                self.processed_files = {}
+        except Exception as e:
+            logger.warning(f"加载文件哈希记录失败: {e}")
+            self.processed_files = {}
+    
+    def _save_file_hashes(self):
+        """保存文件哈希记录"""
+        try:
+            with open(self.file_hash_record, 'w', encoding='utf-8') as f:
+                json.dump(self.processed_files, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"保存文件哈希记录失败: {e}")
+    
+    def _calculate_content_hash(self, content: str) -> str:
+        """计算文件内容的MD5哈希"""
+        return hashlib.md5(content.encode('utf-8')).hexdigest()
+    
+    def _is_content_already_processed(self, content: str, file_name: str) -> bool:
+        """检查文件内容是否已经被处理过"""
+        content_hash = self._calculate_content_hash(content)
+        
+        # 检查哈希是否已存在
+        if content_hash in self.processed_files:
+            existing_info = self.processed_files[content_hash]
+            logger.info(f"文件内容重复: {file_name} 与 {existing_info['original_file']} 内容相同")
+            return True
+        
+        return False
+    
+    def _record_processed_content(self, content: str, file_name: str, category: str):
+        """记录已处理的文件内容"""
+        content_hash = self._calculate_content_hash(content)
+        self.processed_files[content_hash] = {
+            "original_file": file_name,
+            "category": category,
+            "processed_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "content_length": len(content)
+        }
+        self._save_file_hashes()
     
     def _handle_tool_result(self, result) -> tuple:
         """统一处理ToolResult对象
@@ -593,17 +650,183 @@ class EventHandlers:
     # === 角色信息管理方法 ===
     
     async def on_role_profile_file_upload(self, file):
-        """处理角色信息文件上传"""
+        """处理角色信息文件上传 - 支持txt和csv格式，自动向量化，包含查重"""
         if not file:
             return ""
         
         try:
-            with open(file.name, 'r', encoding='utf-8') as f:
-                content = f.read()
-            return content
+            file_path = file.name
+            file_ext = file_path.lower().split('.')[-1]
+            file_name = Path(file_path).name
+            
+            if file_ext == 'csv':
+                # 处理CSV文件
+                try:
+                    df = pd.read_csv(file_path, encoding='utf-8')
+                except UnicodeDecodeError:
+                    try:
+                        df = pd.read_csv(file_path, encoding='gbk')
+                    except:
+                        df = pd.read_csv(file_path, encoding='gb2312')
+                
+                # 将CSV转换为文本格式
+                content_parts = []
+                for index, row in df.iterrows():
+                    row_text = " | ".join([f"{col}: {str(val)}" for col, val in row.items() if pd.notna(val)])
+                    content_parts.append(row_text)
+                
+                content = "\n".join(content_parts)
+                
+            else:
+                # 处理TXT文件
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+            
+            # 检查内容是否已经处理过
+            if self._is_content_already_processed(content, file_name):
+                return f"⚠️ 文件内容重复，已跳过处理\n\n{content}"
+            
+            # 自动切割并存储到向量数据库
+            success = await self._auto_vectorize_content(content, "knowledge", file_name, file_ext)
+            
+            if success:
+                # 记录已处理的文件内容
+                self._record_processed_content(content, file_name, "角色信息")
+                return f"✅ 文件处理完成，已存储到向量数据库\n\n{content}"
+            else:
+                return f"⚠️ 文件读取成功，但向量化失败\n\n{content}"
+            
         except Exception as e:
             logger.error(f"读取角色信息文件失败: {e}")
             return f"读取文件失败: {str(e)}"
+    
+    async def _auto_vectorize_content(self, content: str, collection_type: str, source_file: str, file_ext: str = "txt") -> bool:
+        """自动切割内容并存储到向量数据库 - 优化切割策略"""
+        try:
+            if not content or not content.strip():
+                return False
+            
+            chunks = []
+            
+            if file_ext == 'csv':
+                # CSV文件按行切割，每行一个片段
+                lines = content.split('\n')
+                for i, line in enumerate(lines):
+                    line = line.strip()
+                    if not line or len(line) < 10:  # 跳过空行或太短的行
+                        continue
+                    chunks.append({
+                        "content": line,
+                        "metadata": {
+                            "source": source_file,
+                            "chunk_index": i,
+                            "chunk_type": "csv_row"
+                        }
+                    })
+            else:
+                # TXT文件智能切割
+                paragraphs = content.split('\n\n')  # 按双换行符分段
+                
+                for para_idx, para in enumerate(paragraphs):
+                    para = para.strip()
+                    if not para:
+                        continue
+                    
+                    # 如果段落太长，按句子切割
+                    if len(para) > 500:
+                        sentences = para.split('。')
+                        current_chunk = ""
+                        sentence_start_idx = 0
+                        
+                        for sent_idx, sentence in enumerate(sentences):
+                            sentence = sentence.strip()
+                            if not sentence:
+                                continue
+                            
+                            if len(current_chunk) + len(sentence) < 400:
+                                current_chunk += sentence + "。"
+                            else:
+                                if current_chunk:
+                                    chunks.append({
+                                        "content": current_chunk.strip(),
+                                        "metadata": {
+                                            "source": source_file,
+                                            "paragraph_index": para_idx,
+                                            "sentence_range": f"{sentence_start_idx}-{sent_idx-1}",
+                                            "chunk_type": "paragraph_split"
+                                        }
+                                    })
+                                current_chunk = sentence + "。"
+                                sentence_start_idx = sent_idx
+                        
+                        if current_chunk:
+                            chunks.append({
+                                "content": current_chunk.strip(),
+                                "metadata": {
+                                    "source": source_file,
+                                    "paragraph_index": para_idx,
+                                    "sentence_range": f"{sentence_start_idx}-{len(sentences)-1}",
+                                    "chunk_type": "paragraph_split"
+                                }
+                            })
+                    else:
+                        chunks.append({
+                            "content": para,
+                            "metadata": {
+                                "source": source_file,
+                                "paragraph_index": para_idx,
+                                "chunk_type": "paragraph"
+                            }
+                        })
+            
+            # 将切割后的内容存储到向量数据库
+            if self.app.tool_manager and chunks:
+                success_count = 0
+                
+                for chunk_data in chunks:
+                    chunk_content = chunk_data["content"]
+                    chunk_metadata = chunk_data["metadata"]
+                    
+                    if len(chunk_content.strip()) < 10:  # 跳过太短的片段
+                        continue
+                    
+                    try:
+                        # 使用集合名称作为分类
+                        if collection_type == "knowledge":
+                            # 存储为知识条目，使用集合名称
+                            await self.app.tool_manager.call_tool(
+                                "role_info_add_knowledge",
+                                {
+                                    "keyword": "knowledge_collection",  # 使用集合名称
+                                    "content": chunk_content,
+                                    "description": f"来源: {source_file} | 类型: {chunk_metadata['chunk_type']} | 索引: {chunk_metadata.get('chunk_index', chunk_metadata.get('paragraph_index', 0))}"
+                                }
+                            )
+                        elif collection_type == "worldbook":
+                            # 存储为世界书条目，使用集合名称
+                            await self.app.tool_manager.call_tool(
+                                "role_info_add_world_entry",
+                                {
+                                    "concept": "worldbook_collection",  # 使用集合名称
+                                    "content": chunk_content,
+                                    "category": "worldbook_collection",
+                                    "keywords": [source_file, chunk_metadata['chunk_type']]
+                                }
+                            )
+                        
+                        success_count += 1
+                        logger.info(f"成功存储切割片段 {success_count}/{len(chunks)}")
+                        
+                    except Exception as e:
+                        logger.warning(f"存储切割片段失败: {e}")
+                        continue
+                
+                logger.info(f"✅ 成功处理并向量化 {success_count}/{len(chunks)} 个文本片段")
+                return success_count > 0
+                
+        except Exception as e:
+            logger.error(f"自动向量化失败: {e}")
+            return False
     
     async def on_role_save(self, role_name: str, role_content: str):
         """保存角色信息"""
@@ -674,18 +897,73 @@ class EventHandlers:
             return "", f"<div style='color: red;'>❌ 加载失败: {str(e)}</div>"
     
     async def on_knowledge_file_upload(self, files):
-        """处理知识文件上传"""
+        """处理知识文件上传 - 支持txt和csv格式，自动向量化，包含查重"""
         if not files:
             return ""
         
         try:
             combined_content = []
-            for file in files:
-                with open(file.name, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                    combined_content.append(f"=== {file.name} ===\n{content}")
+            processed_files = []
+            skipped_files = []
             
-            return "\n\n".join(combined_content)
+            for file in files:
+                file_path = file.name
+                file_ext = file_path.lower().split('.')[-1]
+                file_name = Path(file_path).name
+                
+                if file_ext == 'csv':
+                    # 处理CSV文件
+                    try:
+                        df = pd.read_csv(file_path, encoding='utf-8')
+                    except UnicodeDecodeError:
+                        try:
+                            df = pd.read_csv(file_path, encoding='gbk')
+                        except:
+                            df = pd.read_csv(file_path, encoding='gb2312')
+                    
+                    # 将CSV转换为文本格式
+                    content_parts = []
+                    for index, row in df.iterrows():
+                        row_text = " | ".join([f"{col}: {str(val)}" for col, val in row.items() if pd.notna(val)])
+                        content_parts.append(row_text)
+                    
+                    content = "\n".join(content_parts)
+                    
+                else:
+                    # 处理TXT文件
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                
+                # 检查内容是否已经处理过
+                if self._is_content_already_processed(content, file_name):
+                    skipped_files.append(file_name)
+                    combined_content.append(f"=== {file_name} (已跳过，内容重复) ===\n{content}")
+                    continue
+                
+                # 自动切割并存储到向量数据库
+                success = await self._auto_vectorize_content(content, "knowledge", file_name, file_ext)
+                
+                if success:
+                    # 记录已处理的文件内容
+                    self._record_processed_content(content, file_name, "角色知识")
+                    processed_files.append(file_name)
+                    combined_content.append(f"=== {file_name} (已处理) ===\n{content}")
+                else:
+                    combined_content.append(f"=== {file_name} (处理失败) ===\n{content}")
+            
+            # 添加处理状态提示
+            status_info = []
+            if processed_files:
+                status_info.append(f"✅ 成功处理: {', '.join(processed_files)}")
+            if skipped_files:
+                status_info.append(f"⚠️ 跳过重复: {', '.join(skipped_files)}")
+            
+            result_content = "\n\n".join(combined_content)
+            if status_info:
+                result_content = "\n".join(status_info) + "\n\n" + result_content
+            
+            return result_content
+            
         except Exception as e:
             logger.error(f"读取知识文件失败: {e}")
             return f"读取文件失败: {str(e)}"
@@ -702,13 +980,13 @@ class EventHandlers:
             if not self.app.tool_manager:
                 return "<div style='color: red;'>❌ 工具管理器未初始化</div>", ""
             
-            # 调用MCP工具添加知识
+            # 调用MCP工具添加知识，使用集合名称
             result = await self.app.tool_manager.call_tool(
                 "role_info_add_knowledge",
                 {
-                    "keyword": category.strip() if category else "通用知识",
+                    "keyword": "knowledge_collection",  # 使用集合名称
                     "content": content.strip(),
-                    "description": f"角色 {role_name.strip()} 的知识"
+                    "description": f"角色: {role_name.strip()} | 分类: {category.strip() if category else '通用知识'}"
                 }
             )
             
@@ -728,18 +1006,73 @@ class EventHandlers:
             return f"<div style='color: red;'>❌ 添加失败: {str(e)}</div>", ""
     
     async def on_world_file_upload(self, files):
-        """处理世界书文件上传"""
+        """处理世界书文件上传 - 支持txt和csv格式，自动向量化，包含查重"""
         if not files:
             return ""
         
         try:
             combined_content = []
-            for file in files:
-                with open(file.name, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                    combined_content.append(f"=== {file.name} ===\n{content}")
+            processed_files = []
+            skipped_files = []
             
-            return "\n\n".join(combined_content)
+            for file in files:
+                file_path = file.name
+                file_ext = file_path.lower().split('.')[-1]
+                file_name = Path(file_path).name
+                
+                if file_ext == 'csv':
+                    # 处理CSV文件
+                    try:
+                        df = pd.read_csv(file_path, encoding='utf-8')
+                    except UnicodeDecodeError:
+                        try:
+                            df = pd.read_csv(file_path, encoding='gbk')
+                        except:
+                            df = pd.read_csv(file_path, encoding='gb2312')
+                    
+                    # 将CSV转换为文本格式
+                    content_parts = []
+                    for index, row in df.iterrows():
+                        row_text = " | ".join([f"{col}: {str(val)}" for col, val in row.items() if pd.notna(val)])
+                        content_parts.append(row_text)
+                    
+                    content = "\n".join(content_parts)
+                    
+                else:
+                    # 处理TXT文件
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                
+                # 检查内容是否已经处理过
+                if self._is_content_already_processed(content, file_name):
+                    skipped_files.append(file_name)
+                    combined_content.append(f"=== {file_name} (已跳过，内容重复) ===\n{content}")
+                    continue
+                
+                # 自动切割并存储到向量数据库
+                success = await self._auto_vectorize_content(content, "worldbook", file_name, file_ext)
+                
+                if success:
+                    # 记录已处理的文件内容
+                    self._record_processed_content(content, file_name, "世界书")
+                    processed_files.append(file_name)
+                    combined_content.append(f"=== {file_name} (已处理) ===\n{content}")
+                else:
+                    combined_content.append(f"=== {file_name} (处理失败) ===\n{content}")
+            
+            # 添加处理状态提示
+            status_info = []
+            if processed_files:
+                status_info.append(f"✅ 成功处理: {', '.join(processed_files)}")
+            if skipped_files:
+                status_info.append(f"⚠️ 跳过重复: {', '.join(skipped_files)}")
+            
+            result_content = "\n\n".join(combined_content)
+            if status_info:
+                result_content = "\n".join(status_info) + "\n\n" + result_content
+            
+            return result_content
+            
         except Exception as e:
             logger.error(f"读取世界书文件失败: {e}")
             return f"读取文件失败: {str(e)}"
@@ -756,14 +1089,14 @@ class EventHandlers:
             if not self.app.tool_manager:
                 return "<div style='color: red;'>❌ 工具管理器未初始化</div>", ""
             
-            # 调用MCP工具添加世界设定
+            # 调用MCP工具添加世界设定，使用集合名称
             result = await self.app.tool_manager.call_tool(
                 "role_info_add_world_entry",
                 {
-                    "concept": category.strip() if category else "通用设定",
+                    "concept": "worldbook_collection",  # 使用集合名称
                     "content": content.strip(),
-                    "category": "世界书",
-                    "keywords": [role_name.strip()]
+                    "category": "worldbook_collection",
+                    "keywords": [role_name.strip(), category.strip() if category else "通用设定"]
                 }
             )
             
@@ -783,7 +1116,7 @@ class EventHandlers:
             return f"<div style='color: red;'>❌ 添加失败: {str(e)}</div>", ""
     
     async def on_role_preview_context(self, role_name: str):
-        """预览完整角色上下文"""
+        """预览完整角色上下文 - 基于已有数据，不依赖输入内容"""
         if not role_name or not role_name.strip():
             return "<div style='color: red;'>❌ 请输入角色名称</div>", False
         
@@ -791,59 +1124,150 @@ class EventHandlers:
             if not self.app.tool_manager:
                 return "<div style='color: red;'>❌ 工具管理器未初始化</div>", False
             
-            # 调用MCP工具获取完整上下文
-            result = await self.app.tool_manager.call_tool(
-                "role_info_get_role_context",
-                {"role_name": role_name.strip()}
+            role_name = role_name.strip()
+            
+            # 查询角色信息
+            profile_result = await self.app.tool_manager.call_tool(
+                "role_info_query_profile",
+                {"name": role_name}
             )
             
-            # 处理ToolResult对象
-            success, result_data, error_msg = self._handle_tool_result(result)
+            # 查询角色知识
+            knowledge_result = await self.app.tool_manager.call_tool(
+                "role_info_search_knowledge",
+                {"query": role_name, "limit": 50}
+            )
             
-            if success:
-                context_data = result_data.get('context', {})
+            # 查询世界书
+            world_result = await self.app.tool_manager.call_tool(
+                "role_info_search_world",
+                {"query": role_name, "limit": 50}
+            )
+            
+            # 处理查询结果
+            profile_success, profile_data, _ = self._handle_tool_result(profile_result)
+            knowledge_success, knowledge_data, _ = self._handle_tool_result(knowledge_result)
+            world_success, world_data, _ = self._handle_tool_result(world_result)
+            
+            # 整合数据
+            context_data = {
+                "profile": {},
+                "knowledge": [],
+                "world_entries": []
+            }
+            
+            # 获取角色基础信息
+            if profile_success and profile_data.get('profiles'):
+                profiles = profile_data['profiles']
+                if profiles:
+                    profile = profiles[0]  # 取第一个匹配的角色
+                    context_data["profile"] = {
+                        "description": profile.get('content', '暂无角色信息'),
+                        "name": profile.get('name', role_name),
+                        "tags": profile.get('tags', [])
+                    }
+            
+            # 获取知识条目
+            if knowledge_success and knowledge_data.get('results'):
+                for knowledge in knowledge_data['results']:
+                    context_data["knowledge"].append({
+                        "category": knowledge.get('keyword', '未分类'),
+                        "content": knowledge.get('content', ''),
+                        "description": knowledge.get('description', '')
+                    })
+            
+            # 获取世界书条目
+            if world_success and world_data.get('results'):
+                for world_entry in world_data['results']:
+                    context_data["world_entries"].append({
+                        "category": world_entry.get('concept', '未分类'),
+                        "content": world_entry.get('content', ''),
+                        "keywords": world_entry.get('keywords', [])
+                    })
+            
+            # 检查是否有任何数据
+            has_profile = bool(context_data["profile"].get("description", "").strip())
+            has_knowledge = len(context_data["knowledge"]) > 0
+            has_world = len(context_data["world_entries"]) > 0
+            
+            if not (has_profile or has_knowledge or has_world):
+                return f"<div style='color: orange;'>⚠️ 角色 '{role_name}' 暂无相关数据<br/>请先上传角色信息、知识或世界书文件</div>", True
+            
+            # 格式化显示
+            context_html = f"""
+            <div style='font-family: monospace; padding: 15px; border: 1px solid #ddd; border-radius: 8px; background-color: #f9f9f9;'>
+                <h3>🎭 {role_name} - 完整角色上下文</h3>
                 
-                # 格式化显示
-                context_html = f"""
-                <div style='font-family: monospace; padding: 15px; border: 1px solid #ddd; border-radius: 8px; background-color: #f9f9f9;'>
-                    <h3>🎭 {role_name} - 完整角色上下文</h3>
-                    
-                    <div style='margin: 10px 0;'>
-                        <h4>👤 角色信息:</h4>
-                        <div style='background-color: #fff; padding: 10px; border-radius: 4px; margin: 5px 0;'>
-                            {context_data.get('profile', {}).get('description', '暂无角色信息')}
-                        </div>
+                <div style='margin: 10px 0;'>
+                    <h4>👤 角色信息:</h4>
+                    <div style='background-color: #fff; padding: 10px; border-radius: 4px; margin: 5px 0;'>
+                        {context_data['profile'].get('description', '暂无角色信息')}
                     </div>
-                    
-                    <div style='margin: 10px 0;'>
-                        <h4>📚 角色知识 ({len(context_data.get('knowledge', []))} 条):</h4>
-                        <div style='background-color: #fff; padding: 10px; border-radius: 4px; margin: 5px 0;'>
-                """
+                    {f'<small>标签: {", ".join(context_data["profile"].get("tags", []))}</small>' if context_data["profile"].get("tags") else ''}
+                </div>
                 
-                for knowledge in context_data.get('knowledge', []):
-                    context_html += f"<p><strong>{knowledge.get('category', '未分类')}:</strong> {knowledge.get('content', '')[:100]}{'...' if len(knowledge.get('content', '')) > 100 else ''}</p>"
-                
-                context_html += """
-                        </div>
+                <div style='margin: 10px 0;'>
+                    <h4>📚 角色知识 ({len(context_data['knowledge'])} 条):</h4>
+                    <div style='background-color: #fff; padding: 10px; border-radius: 4px; margin: 5px 0; max-height: 300px; overflow-y: auto;'>
+            """
+            
+            if context_data['knowledge']:
+                for i, knowledge in enumerate(context_data['knowledge'], 1):
+                    context_html += f"""
+                    <div style='margin: 5px 0; padding: 5px; border-left: 3px solid #007bff;'>
+                        <strong>{i}. {knowledge.get('category', '未分类')}:</strong> 
+                        {knowledge.get('content', '')[:200]}{'...' if len(knowledge.get('content', '')) > 200 else ''}
+                        {f'<br/><small style="color: #666;">{knowledge.get("description", "")}</small>' if knowledge.get('description') else ''}
                     </div>
-                    
-                    <div style='margin: 10px 0;'>
-                        <h4>🌍 世界设定 ({} 条):</h4>
-                        <div style='background-color: #fff; padding: 10px; border-radius: 4px; margin: 5px 0;'>
-                """.format(len(context_data.get('world_entries', [])))
-                
-                for world_entry in context_data.get('world_entries', []):
-                    context_html += f"<p><strong>{world_entry.get('category', '未分类')}:</strong> {world_entry.get('content', '')[:100]}{'...' if len(world_entry.get('content', '')) > 100 else ''}</p>"
-                
-                context_html += """
-                        </div>
+                    """
+            else:
+                context_html += "<p style='color: #666;'>暂无知识条目</p>"
+            
+            context_html += """
                     </div>
                 </div>
-                """
                 
-                return context_html, True
+                <div style='margin: 10px 0;'>
+                    <h4>🌍 世界设定 ({} 条):</h4>
+                    <div style='background-color: #fff; padding: 10px; border-radius: 4px; margin: 5px 0; max-height: 300px; overflow-y: auto;'>
+            """.format(len(context_data['world_entries']))
+            
+            if context_data['world_entries']:
+                for i, world_entry in enumerate(context_data['world_entries'], 1):
+                    context_html += f"""
+                    <div style='margin: 5px 0; padding: 5px; border-left: 3px solid #28a745;'>
+                        <strong>{i}. {world_entry.get('category', '未分类')}:</strong> 
+                        {world_entry.get('content', '')[:200]}{'...' if len(world_entry.get('content', '')) > 200 else ''}
+                        {f'<br/><small style="color: #666;">关键词: {", ".join(world_entry.get("keywords", []))}</small>' if world_entry.get('keywords') else ''}
+                    </div>
+                    """
             else:
-                return f"<div style='color: red;'>❌ 获取上下文失败: {error_msg}</div>", False
+                context_html += "<p style='color: #666;'>暂无世界设定</p>"
+            
+            context_html += """
+                    </div>
+                </div>
+                
+                <div style='margin: 15px 0; padding: 10px; background-color: #e9ecef; border-radius: 4px;'>
+                    <h5>📊 数据统计:</h5>
+                    <ul style='margin: 5px 0;'>
+                        <li>角色信息: {}</li>
+                        <li>知识条目: {} 条</li>
+                        <li>世界设定: {} 条</li>
+                        <li>总文本长度: 约 {} 字符</li>
+                    </ul>
+                </div>
+            </div>
+            """.format(
+                "已设置" if has_profile else "未设置",
+                len(context_data['knowledge']),
+                len(context_data['world_entries']),
+                len(context_data['profile'].get('description', '')) + 
+                sum(len(k.get('content', '')) for k in context_data['knowledge']) +
+                sum(len(w.get('content', '')) for w in context_data['world_entries'])
+            )
+            
+            return context_html, True
                 
         except Exception as e:
             logger.error(f"预览角色上下文失败: {e}")

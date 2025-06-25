@@ -143,8 +143,8 @@ class ConfigPanel:
                         role_load_btn = gr.Button("加载角色", variant="secondary", scale=1)
                     
                     role_profile_file = gr.File(
-                        label="上传角色信息文件 (.txt)",
-                        file_types=[".txt"],
+                        label="上传角色信息文件 (.txt, .csv)",
+                        file_types=[".txt", ".csv"],
                         file_count="single"
                     )
                     
@@ -172,8 +172,8 @@ class ConfigPanel:
                     )
                     
                     knowledge_file = gr.File(
-                        label="上传知识文件 (.txt)",
-                        file_types=[".txt"],
+                        label="上传知识文件 (.txt, .csv)",
+                        file_types=[".txt", ".csv"],
                         file_count="multiple"
                     )
                     
@@ -203,8 +203,8 @@ class ConfigPanel:
                     )
                     
                     world_file = gr.File(
-                        label="上传世界设定文件 (.txt)",
-                        file_types=[".txt"],
+                        label="上传世界设定文件 (.txt, .csv)",
+                        file_types=[".txt", ".csv"],
                         file_count="multiple"
                     )
                     

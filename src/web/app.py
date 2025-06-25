@@ -622,7 +622,6 @@ class AgentApp:
         # 预览完整上下文按钮
         if config_components.get('role_preview_btn'):
             async def show_context(role_name):
-                import gradio as gr
                 content, visible = await self.event_handlers.on_role_preview_context(role_name)
                 return content, gr.update(visible=visible)
             
