@@ -164,24 +164,33 @@ class ReactAgent(BaseAgent):
             except Exception as e:
                 print(f"获取记忆上下文失败: {e}")
         
-        # 创建执行上下文 - 不再在Agent层构建系统提示词
+        # ✅ 修复：处理传入的对话历史
+        messages = []
+        
+        # 检查是否有传入的对话历史
+        if context and context.get("conversation_history") and context.get("preserve_history"):
+            # 使用完整的对话历史
+            messages = context["conversation_history"].copy()
+            print(f"[ReactAgent.run] 使用完整对话历史，消息数: {len(messages)}")
+        else:
+            # 回退到仅使用当前查询
+            from core.types import Message, MessageRole
+            messages = [Message(role=MessageRole.USER, content=query)]
+            print(f"[ReactAgent.run] 仅使用当前消息")
+        
+        # 创建执行上下文 - 使用完整的消息历史
         agent_context = AgentContext(
             task_id=task_id,
             agent_type=self.agent_type,
             available_tools=available_tools,
-            messages=[
-                Message(
-                    role=MessageRole.USER,
-                    content=query
-                )
-            ],
+            messages=messages,  # ✅ 使用完整的消息历史，而不是仅当前消息
             variables={
                 **(context or {}),
                 "memory_context": memory_context,  # 传递记忆上下文给Node
                 "memory_manager": self.memory_manager,  # 传递记忆管理器给Node
             }
         )
-        print(f"agent_context: {agent_context}")
+        print(f"[ReactAgent.run] agent_context messages: {len(agent_context.messages)}")
         
         # 构建并执行图
         graph = self.build_graph(use_stream=False)  # 标准模式
@@ -215,14 +224,18 @@ class ReactAgent(BaseAgent):
             if not result.success:
                 result.result = "抱歉，无法生成回复"
         
-        # 保存对话到记忆
+        # ✅ 修复：只有在非流式模式下才在这里保存记忆（避免重复保存）
+        # 流式模式下会在event_handlers中处理记忆保存
         if self.memory_enabled and self.memory_manager and result.success:
             try:
-                await self.memory_manager.add_conversation(query, result.result)
-                print(f"对话已保存到记忆，会话ID: {self.memory_manager.session_id}")
+                # 检查是否已经有历史（说明是流式调用），避免重复保存
+                has_history = context and context.get("conversation_history") and len(context["conversation_history"]) > 1
+                if not has_history:
+                    await self.memory_manager.add_conversation(query, result.result)
+                    print(f"对话已保存到记忆，会话ID: {self.memory_manager.session_id}")
             except Exception as e:
                 print(f"保存对话记忆失败: {e}")
-                
+        
         # 构建执行轨迹
         result.execution_trace = [
             {
@@ -276,24 +289,33 @@ class ReactAgent(BaseAgent):
             except Exception as e:
                 print(f"获取记忆上下文失败: {e}")
         
-        # 创建执行上下文 - 不再在Agent层构建系统提示词
+        # ✅ 修复：处理传入的对话历史
+        messages = []
+        
+        # 检查是否有传入的对话历史
+        if context and context.get("conversation_history") and context.get("preserve_history"):
+            # 使用完整的对话历史
+            messages = context["conversation_history"].copy()
+            print(f"[ReactAgent.stream_run] 使用完整对话历史，消息数: {len(messages)}")
+        else:
+            # 回退到仅使用当前查询
+            from core.types import Message, MessageRole
+            messages = [Message(role=MessageRole.USER, content=query)]
+            print(f"[ReactAgent.stream_run] 仅使用当前消息")
+        
+        # 创建执行上下文 - 使用完整的消息历史
         agent_context = AgentContext(
             task_id=task_id,
             agent_type=self.agent_type,
             available_tools=available_tools,
-            messages=[
-                Message(
-                    role=MessageRole.USER,
-                    content=query
-                )
-            ],
+            messages=messages,  # ✅ 使用完整的消息历史，而不是仅当前消息
             variables={
                 **(context or {}),
                 "memory_context": memory_context,  # 传递记忆上下文给Node
                 "memory_manager": self.memory_manager,  # 传递记忆管理器给Node
             }
         )
-        print(f"agent_context: {agent_context}")
+        print(f"[ReactAgent.stream_run] agent_context messages: {len(agent_context.messages)}")
         
         # 构建流式图
         graph = self.build_graph(use_stream=True)

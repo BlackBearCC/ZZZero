@@ -945,8 +945,34 @@ class EventHandlers:
             # 关键词列表，用于检测是否需要立即刷新
             keywords = ['Question:', 'Thought:', 'Action:', 'Action Input:', 'Observation:', 'Final Answer:']
             
-            # 启动流式处理
-            async for chunk in self.app.current_agent.stream_run(message):
+            # ✅ 修复：构建完整的对话历史上下文
+            # 将gradio的history格式转换为Message对象列表
+            from core.types import Message, MessageRole
+            
+            conversation_messages = []
+            
+            # 转换历史对话（包括当前用户消息）
+            for item in new_history:
+                if item["role"] == "user":
+                    conversation_messages.append(Message(
+                        role=MessageRole.USER,
+                        content=item["content"]
+                    ))
+                elif item["role"] == "assistant" and item["content"].strip():
+                    # 只添加有内容的助手消息，跳过空的回复位置
+                    conversation_messages.append(Message(
+                        role=MessageRole.ASSISTANT,
+                        content=item["content"]
+                    ))
+            
+            # 构建包含历史的上下文
+            context_with_history = {
+                "conversation_history": conversation_messages,  # 完整的对话历史
+                "preserve_history": True  # 标记需要保留历史
+            }
+            
+            # ✅ 修复：传递完整上下文给Agent，而不仅仅是当前消息
+            async for chunk in self.app.current_agent.stream_run(message, context_with_history):
                 if chunk.get("type") == "text_chunk":
                     # 获取新的文本内容
                     text_content = chunk.get("content", "")
@@ -1074,6 +1100,15 @@ class EventHandlers:
                     assistant_reply["content"] = full_response
                     
                     yield new_history, message, gr.update(), f"错误: {chunk.get('error', '未知错误')}", "", gr.update(interactive=False)
+            
+            # ✅ 修复：对话完成后，将完整的对话保存到记忆系统
+            if self.app.current_agent and hasattr(self.app.current_agent, 'memory_enabled') and self.app.current_agent.memory_enabled:
+                try:
+                    if self.app.current_agent.memory_manager and full_response.strip():
+                        await self.app.current_agent.memory_manager.add_conversation(message, full_response)
+                        logger.info(f"对话已保存到记忆系统，会话ID: {self.app.current_agent.memory_manager.session_id}")
+                except Exception as e:
+                    logger.warning(f"保存对话到记忆系统失败: {e}")
             
             # 流式处理完成，最终应用完整的样式处理（关键词高亮、表格提取等）
             processed_text, tables_data = self.app.text_processor.highlight_agent_keywords(full_response, is_streaming=False)
