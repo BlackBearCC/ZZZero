@@ -73,7 +73,7 @@ class TextProcessor:
         return text, tables_data
     
     @staticmethod
-    def highlight_agent_keywords(text: str, is_streaming: bool = False) -> Tuple[str, List[Dict]]:
+    def highlight_agent_keywords(text: str, is_streaming: bool = False, last_char_index: int = -1) -> Tuple[str, List[Dict]]:
         """为Agent关键词添加高亮样式，同时提取表格数据，返回(处理后的文本, 表格数据列表)"""
         # 首先提取表格数据
         text, tables_data = TextProcessor.extract_tables_from_text(text)
@@ -113,9 +113,19 @@ class TextProcessor:
         for i, block in enumerate(preserved_blocks):
             text_without_blocks = text_without_blocks.replace(f"__PRESERVED_BLOCK_{i}__", block)
         
-        # 如果正在流式传输，添加流式指示器
+        # 如果正在流式传输，为新字符添加渐显效果
+        if is_streaming and last_char_index >= 0:
+            # 将最后一个字符包装为渐显动画
+            if len(text_without_blocks) > last_char_index:
+                char_before = text_without_blocks[:last_char_index]
+                new_char = text_without_blocks[last_char_index]
+                char_after = text_without_blocks[last_char_index + 1:]
+                
+                # 为新字符添加渐显动画
+                text_without_blocks = char_before + f'<span class="char-fade-in">{new_char}</span>' + char_after
+        
+        # 如果正在流式传输，添加打字机光标
         if is_streaming:
-            # 简化判断，只在文本末尾添加打字机光标
             if text_without_blocks.strip():
                 text_without_blocks += '<span class="typing-cursor"></span>'
         
@@ -288,4 +298,22 @@ class TextProcessor:
             "failed": "tool-error"
         }.get(status, "")
         
-        return f'<span class="{css_class}">{status_text}</span>' 
+        return f'<span class="{css_class}">{status_text}</span>'
+    
+    @staticmethod
+    def format_tool_output(tool_name: str, tool_output: str) -> str:
+        """格式化工具输出，用特殊样式包装"""
+        if not tool_output or not tool_output.strip():
+            return ""
+        
+        # 清理输出内容
+        clean_output = tool_output.strip()
+        
+        # 创建工具输出的HTML结构
+        formatted_output = f'''
+<div class="tool-output">
+    <div class="tool-name-tag">{tool_name}</div>
+    <div class="tool-output-content">{clean_output}</div>
+</div>
+'''
+        return formatted_output 

@@ -13,7 +13,28 @@ CUSTOM_CSS = """
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
 }
 
-/* 打字机效果样式 */
+/* 字符渐显动画 */
+.char-fade-in {
+    animation: charFadeIn 0.3s ease-in-out;
+    display: inline;
+}
+
+@keyframes charFadeIn {
+    0% { 
+        opacity: 0; 
+        transform: translateY(-5px);
+    }
+    50% {
+        opacity: 0.7;
+        transform: translateY(-2px);
+    }
+    100% { 
+        opacity: 1; 
+        transform: translateY(0);
+    }
+}
+
+/* 优化打字机光标动画 */
 .typing-cursor {
     display: inline-block;
     width: 2px;
@@ -132,6 +153,8 @@ CUSTOM_CSS = """
     padding-left: 8px !important;
     display: inline-block !important;
     margin: 2px 0 !important;
+    transition: none !important; /* 禁用过渡动画，防止跳动 */
+    will-change: auto !important; /* 优化渲染性能 */
 }
 
 /* Thought 样式 - 绿色 */
@@ -146,6 +169,8 @@ CUSTOM_CSS = """
     padding-left: 8px !important;
     display: inline-block !important;
     margin: 2px 0 !important;
+    transition: none !important;
+    will-change: auto !important;
 }
 
 /* Action 样式 - 橙色 */
@@ -160,6 +185,8 @@ CUSTOM_CSS = """
     padding-left: 8px !important;
     display: inline-block !important;
     margin: 2px 0 !important;
+    transition: none !important;
+    will-change: auto !important;
 }
 
 /* Action Input 样式 - 紫色 */
@@ -174,6 +201,8 @@ CUSTOM_CSS = """
     padding-left: 8px !important;
     display: inline-block !important;
     margin: 2px 0 !important;
+    transition: none !important;
+    will-change: auto !important;
 }
 
 /* Observation 样式 - 青色 */
@@ -188,6 +217,8 @@ CUSTOM_CSS = """
     padding-left: 8px !important;
     display: inline-block !important;
     margin: 2px 0 !important;
+    transition: none !important;
+    will-change: auto !important;
 }
 
 /* Final Answer 样式 - 红色 */
@@ -202,6 +233,8 @@ CUSTOM_CSS = """
     padding-left: 8px !important;
     display: inline-block !important;
     margin: 2px 0 !important;
+    transition: none !important;
+    will-change: auto !important;
 }
 
 /* 让消息内容可以正确显示HTML */
@@ -211,6 +244,11 @@ CUSTOM_CSS = """
     line-height: 1.4 !important;
     margin: 0 !important;
     padding: 0 !important;
+    font-variant-numeric: tabular-nums !important; /* 数字等宽 */
+    font-feature-settings: "kern" 1, "liga" 1 !important; /* 字符间距优化 */
+    text-rendering: optimizeSpeed !important; /* 优化渲染性能 */
+    font-size: 14px !important; /* 固定字体大小 */
+    min-height: 1.4em !important; /* 最小高度，防止跳动 */
 }
 
 /* 优化消息内容的段落间距 */
@@ -391,6 +429,56 @@ CUSTOM_CSS = """
     font-size: 11px;
     text-transform: uppercase;
     font-weight: bold;
+}
+
+/* 工具输出样式 - 独特的框框显示 */
+.tool-output {
+    background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%) !important;
+    border: 2px solid #cbd5e1 !important;
+    border-radius: 8px !important;
+    padding: 12px 16px !important;
+    margin: 8px 0 !important;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1) !important;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace !important;
+    font-size: 13px !important;
+    line-height: 1.5 !important;
+    position: relative !important;
+    border-left: 4px solid #3b82f6 !important;
+}
+
+.tool-output::before {
+    content: "🔧 工具输出";
+    position: absolute !important;
+    top: -8px !important;
+    left: 8px !important;
+    background: #3b82f6 !important;
+    color: white !important;
+    padding: 2px 8px !important;
+    border-radius: 4px !important;
+    font-size: 10px !important;
+    font-weight: bold !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif !important;
+}
+
+/* 工具名称标签 */
+.tool-name-tag {
+    display: inline-block !important;
+    background: #1e40af !important;
+    color: white !important;
+    padding: 2px 6px !important;
+    border-radius: 3px !important;
+    font-size: 10px !important;
+    font-weight: bold !important;
+    margin-bottom: 4px !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif !important;
+}
+
+/* 工具输出内容 */
+.tool-output-content {
+    white-space: pre-wrap !important;
+    word-wrap: break-word !important;
+    color: #334155 !important;
+    margin: 0 !important;
 }
 """
 
