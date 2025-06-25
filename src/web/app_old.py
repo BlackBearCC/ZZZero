@@ -69,15 +69,15 @@ class AgentApp:
             'temp_dir': './workspace/temp'
         }
         
+        # 创建工作空间目录
+        self._ensure_workspace_dirs()
+        
         # 初始化组件和处理器
         self.config_panel = ConfigPanel()
         self.chat_interface = ChatInterface()
         self.event_handlers = EventHandlers(self)
         self.text_processor = TextProcessor()
         self.file_utils = FileUtils()
-        
-        # 创建工作空间目录
-        self.file_utils.ensure_workspace_dirs(self.workspace_config)
         
     async def _update_agent_config(self):
         """更新Agent配置"""
@@ -142,6 +142,24 @@ class AgentApp:
             error_msg = f"更新Agent配置失败: {e}"
             logger.error(error_msg)
             return error_msg
+    
+    def _ensure_workspace_dirs(self):
+        """确保工作空间目录存在"""
+        self.file_utils.ensure_workspace_dirs(self.workspace_config)
+    
+    def _list_files_in_dir(self, dir_path: str) -> List[Dict[str, Any]]:
+        """列出目录中的文件"""
+        return self.file_utils.list_files_in_dir(dir_path)
+    
+    def _format_file_list_html(self, files: List[Dict], title: str) -> str:
+        """格式化文件列表为HTML"""
+        return self.file_utils.format_file_list_html(files, title)
+    
+    def _format_file_size(self, size_bytes: int) -> str:
+        """格式化文件大小"""
+        return self.file_utils.format_file_size(size_bytes)
+    
+
             
     def create_interface(self) -> gr.Blocks:
         """创建Gradio界面（重构版）"""
@@ -181,7 +199,7 @@ class AgentApp:
         ]:
             if component:
                 component.change(
-                    fn=self.event_handlers.on_config_change,
+                    self.event_handlers.on_config_change,
                     inputs=[
                         config_components.get('llm_provider'), 
                         config_components.get('model_name'), 
@@ -191,167 +209,149 @@ class AgentApp:
                         config_components.get('available_tools'), 
                         config_components.get('enabled_mcp_servers')
                     ],
-                    outputs=[]
+                    outputs=[config_components.get('config_status')]
                 )
         
         # 批处理配置事件
         for component in [
-            config_components.get('batch_enabled'), 
-            config_components.get('batch_csv_file'), 
-            config_components.get('batch_size'), 
-            config_components.get('concurrent_tasks'), 
-            config_components.get('processing_mode')
+            chat_components.get('batch_enabled'), 
+            chat_components.get('csv_file_upload'), 
+            chat_components.get('batch_size'), 
+            chat_components.get('concurrent_tasks'), 
+            chat_components.get('processing_mode')
         ]:
             if component:
                 component.change(
-                    fn=self.event_handlers.on_batch_config_change,
+                    self.event_handlers.on_batch_config_change,
                     inputs=[
-                        config_components.get('batch_enabled'), 
-                        config_components.get('batch_csv_file'), 
-                        config_components.get('batch_size'), 
-                        config_components.get('concurrent_tasks'), 
-                        config_components.get('processing_mode')
+                        chat_components.get('batch_enabled'), 
+                        chat_components.get('csv_file_upload'), 
+                        chat_components.get('batch_size'), 
+                        chat_components.get('concurrent_tasks'), 
+                        chat_components.get('processing_mode')
                     ],
                     outputs=[
-                        config_components.get('batch_config_display'),
-                        config_components.get('batch_fields_group'),
-                        config_components.get('batch_structure_display'),
-                        config_components.get('batch_preview_table'),
-                        config_components.get('batch_fields_checkbox')
+                        chat_components.get('batch_status'), 
+                        chat_components.get('csv_fields_section'), 
+                        chat_components.get('csv_info_display'), 
+                        chat_components.get('csv_preview_table'), 
+                        chat_components.get('csv_fields_selection')
                     ]
                 )
         
-        # 字段选择事件
-        if config_components.get('batch_fields_checkbox'):
-            config_components['batch_fields_checkbox'].change(
-                fn=self.event_handlers.on_fields_update,
-                inputs=[config_components['batch_fields_checkbox']],
-                outputs=[config_components.get('batch_config_display')]
+        # 字段选择更新事件
+        if chat_components.get('fields_update_btn'):
+            chat_components['fields_update_btn'].click(
+                self.event_handlers.on_fields_update,
+                inputs=[chat_components.get('csv_fields_selection')],
+                outputs=[chat_components.get('batch_status')]
             )
         
-        # MCP服务器变化事件
-        if config_components.get('enabled_mcp_servers'):
-            config_components['enabled_mcp_servers'].change(
-                fn=self.event_handlers.on_mcp_servers_change,
-                inputs=[config_components['enabled_mcp_servers']],
-                outputs=[config_components.get('mcp_servers_status')]
-            )
-        
-        # 刷新MCP服务器按钮
+        # MCP服务器事件
         if config_components.get('refresh_mcp_btn'):
             config_components['refresh_mcp_btn'].click(
-                fn=self.event_handlers.refresh_mcp_servers,
+                self._refresh_mcp_servers,
+                outputs=[config_components.get('mcp_servers_status'), config_components.get('enabled_mcp_servers')]
+            )
+        
+        if config_components.get('add_remote_btn'):
+            config_components['add_remote_btn'].click(
+                self.event_handlers.on_add_remote_server,
+                inputs=[config_components.get('remote_server_name'), config_components.get('remote_server_url')],
                 outputs=[
+                    config_components.get('remote_server_name'), 
+                    config_components.get('remote_server_url'), 
                     config_components.get('mcp_servers_status'), 
                     config_components.get('enabled_mcp_servers')
                 ]
             )
         
-        # 添加远程服务器按钮
-        if config_components.get('add_remote_btn'):
-            config_components['add_remote_btn'].click(
-                fn=self.event_handlers.on_add_remote_server,
-                inputs=[
-                    config_components.get('remote_server_name'), 
-                    config_components.get('remote_server_url')
-                ],
-                outputs=[
-                    config_components.get('remote_server_name'), 
-                    config_components.get('remote_server_url'), 
-                    config_components.get('remote_server_status'), 
-                    config_components.get('enabled_mcp_servers')
-                ]
+        if config_components.get('enabled_mcp_servers'):
+            config_components['enabled_mcp_servers'].change(
+                self.event_handlers.on_mcp_servers_change,
+                inputs=[config_components.get('enabled_mcp_servers')],
+                outputs=[config_components.get('mcp_servers_status')]
             )
         
-        # 记忆管理按钮
+        # 记忆管理事件
         if config_components.get('refresh_memory_btn'):
             config_components['refresh_memory_btn'].click(
-                fn=self.event_handlers.refresh_memory_status,
+                self._refresh_memory_status,
                 outputs=[config_components.get('memory_status')]
             )
         
         if config_components.get('clear_memory_btn'):
             config_components['clear_memory_btn'].click(
-                fn=self.event_handlers.clear_memory,
+                self._clear_memory,
                 outputs=[config_components.get('memory_status')]
             )
         
         if config_components.get('export_memory_btn'):
             config_components['export_memory_btn'].click(
-                fn=self.event_handlers.export_memory,
-                outputs=[
-                    config_components.get('memory_status'), 
-                    config_components.get('memory_export_display')
-                ]
+                self._export_memory,
+                outputs=[config_components.get('memory_status'), config_components.get('memory_export_display')]
             )
         
-        # 文件上传和刷新
-        if config_components.get('file_upload'):
-            config_components['file_upload'].change(
-                fn=self.event_handlers.on_upload_files,
-                inputs=[config_components['file_upload']],
-                outputs=[
-                    config_components.get('upload_status'), 
-                    config_components.get('input_files_display')
-                ]
+        # 文件管理事件
+        if config_components.get('upload_btn'):
+            config_components['upload_btn'].click(
+                self.event_handlers.on_upload_files,
+                inputs=[config_components.get('file_upload')],
+                outputs=[config_components.get('upload_status'), config_components.get('input_files_display')]
             )
         
         if config_components.get('refresh_files_btn'):
             config_components['refresh_files_btn'].click(
-                fn=self.event_handlers.on_refresh_file_lists,
-                outputs=[
-                    config_components.get('input_files_display'), 
-                    config_components.get('output_files_display')
-                ]
+                self.event_handlers.on_refresh_file_lists,
+                outputs=[config_components.get('input_files_display'), config_components.get('output_files_display')]
             )
         
-        # 聊天功能
-        if chat_components.get('msg_input') and chat_components.get('chatbot'):
+        # 聊天事件
+        if chat_components.get('msg_input') and chat_components.get('send_btn'):
             chat_components['msg_input'].submit(
-                fn=self.event_handlers.on_stream_chat,
-                inputs=[
-                    chat_components['msg_input'], 
-                    chat_components['chatbot']
-                ],
+                self._stream_chat,
+                inputs=[chat_components.get('msg_input'), chat_components.get('chatbot')],
                 outputs=[
-                    chat_components['chatbot'], 
-                    chat_components['msg_input'], 
+                    chat_components.get('msg_input'), 
+                    chat_components.get('chatbot'), 
                     chat_components.get('dynamic_table'), 
+                    chat_components.get('execution_trace'), 
                     chat_components.get('metrics_display'), 
+                    chat_components.get('node_status'), 
                     chat_components.get('flow_diagram')
-                ]
+                ],
+                show_progress=False
             )
-        
-        if chat_components.get('send_btn'):
+            
             chat_components['send_btn'].click(
-                fn=self.event_handlers.on_stream_chat,
-                inputs=[
-                    chat_components['msg_input'], 
-                    chat_components['chatbot']
-                ],
+                self._stream_chat,
+                inputs=[chat_components.get('msg_input'), chat_components.get('chatbot')],
                 outputs=[
-                    chat_components['chatbot'], 
-                    chat_components['msg_input'], 
+                    chat_components.get('msg_input'), 
+                    chat_components.get('chatbot'), 
                     chat_components.get('dynamic_table'), 
+                    chat_components.get('execution_trace'), 
                     chat_components.get('metrics_display'), 
+                    chat_components.get('node_status'), 
                     chat_components.get('flow_diagram')
-                ]
+                ],
+                show_progress=False
             )
         
-        # 页面加载事件
+        # 页面加载时的初始化
         app.load(
-            fn=self._on_load,
+            self._on_load,
             outputs=[
                 config_components.get('mcp_servers_status'), 
                 config_components.get('enabled_mcp_servers'), 
                 chat_components.get('chatbot'), 
                 chat_components.get('dynamic_table'), 
-                config_components.get('memory_status'), 
+                config_components.get('memory_status'),
                 config_components.get('input_files_display'), 
                 config_components.get('output_files_display')
             ]
         )
-
+    
     async def _on_load(self):
         """页面加载时的初始化（重构版）"""
         try:
@@ -420,7 +420,7 @@ class AgentApp:
             ]
             
             # 获取初始记忆状态
-            memory_status_html = await self.event_handlers.refresh_memory_status()
+            memory_status_html = await self._refresh_memory_status()
             
             # 获取文件列表
             input_files_html, output_files_html = await self.event_handlers.on_refresh_file_lists()
@@ -448,64 +448,7 @@ class AgentApp:
                 "❌ 获取文件列表失败"
             )
     
-    async def _refresh_mcp_servers(self):
-        """刷新MCP服务器状态"""
-        try:
-            if not self.tool_manager:
-                await self._update_agent_config()
-            
-            servers_status = self.tool_manager.get_servers_status() if self.tool_manager else {}
-            
-            # 生成状态HTML
-            status_html = "<div style='font-family: monospace;'>"
-            status_html += "<h4>🔌 MCP服务器状态</h4>"
-            
-            if not servers_status:
-                status_html += "<p>暂无可用的MCP服务器</p>"
-            else:
-                for server_id, info in servers_status.items():
-                    status_icon = "🟢" if info['running'] else "🔴"
-                    enable_icon = "✅" if info.get('enabled', False) else "⚪"
-                    
-                    # 依赖状态图标
-                    deps_info = info.get('dependencies', {})
-                    deps_status = deps_info.get('status', 'unknown')
-                    deps_icon = {"ok": "✅", "missing": "❌", "unknown": "❓"}.get(deps_status, "❓")
-                    
-                    status_html += f"<div style='margin: 8px 0; padding: 8px; border: 1px solid #ddd; border-radius: 4px;'>"
-                    status_html += f"<strong>{status_icon} {enable_icon} {deps_icon} {info['name']}</strong><br/>"
-                    status_html += f"<small>ID: {server_id} | 状态: {'运行中' if info['running'] else '未运行'}</small><br/>"
-                    status_html += f"<small>工具: {info.get('enabled_tools', 0)}/{info.get('total_tools', 0)} 个可用</small><br/>"
-                    status_html += f"<small>依赖: {deps_info.get('message', '未知')}</small><br/>"
-                    if deps_status == "missing" and "install_command" in deps_info:
-                        status_html += f"<small style='color: #ff6600;'>安装: {deps_info['install_command']}</small><br/>"
-                    status_html += f"<small>{info['description']}</small>"
-                    status_html += "</div>"
-            
-            status_html += "</div>"
-            
-            # 生成可选择的服务器列表
-            choices = []
-            default_enabled = []
-            
-            for server_id, info in servers_status.items():
-                label = f"{info['name']} ({server_id})"
-                choices.append((label, server_id))
-                # 默认勾选已启用的服务器
-                if info.get('enabled', False) or server_id in ['csv', 'chromadb', 'python', 'role_info', 'roleplay']:
-                    default_enabled.append(server_id)
-            
-            return status_html, gr.update(choices=choices, value=default_enabled)
-            
-        except Exception as e:
-            error_msg = f"刷新MCP服务器状态失败: {e}"
-            logger.error(error_msg)
-            return (
-                f"❌ {error_msg}",
-                gr.update(choices=[], value=[])
-            )
-            
     def launch(self, **kwargs):
         """启动应用"""
         interface = self.create_interface()
-        interface.launch(**kwargs) 
+        interface.launch(**kwargs)
