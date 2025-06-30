@@ -1405,26 +1405,22 @@ class EventHandlers:
                 elif chunk.get("type") == "text_chunk":
                     # 累加响应内容 - 真正的流式处理
                     chunk_content = chunk.get("content", "")
-                    full_response += chunk_content  # 累加新的chunk
-                    print(f"[on_stream_chat] 收到chunk，长度: {len(chunk_content)}, 累计长度: {len(full_response)}")
-                    
-                    # 实时应用关键词高亮，但不提取表格（避免复杂处理）
-                    processed_text, _ = self.app.text_processor.highlight_agent_keywords(
-                        full_response, 
-                        is_streaming=True
-                    )
-                    
-                    # 更新助手回复内容
-                    assistant_reply["content"] = processed_text
-                    
-                    # 生成指标
-                    metrics_text = self.app.text_processor.format_stream_metrics(tool_calls, full_response)
-                    
-                    # 更新界面
-                    yield new_history, message, gr.update(), metrics_text, "", gr.update(interactive=False)
-                    
-                    # 小幅延迟以提供更好的视觉体验
-                    await asyncio.sleep(0.01)
+                    if chunk_content:  # 只有当chunk有内容时才处理
+                        full_response += chunk_content  # 累加新的chunk
+                        print(f"[on_stream_chat] 收到chunk: '{chunk_content}', 累计长度: {len(full_response)}")
+                        
+                        # 直接追加新内容到助手回复中，而不是重新渲染整个内容
+                        # 简单追加，避免复杂的高亮处理导致重新渲染
+                        assistant_reply["content"] += chunk_content
+                        
+                        # 生成指标
+                        metrics_text = self.app.text_processor.format_stream_metrics(tool_calls, full_response)
+                        
+                        # 更新界面 - 只更新指标，不重新渲染聊天内容
+                        yield new_history, message, gr.update(), metrics_text, "", gr.update(interactive=False)
+                        
+                        # 减少延迟，提高流畅度
+                        await asyncio.sleep(0.005)
                     
                 elif chunk.get("type") == "tool_result":
                     # 获取工具信息和结果
