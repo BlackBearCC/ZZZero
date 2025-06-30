@@ -1397,58 +1397,34 @@ class EventHandlers:
             
             # ✅ 修复：传递完整上下文给Agent，而不仅仅是当前消息
             async for chunk in self.app.current_agent.stream_run(message, context_with_history):
-                if chunk.get("type") == "text_chunk":
-                    # 获取新的文本内容
-                    text_content = chunk.get("content", "")
-                    full_response += text_content
+                if chunk.get("type") == "start":
+                    # 显示开始思考的提示
+                    assistant_reply["content"] = "🧠 正在思考中..."
+                    yield new_history, message, gr.update(), "", "", gr.update(interactive=False)
                     
-                    # 批量字符显示，但在遇到关键词时立即刷新
-                    while displayed_length < len(full_response):
-                        # 计算本批次要显示的字符数
-                        remaining_chars = len(full_response) - displayed_length
-                        current_batch_size = min(chars_per_batch, remaining_chars)
-                        
-                        # 检查即将显示的内容是否包含关键词
-                        next_display_text = full_response[:displayed_length + current_batch_size]
-                        prev_display_text = full_response[:displayed_length]
-                        
-                        # 如果新增内容包含关键词，立即显示到关键词结束
-                        keyword_found = False
-                        for keyword in keywords:
-                            if keyword in next_display_text and keyword not in prev_display_text:
-                                # 找到关键词，显示到关键词结束位置
-                                keyword_end = next_display_text.find(keyword) + len(keyword)
-                                if keyword_end > displayed_length:
-                                    displayed_length = keyword_end
-                                    keyword_found = True
-                                    break
-                        
-                        if not keyword_found:
-                            displayed_length += current_batch_size
-                        
-                        # 获取当前应该显示的文本
-                        current_display_text = full_response[:displayed_length]
-                        
-                        # 实时应用关键词高亮，但不提取表格（避免复杂处理）
-                        processed_text, _ = self.app.text_processor.highlight_agent_keywords(
-                            current_display_text, 
-                            is_streaming=True
-                        )
-                        
-                        # 更新助手回复内容
-                        assistant_reply["content"] = processed_text
-                        
-                        # 生成指标
-                        metrics_text = self.app.text_processor.format_stream_metrics(tool_calls, current_display_text)
-                        
-                        # 更新界面
-                        yield new_history, message, gr.update(), metrics_text, "", gr.update(interactive=False)
-                        
-                        # 如果遇到关键词，稍作停顿让用户注意
-                        if keyword_found:
-                            await asyncio.sleep(typing_speed * 3)  # 关键词后停顿稍长
-                        else:
-                            await asyncio.sleep(typing_speed)
+                elif chunk.get("type") == "text_chunk":
+                    # 累加响应内容 - 真正的流式处理
+                    chunk_content = chunk.get("content", "")
+                    full_response += chunk_content  # 累加新的chunk
+                    print(f"[on_stream_chat] 收到chunk，长度: {len(chunk_content)}, 累计长度: {len(full_response)}")
+                    
+                    # 实时应用关键词高亮，但不提取表格（避免复杂处理）
+                    processed_text, _ = self.app.text_processor.highlight_agent_keywords(
+                        full_response, 
+                        is_streaming=True
+                    )
+                    
+                    # 更新助手回复内容
+                    assistant_reply["content"] = processed_text
+                    
+                    # 生成指标
+                    metrics_text = self.app.text_processor.format_stream_metrics(tool_calls, full_response)
+                    
+                    # 更新界面
+                    yield new_history, message, gr.update(), metrics_text, "", gr.update(interactive=False)
+                    
+                    # 小幅延迟以提供更好的视觉体验
+                    await asyncio.sleep(0.01)
                     
                 elif chunk.get("type") == "tool_result":
                     # 获取工具信息和结果
@@ -1514,6 +1490,12 @@ class EventHandlers:
                     flow_diagram = self.app.text_processor.generate_flow_diagram(trace_data)
                     
                     yield new_history, message, gr.update(), "", flow_diagram, gr.update(interactive=False)
+                    
+                elif chunk.get("type") == "final_result":
+                    # 如果还没有设置full_response，从final_result获取
+                    if not full_response:
+                        full_response = chunk.get("content", "")
+                        print(f"[on_stream_chat] 从final_result获取响应，长度: {len(full_response)}")
                     
                 elif chunk.get("type") in ["stream_error", "tool_error"]:
                     # 处理错误

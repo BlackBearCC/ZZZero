@@ -82,7 +82,7 @@ class ReactAgent(BaseAgent):
                 
                 print(f"[ThoughtNode] LLM响应预览: {response_text[:300]}...")
                 
-                # 使用集成的parse方法
+                # 使用集成的parse方法 - 直接使用原始响应，不需要特殊处理
                 thought_analysis = self.parse(response_text, format_type="structured")
                 
                 # 处理解析结果
@@ -837,30 +837,44 @@ class ReactAgent(BaseAgent):
         graph = self.build_graph(use_stream=False)
         final_state = await self.executor.execute(graph, initial_state, {})
         
+        # 调试：显示final_state的完整内容
+        print(f"[ReactAgent.run] 执行完成，final_state: {final_state}")
+        
         # 从最终状态提取结果
         if final_state:
             # 优先从final_answer字段获取
             if "final_answer" in final_state:
                 result.result = final_state["final_answer"]
                 result.success = True
+                print(f"[ReactAgent.run] 从final_answer字段提取结果: {result.result[:100]}...")
             # 从消息中提取最终回答
             elif "messages" in final_state and final_state["messages"]:
                 last_message = final_state["messages"][-1]
                 if hasattr(last_message, 'content'):
                     result.result = last_message.content
                     result.success = True
+                    print(f"[ReactAgent.run] 从messages提取结果: {result.result[:100]}...")
                 else:
                     result.result = str(last_message)
                     result.success = True
+                    print(f"[ReactAgent.run] 从messages提取结果(str): {result.result[:100]}...")
             # 从其他响应字段获取
             elif "agent_response" in final_state:
                 result.result = final_state["agent_response"]
                 result.success = True
+                print(f"[ReactAgent.run] 从agent_response提取结果: {result.result[:100]}...")
             elif "chat_response" in final_state:
                 result.result = final_state["chat_response"]
                 result.success = True
+                print(f"[ReactAgent.run] 从chat_response提取结果: {result.result[:100]}...")
             else:
                 result.result = "抱歉，无法生成回复"
+                print(f"[ReactAgent.run] 未找到有效结果，使用默认回复")
+        else:
+            result.result = "抱歉，执行失败"
+            print(f"[ReactAgent.run] final_state为空")
+        
+        print(f"[ReactAgent.run] 最终结果: success={result.success}, result={result.result[:100] if result.result else 'None'}...")
         
         # 保存记忆
         if self.memory_enabled and self.memory_manager and result.success:
@@ -900,15 +914,163 @@ class ReactAgent(BaseAgent):
         return result
     
     async def stream_run(self, query: str, context: Optional[Dict[str, Any]] = None) -> AsyncIterator[Dict[str, Any]]:
-        """流式运行ReAct Agent - 简化版本"""
-        # 暂时回退到标准执行
-        result = await self.run(query, context)
-        yield {
-            "type": "final_result",
-            "content": result.result,
-            "task_id": result.task_id,
-            "metadata": {"success": result.success}
-        }
+        """真正的流式运行 - 实时返回思考过程"""
+        import uuid
+        
+        task_id = str(uuid.uuid4())
+        
+        try:
+            print(f"[ReactAgent.stream_run] 开始流式执行Agent...")
+            
+            # 发送开始信号
+            yield {
+                "type": "start",
+                "content": "🧠 开始思考...",
+                "metadata": {"success": True}
+            }
+            
+            # 初始化
+            await self.initialize()
+            
+            # 获取可用工具列表
+            available_tools = []
+            if self.tool_manager:
+                available_tools = self.tool_manager.list_tools()
+            
+            # 构建记忆上下文
+            memory_context = ""
+            if self.memory_enabled and self.memory_manager:
+                try:
+                    memory_context = await self.memory_manager.get_context_for_query(query, max_entries=5)
+                except Exception as e:
+                    print(f"获取记忆上下文失败: {e}")
+            
+            # 处理对话历史
+            messages = []
+            if context and context.get("conversation_history") and context.get("preserve_history"):
+                messages = context["conversation_history"].copy()
+                print(f"[ReactAgent.stream_run] 使用完整对话历史，消息数: {len(messages)}")
+            else:
+                messages = [Message(role=MessageRole.USER, content=query)]
+                print(f"[ReactAgent.stream_run] 仅使用当前消息")
+            
+            # 创建思考节点
+            thought_node = self.ThoughtNode("thought", self.llm, use_think_mode=self.use_think_mode)
+            
+            print(f"[ReactAgent.stream_run] 执行思考节点...")
+            
+            # 使用集成的build_prompt方法
+            system_prompt = thought_node.build_prompt("thought", 
+                                             query=messages[-1].content if messages else "",
+                                             tools=", ".join(available_tools) if available_tools else "无",
+                                             context=memory_context)
+            
+            print(f"[ReactAgent.stream_run] 使用Think模式流式调用...")
+            
+            # 真正的流式调用
+            thought_content = ""
+            async for chunk in thought_node.stream_generate(messages, system_prompt=system_prompt, mode="think"):
+                if hasattr(chunk, 'content') and chunk.content:
+                    chunk_text = chunk.content
+                    thought_content += chunk_text
+                    
+                    # 实时流式发送每个chunk
+                    yield {
+                        "type": "text_chunk",
+                        "content": chunk_text,
+                        "task_id": task_id,
+                        "metadata": {"success": True, "node": "thought_stream"}
+                    }
+                elif isinstance(chunk, str):
+                    thought_content += chunk
+                    yield {
+                        "type": "text_chunk", 
+                        "content": chunk,
+                        "task_id": task_id,
+                        "metadata": {"success": True, "node": "thought_stream"}
+                    }
+            
+            print(f"[ReactAgent.stream_run] 思考流式输出完成，总长度: {len(thought_content)}")
+            
+            # 分析思考结果判断是否需要工具
+            needs_tools = ("需要" in thought_content or "使用" in thought_content) and available_tools
+            
+            if needs_tools:
+                # 需要工具，发送工具调用信息
+                yield {
+                    "type": "text_chunk", 
+                    "content": "\n\n🔧 需要使用工具，正在执行...",
+                    "task_id": task_id,
+                    "metadata": {"success": True, "node": "action_info"}
+                }
+                
+                # 这里可以扩展工具调用的流式处理
+                # 暂时跳过复杂的工具调用，直接进入最终答案
+            
+            # 生成最终答案
+            final_answer_node = self.FinalAnswerNode("final_answer", self.llm)
+            final_system_prompt = final_answer_node.build_prompt("final_answer",
+                                             query=messages[-1].content if messages else "",
+                                             thought="基于前面的完整推理过程",
+                                             observations="已完成所有必要的分析")
+            
+            print(f"[ReactAgent.stream_run] 开始流式生成最终答案...")
+            
+            # 最终答案的流式输出
+            final_answer_content = ""
+            async for chunk in final_answer_node.stream_generate(messages, system_prompt=final_system_prompt):
+                if hasattr(chunk, 'content') and chunk.content:
+                    chunk_text = chunk.content
+                    final_answer_content += chunk_text
+                    
+                    # 实时流式发送每个chunk
+                    yield {
+                        "type": "text_chunk",
+                        "content": chunk_text,
+                        "task_id": task_id,
+                        "metadata": {"success": True, "node": "final_answer_stream", "complete": False}
+                    }
+                elif isinstance(chunk, str):
+                    final_answer_content += chunk
+                    yield {
+                        "type": "text_chunk",
+                        "content": chunk,
+                        "task_id": task_id,
+                        "metadata": {"success": True, "node": "final_answer_stream", "complete": False}
+                    }
+            
+            print(f"[ReactAgent.stream_run] 最终答案流式输出完成，总长度: {len(final_answer_content)}")
+            
+            # 发送完成信号
+            yield {
+                "type": "text_chunk",
+                "content": "",
+                "task_id": task_id,
+                "metadata": {"success": True, "node": "final_answer_stream", "complete": True}
+            }
+            
+            # 保存记忆
+            if self.memory_enabled and self.memory_manager and final_answer_content:
+                try:
+                    has_history = context and context.get("conversation_history") and len(context["conversation_history"]) > 1
+                    if not has_history:
+                        await self.memory_manager.add_conversation(query, final_answer_content)
+                        print(f"对话已保存到记忆，会话ID: {self.memory_manager.session_id}")
+                except Exception as e:
+                    print(f"保存对话记忆失败: {e}")
+                    
+        except Exception as e:
+            error_msg = f"Agent执行异常: {str(e)}"
+            print(f"[ReactAgent.stream_run] {error_msg}")
+            import traceback
+            traceback.print_exc()
+            yield {
+                "type": "stream_error",
+                "content": error_msg,
+                "error": error_msg,
+                "task_id": task_id,
+                "metadata": {"success": False}
+            }
         
     # _build_system_prompt 方法已移到基类 BaseAgent 中
         

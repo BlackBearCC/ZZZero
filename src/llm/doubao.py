@@ -245,14 +245,10 @@ class DoubaoLLM(BaseLLMProvider):
         if mode == "think":
             think_result = await self._think(messages, **kwargs)
             
-            # 构建包含推理过程的完整内容
-            full_content = think_result.content
-            if think_result.reasoning_content:
-                full_content = f"**🧠 推理过程：**\n{think_result.reasoning_content}\n\n**结论：**\n{think_result.content}"
-            
+            # 只返回最终内容，推理过程通过metadata传递
             return Message(
                 role=MessageRole.ASSISTANT,
-                content=full_content,
+                content=think_result.content,
                 metadata={
                     **think_result.metadata,
                     "mode": "think",

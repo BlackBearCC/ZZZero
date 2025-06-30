@@ -18,12 +18,12 @@ from llm.base import LLMFactory
 from tools.mcp_tools import MCPToolManager
 
 # 导入重构后的模块
-from .components.config_panel import ConfigPanel
-from .components.chat_interface import ChatInterface
-from .handlers.event_handlers import EventHandlers
-from .utils.text_processing import TextProcessor
-from .utils.file_utils import FileUtils
-from .utils.styles import CUSTOM_CSS, HTML_HEAD
+from web.components.config_panel import ConfigPanel
+from web.components.chat_interface import ChatInterface
+from web.handlers.event_handlers import EventHandlers
+from web.utils.text_processing import TextProcessor
+from web.utils.file_utils import FileUtils
+from web.utils.styles import CUSTOM_CSS, HTML_HEAD
 
 # 配置日志
 logger = logging.getLogger(__name__)
