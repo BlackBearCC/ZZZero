@@ -70,24 +70,32 @@ class NodeResult:
 
 
 class BaseNode(ABC):
-    """节点基类 - 基于LangGraph设计理念
+    """节点基类 - 集成常用功能的智能节点
     
-    核心改进：
-    1. 节点函数接收完整状态字典作为输入
-    2. 返回状态更新字典（而不是复杂的NodeOutput）
-    3. 支持返回Command对象进行流程控制
-    4. 简化的执行接口
+    集成功能：
+    1. LLM调用 (node.llm.generate)
+    2. 数据解析 (node.parse)
+    3. 提示构建 (node.build_prompt)
+    4. 向量搜索 (node.vector_search)
+    5. 状态管理 (基于LangGraph设计)
     """
     
     def __init__(self, 
                  name: str,
                  node_type: NodeType = NodeType.CUSTOM,
                  description: Optional[str] = None,
+                 llm: Optional['BaseLLMProvider'] = None,
                  **kwargs):
         self.name = name
         self.node_type = node_type
         self.description = description
         self.config = kwargs
+        
+        # 集成的功能组件
+        self.llm = llm
+        self._vector_client = None
+        self._parsers = {}
+        self._prompt_templates = {}
         
     @abstractmethod
     async def execute(self, state: Dict[str, Any]) -> Union[Dict[str, Any], Command]:
@@ -172,6 +180,305 @@ class BaseNode(ABC):
     def create_user_message(self, content: str) -> Message:
         """创建用户消息"""
         return Message(role=MessageRole.USER, content=content)
+    
+    # ==================== 集成功能方法 ====================
+    
+    async def generate(self, 
+                      messages: List[Message], 
+                      system_prompt: Optional[str] = None,
+                      **kwargs) -> Message:
+        """调用LLM生成回复
+        
+        Args:
+            messages: 消息历史
+            system_prompt: 系统提示（可选）
+            **kwargs: LLM参数
+            
+        Returns:
+            Message: AI回复
+        """
+        if not self.llm:
+            raise ValueError(f"节点 {self.name} 未配置LLM")
+        
+        # 准备消息列表
+        llm_messages = messages.copy()
+        
+        # 添加系统提示
+        if system_prompt and not any(msg.role == MessageRole.SYSTEM for msg in llm_messages):
+            llm_messages.insert(0, Message(
+                role=MessageRole.SYSTEM,
+                content=system_prompt
+            ))
+        
+        return await self.llm.generate(llm_messages, **kwargs)
+    
+    async def stream_generate(self, 
+                             messages: List[Message], 
+                             system_prompt: Optional[str] = None,
+                             **kwargs):
+        """流式调用LLM生成回复"""
+        if not self.llm:
+            raise ValueError(f"节点 {self.name} 未配置LLM")
+        
+        # 准备消息列表
+        llm_messages = messages.copy()
+        
+        # 添加系统提示
+        if system_prompt and not any(msg.role == MessageRole.SYSTEM for msg in llm_messages):
+            llm_messages.insert(0, Message(
+                role=MessageRole.SYSTEM,
+                content=system_prompt
+            ))
+        
+        async for chunk in self.llm.stream_generate(llm_messages, **kwargs):
+            yield chunk
+    
+    def parse(self, text: str, format_type: str = "json", **kwargs) -> Any:
+        """解析文本数据
+        
+        Args:
+            text: 要解析的文本
+            format_type: 解析格式 (json, yaml, xml, regex, structured)
+            **kwargs: 解析参数
+            
+        Returns:
+            Any: 解析结果
+        """
+        if format_type == "json":
+            return self._parse_json(text, **kwargs)
+        elif format_type == "yaml":
+            return self._parse_yaml(text, **kwargs)
+        elif format_type == "xml":
+            return self._parse_xml(text, **kwargs)
+        elif format_type == "regex":
+            return self._parse_regex(text, **kwargs)
+        elif format_type == "structured":
+            return self._parse_structured(text, **kwargs)
+        else:
+            raise ValueError(f"不支持的解析格式: {format_type}")
+    
+    def build_prompt(self, 
+                    template_name: str, 
+                    **variables) -> str:
+        """构建提示词
+        
+        Args:
+            template_name: 模板名称
+            **variables: 模板变量
+            
+        Returns:
+            str: 格式化的提示词
+        """
+        if template_name not in self._prompt_templates:
+            # 如果没有找到模板，尝试从预设模板获取
+            template = self._get_default_template(template_name)
+            if not template:
+                raise ValueError(f"未找到提示模板: {template_name}")
+            self._prompt_templates[template_name] = template
+        
+        template = self._prompt_templates[template_name]
+        return template.format(**variables)
+    
+    async def vector_search(self, 
+                           query: str, 
+                           collection_name: str = "default",
+                           top_k: int = 5,
+                           **kwargs) -> List[Dict[str, Any]]:
+        """向量搜索
+        
+        Args:
+            query: 查询文本
+            collection_name: 集合名称
+            top_k: 返回结果数量
+            **kwargs: 搜索参数
+            
+        Returns:
+            List[Dict]: 搜索结果
+        """
+        if not self._vector_client:
+            self._init_vector_client()
+        
+        if not self._vector_client:
+            raise ValueError(f"节点 {self.name} 未配置向量数据库")
+        
+        # 调用向量搜索
+        return await self._vector_client.search(
+            query=query,
+            collection_name=collection_name,
+            top_k=top_k,
+            **kwargs
+        )
+    
+    def set_llm(self, llm: 'BaseLLMProvider'):
+        """设置LLM提供者"""
+        self.llm = llm
+    
+    def set_vector_client(self, client):
+        """设置向量数据库客户端"""
+        self._vector_client = client
+    
+    def add_prompt_template(self, name: str, template: str):
+        """添加提示模板"""
+        self._prompt_templates[name] = template
+    
+    def add_parser(self, name: str, parser):
+        """添加自定义解析器"""
+        self._parsers[name] = parser
+    
+    # ==================== 内部解析方法 ====================
+    
+    def _parse_json(self, text: str, **kwargs) -> Dict[str, Any]:
+        """解析JSON"""
+        import json
+        import re
+        
+        # 尝试直接解析
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        
+        # 尝试提取JSON块
+        json_pattern = r'```json\s*\n(.*?)\n```'
+        match = re.search(json_pattern, text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(1))
+            except json.JSONDecodeError:
+                pass
+        
+        # 尝试查找JSON对象
+        json_pattern = r'\{.*\}'
+        match = re.search(json_pattern, text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(0))
+            except json.JSONDecodeError:
+                pass
+        
+        raise ValueError(f"无法解析JSON: {text[:100]}...")
+    
+    def _parse_yaml(self, text: str, **kwargs) -> Dict[str, Any]:
+        """解析YAML"""
+        try:
+            import yaml
+            return yaml.safe_load(text)
+        except ImportError:
+            raise ValueError("需要安装yaml库: pip install pyyaml")
+        except yaml.YAMLError as e:
+            raise ValueError(f"YAML解析失败: {e}")
+    
+    def _parse_xml(self, text: str, **kwargs) -> Dict[str, Any]:
+        """解析XML"""
+        try:
+            import xml.etree.ElementTree as ET
+            root = ET.fromstring(text)
+            return self._xml_to_dict(root)
+        except ET.ParseError as e:
+            raise ValueError(f"XML解析失败: {e}")
+    
+    def _parse_regex(self, text: str, pattern: str, **kwargs) -> Dict[str, Any]:
+        """正则表达式解析"""
+        import re
+        match = re.search(pattern, text, **kwargs)
+        if match:
+            return match.groupdict() if match.groupdict() else {"match": match.group(0)}
+        return {}
+    
+    def _parse_structured(self, text: str, **kwargs) -> Dict[str, Any]:
+        """结构化文本解析"""
+        result = {}
+        lines = text.split('\n')
+        current_key = None
+        current_value = []
+        
+        for line in lines:
+            line = line.strip()
+            if ':' in line and not line.startswith(' '):
+                # 保存前一个键值对
+                if current_key:
+                    result[current_key] = '\n'.join(current_value).strip()
+                
+                # 开始新的键值对
+                key, value = line.split(':', 1)
+                current_key = key.strip()
+                current_value = [value.strip()] if value.strip() else []
+            elif current_key and line:
+                current_value.append(line)
+        
+        # 保存最后一个键值对
+        if current_key:
+            result[current_key] = '\n'.join(current_value).strip()
+        
+        return result
+    
+    def _xml_to_dict(self, element) -> Dict[str, Any]:
+        """XML元素转字典"""
+        result = {}
+        
+        # 处理属性
+        if element.attrib:
+            result.update(element.attrib)
+        
+        # 处理文本内容
+        if element.text and element.text.strip():
+            if len(element) == 0:
+                return element.text.strip()
+            result['text'] = element.text.strip()
+        
+        # 处理子元素
+        for child in element:
+            child_data = self._xml_to_dict(child)
+            if child.tag in result:
+                if not isinstance(result[child.tag], list):
+                    result[child.tag] = [result[child.tag]]
+                result[child.tag].append(child_data)
+            else:
+                result[child.tag] = child_data
+        
+        return result
+    
+    def _get_default_template(self, template_name: str) -> Optional[str]:
+        """获取默认模板"""
+        default_templates = {
+            "system": "你是一个专业的AI助手，请根据用户需求提供帮助。",
+            "thought": """请分析当前问题并制定解决方案：
+
+问题：{query}
+可用工具：{tools}
+历史信息：{context}
+
+请提供：
+1. 分析：对问题的理解
+2. 策略：解决方案
+3. 工具需求：是否需要使用工具
+4. 信心评估：1-10分""",
+            "action": """基于分析结果，请选择合适的工具并提供参数：
+
+分析结果：{thought}
+可用工具：{tools}
+
+请选择工具并提供参数。""",
+            "final_answer": """基于所有信息，请提供最终回答：
+
+问题：{query}
+分析过程：{thought}
+工具结果：{observations}
+
+请提供完整、准确的最终回答。"""
+        }
+        
+        return default_templates.get(template_name)
+    
+    def _init_vector_client(self):
+        """初始化向量数据库客户端"""
+        try:
+            # 尝试从工具管理器获取向量搜索功能
+            from tools.mcp_tools import MCPToolManager
+            # 这里可以根据实际情况初始化向量客户端
+            pass
+        except ImportError:
+            pass
 
 
 class BaseAgent(ABC):

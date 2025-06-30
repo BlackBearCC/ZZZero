@@ -1,7 +1,7 @@
 """
 图结构和执行引擎 - 基于LangGraph设计理念重构
 """
-from typing import Dict, List, Any, Optional, Set, Tuple, Union, Callable, TypeVar, Generic
+from typing import Dict, List, Any, Optional, Set, Tuple, Union, Callable, TypeVar, Generic, AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime
 import asyncio
@@ -13,7 +13,7 @@ import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from core.base import BaseNode, BaseExecutor, NodeResult, AgentContext, ExecutionState
+from core.base import BaseNode, BaseExecutor, NodeResult, ExecutionState
 from core.types import NodeInput, NodeOutput, NodeType
 
 T = TypeVar('T')  # 状态类型

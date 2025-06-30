@@ -9,9 +9,9 @@ import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from core.base import BaseAgent, AgentContext
-from core.types import AgentType, TaskResult, Message, MessageRole
-from core.graph import Graph, GraphBuilder, GraphExecutor
+from core.base import BaseAgent, BaseNode, Command
+from core.types import AgentType, TaskResult, Message, MessageRole, NodeType
+from core.graph import StateGraph, GraphBuilder, StateGraphExecutor
 from core.memory import MemoryManager, SQLiteMemoryStore
   
 from llm.base import BaseLLMProvider
@@ -21,6 +21,10 @@ from tools.base import ToolManager
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from tools.mcp_tools import MCPToolManager
+
+import json
+import asyncio
+import time
 
 
 class ReactAgent(BaseAgent):
@@ -59,7 +63,7 @@ class ReactAgent(BaseAgent):
         self.llm = llm
         self.tool_manager = tool_manager
         self.max_iterations = max_iterations
-        self.executor = GraphExecutor(max_iterations=max_iterations)
+        self.executor = StateGraphExecutor(max_iterations=max_iterations)
         
         # 记忆管理
         self.memory_enabled = memory_enabled
@@ -72,7 +76,7 @@ class ReactAgent(BaseAgent):
                 session_id=session_id
             )
         
-    def build_graph(self, use_stream: bool = False) -> Graph:
+    def build_graph(self, use_stream: bool = False) -> StateGraph:
         """构建ReAct执行图
         
         Args:
@@ -147,7 +151,7 @@ class ReactAgent(BaseAgent):
         return "end"
         
     async def run(self, query: str, context: Optional[Dict[str, Any]] = None) -> TaskResult:
-        """运行ReAct Agent（支持记忆）"""
+        """运行ReAct Agent（基于StateGraph）"""
         # 生成任务ID
         task_id = str(uuid.uuid4())
         
@@ -166,7 +170,7 @@ class ReactAgent(BaseAgent):
         if self.tool_manager:
             available_tools = self.tool_manager.list_tools()
         
-        # 构建记忆上下文（传递给Node使用）
+        # 构建记忆上下文
         memory_context = ""
         if self.memory_enabled and self.memory_manager:
             try:
@@ -174,79 +178,60 @@ class ReactAgent(BaseAgent):
             except Exception as e:
                 print(f"获取记忆上下文失败: {e}")
         
-        # ✅ 修复：处理传入的对话历史
+        # 处理对话历史
         messages = []
-        
-        # 检查是否有传入的对话历史
         if context and context.get("conversation_history") and context.get("preserve_history"):
-            # 使用完整的对话历史
             messages = context["conversation_history"].copy()
             print(f"[ReactAgent.run] 使用完整对话历史，消息数: {len(messages)}")
         else:
-            # 回退到仅使用当前查询
-            from core.types import Message, MessageRole
             messages = [Message(role=MessageRole.USER, content=query)]
             print(f"[ReactAgent.run] 仅使用当前消息")
         
-        # 创建执行上下文 - 使用完整的消息历史
-        agent_context = AgentContext(
-            task_id=task_id,
-            agent_type=self.agent_type,
-            available_tools=available_tools,
-            messages=messages,  # ✅ 使用完整的消息历史，而不是仅当前消息
-            variables={
-                **(context or {}),
-                "memory_context": memory_context,  # 传递记忆上下文给Node
-                "memory_manager": self.memory_manager,  # 传递记忆管理器给Node
-            }
-        )
-        print(f"[ReactAgent.run] agent_context messages: {len(agent_context.messages)}")
+        # 创建初始状态
+        initial_state = {
+            "task_id": task_id,
+            "agent_type": self.agent_type.value,
+            "available_tools": available_tools,
+            "messages": messages,
+            "memory_context": memory_context,
+            "memory_manager": self.memory_manager,
+            **(context or {})
+        }
         
-        # 构建并执行图
-        graph = self.build_graph(use_stream=False)  # 标准模式
-        node_results = await self.executor.execute(graph, agent_context)
+        print(f"[ReactAgent.run] 初始状态消息数: {len(initial_state['messages'])}")
         
-        # 提取最终结果 - 从最后一个有效的输出节点获取结果
-        if node_results:
-            # 寻找最后一个成功执行的final_answer、agent或chat节点
-            for node_result in reversed(node_results):
-                if (node_result.node_name in ["final_answer", "agent", "chat"] and 
-                    node_result.output and 
-                    node_result.output.data):
-                    
-                    # 优先从final_answer字段获取最终答案
-                    if node_result.node_name == "final_answer":
-                        final_answer = node_result.output.data.get("final_answer")
-                        if final_answer:
-                            result.result = final_answer
-                            result.success = True
-                            break
-                    
-                    # 从消息中提取最终回答
-                    messages = node_result.output.data.get("messages", [])
-                    if messages:
-                        last_message = messages[-1]
-                        result.result = last_message.content
-                        result.success = True
-                        break
-                    
-                    # 备用：从agent_response或chat_response字段获取
-                    agent_response = (node_result.output.data.get("agent_response") or 
-                                    node_result.output.data.get("chat_response"))
-                    if agent_response:
-                        result.result = agent_response
-                        result.success = True
-                        break
-            
-            # 如果没有找到有效结果，设置默认消息
-            if not result.success:
+        # 构建并执行StateGraph
+        graph = self.build_graph(use_stream=False)
+        final_state = await self.executor.execute(graph, initial_state, {})
+        
+        # 从最终状态提取结果
+        if final_state:
+            # 优先从final_answer字段获取
+            if "final_answer" in final_state:
+                result.result = final_state["final_answer"]
+                result.success = True
+            # 从消息中提取最终回答
+            elif "messages" in final_state and final_state["messages"]:
+                last_message = final_state["messages"][-1]
+                if hasattr(last_message, 'content'):
+                    result.result = last_message.content
+                    result.success = True
+                else:
+                    result.result = str(last_message)
+                    result.success = True
+            # 从其他响应字段获取
+            elif "agent_response" in final_state:
+                result.result = final_state["agent_response"]
+                result.success = True
+            elif "chat_response" in final_state:
+                result.result = final_state["chat_response"]
+                result.success = True
+            else:
                 result.result = "抱歉，无法生成回复"
         
-        # ✅ 修复：只有在非流式模式下才在这里保存记忆（避免重复保存）
-        # 流式模式下会在event_handlers中处理记忆保存
+        # 保存记忆
         if self.memory_enabled and self.memory_manager and result.success:
             try:
-                # 检查是否已经有历史（说明是流式调用），避免重复保存
                 has_history = context and context.get("conversation_history") and len(context["conversation_history"]) > 1
                 if not has_history:
                     await self.memory_manager.add_conversation(query, result.result)
@@ -254,25 +239,19 @@ class ReactAgent(BaseAgent):
             except Exception as e:
                 print(f"保存对话记忆失败: {e}")
         
-        # 构建执行轨迹
+        # 构建简化的执行轨迹
         result.execution_trace = [
             {
-                "node": nr.node_name,
-                "type": nr.node_type.value,
-                "duration": nr.duration,
-                "state": nr.state.value,
-                "output": nr.output.data if nr.output else None
+                "graph_name": graph.name,
+                "final_state_keys": list(final_state.keys()) if final_state else [],
+                "success": result.success
             }
-            for nr in node_results
         ]
         
         # 计算指标
         result.metrics = {
-            "total_nodes": len(node_results),
-            "iterations": sum(1 for nr in node_results if nr.node_name == "thought"),
-            "tool_calls": sum(1 for nr in node_results if nr.node_name == "action"),
-            "observations": sum(1 for nr in node_results if nr.node_name == "observation"),
-            "total_duration": sum(nr.duration or 0 for nr in node_results)
+            "state_keys": list(final_state.keys()) if final_state else [],
+            "has_memory": self.memory_enabled
         }
         
         # 添加记忆统计信息
@@ -288,114 +267,15 @@ class ReactAgent(BaseAgent):
         return result
     
     async def stream_run(self, query: str, context: Optional[Dict[str, Any]] = None) -> AsyncIterator[Dict[str, Any]]:
-        """流式运行ReAct Agent"""
-        # 生成任务ID
-        task_id = str(uuid.uuid4())
-        
-        # 初始化
-        await self.initialize()
-        
-        # 获取可用工具列表
-        available_tools = []
-        if self.tool_manager:
-            available_tools = self.tool_manager.list_tools()
-        
-        # 构建记忆上下文（传递给Node使用）
-        memory_context = ""
-        if self.memory_enabled and self.memory_manager:
-            try:
-                memory_context = await self.memory_manager.get_context_for_query(query, max_entries=5)
-            except Exception as e:
-                print(f"获取记忆上下文失败: {e}")
-        
-        # ✅ 修复：处理传入的对话历史
-        messages = []
-        
-        # 检查是否有传入的对话历史
-        if context and context.get("conversation_history") and context.get("preserve_history"):
-            # 使用完整的对话历史
-            messages = context["conversation_history"].copy()
-            print(f"[ReactAgent.stream_run] 使用完整对话历史，消息数: {len(messages)}")
-        else:
-            # 回退到仅使用当前查询
-            from core.types import Message, MessageRole
-            messages = [Message(role=MessageRole.USER, content=query)]
-            print(f"[ReactAgent.stream_run] 仅使用当前消息")
-        
-        # 创建执行上下文 - 使用完整的消息历史
-        agent_context = AgentContext(
-            task_id=task_id,
-            agent_type=self.agent_type,
-            available_tools=available_tools,
-            messages=messages,  # ✅ 使用完整的消息历史，而不是仅当前消息
-            variables={
-                **(context or {}),
-                "memory_context": memory_context,  # 传递记忆上下文给Node
-                "memory_manager": self.memory_manager,  # 传递记忆管理器给Node
-            }
-        )
-        print(f"[ReactAgent.stream_run] agent_context messages: {len(agent_context.messages)}")
-        
-        # 构建流式图
-        graph = self.build_graph(use_stream=True)
-        
-        # 创建节点输入
-        from core.types import NodeInput
-        node_input = NodeInput(
-            context=agent_context.to_execution_context(),
-            previous_output=None,
-            parameters={}
-        )
-        
-        # 找到流式节点 - 根据图的构建方式确定节点名称
-        stream_node = None
-        if "agent" in graph.nodes:
-            stream_node = graph.nodes["agent"]
-        elif "chat" in graph.nodes:
-            stream_node = graph.nodes["chat"]
-        else:
-            # 获取第一个节点作为备选
-            if graph.nodes:
-                stream_node = list(graph.nodes.values())[0]
-        
-        if not stream_node:
-            # 如果没有找到节点，返回错误
-            yield {
-                "type": "error",
-                "content": "无法找到执行节点",
-                "task_id": task_id,
-                "metadata": {"error": "No execution node found"}
-            }
-            return
-        
-        # 如果是流式节点，调用其流式执行方法
-        if hasattr(stream_node, 'stream_execute'):
-            try:
-                # 调用节点的流式执行方法
-                async for chunk_data in stream_node.stream_execute(node_input):
-                    yield {
-                        "type": chunk_data["type"],
-                        "content": chunk_data["content"],
-                        "task_id": task_id,
-                        "metadata": chunk_data
-                    }
-                    
-            except Exception as e:
-                yield {
-                    "type": "error",
-                    "content": f"流式节点执行失败: {str(e)}",
-                    "task_id": task_id,
-                    "metadata": {"error": str(e)}
-                }
-        else:
-            # 回退到标准执行
-            result = await self.run(query, context)
-            yield {
-                "type": "final_result",
-                "content": result.result,
-                "task_id": task_id,
-                "metadata": {"success": result.success}
-            }
+        """流式运行ReAct Agent - 简化版本"""
+        # 暂时回退到标准执行
+        result = await self.run(query, context)
+        yield {
+            "type": "final_result",
+            "content": result.result,
+            "task_id": result.task_id,
+            "metadata": {"success": result.success}
+        }
         
     # _build_system_prompt 方法已移到基类 BaseAgent 中
         
