@@ -1,8 +1,8 @@
 """
-核心基类定义 - 定义框架的抽象接口
+核心基类定义 - 基于LangGraph设计理念重构
 """
 from abc import ABC, abstractmethod
-from typing import Dict, List, Any, Optional, Union, Type, TypeVar, Generic, AsyncIterator
+from typing import Dict, List, Any, Optional, Union, Type, TypeVar, Generic, AsyncIterator, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 import asyncio
@@ -11,7 +11,7 @@ from enum import Enum
 from pydantic import BaseModel
 from .types import (
     NodeInput, NodeOutput, ExecutionContext, Message, 
-    ToolCall, AgentType, NodeType, TaskResult
+    ToolCall, AgentType, NodeType, TaskResult, MessageRole
 )
 
 
@@ -25,7 +25,18 @@ class ExecutionState(str, Enum):
     SUCCESS = "success"
     FAILED = "failed"
     CANCELLED = "cancelled"
-    TIMEOUT = "timeout"
+
+
+class Command:
+    """命令对象 - 用于同时更新状态和控制流程"""
+    def __init__(self, 
+                 update: Optional[Dict[str, Any]] = None,
+                 goto: Optional[Union[str, List[str]]] = None):
+        self.update = update or {}
+        self.goto = goto
+    
+    def __str__(self):
+        return f"Command(update={self.update}, goto={self.goto})"
 
 
 @dataclass
@@ -33,11 +44,12 @@ class NodeResult:
     """节点执行结果"""
     node_name: str
     node_type: NodeType
-    output: NodeOutput
-    state: ExecutionState
+    state_update: Dict[str, Any]
+    execution_state: ExecutionState
     start_time: datetime = field(default_factory=datetime.now)
     end_time: Optional[datetime] = None
     error: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
     
     @property
     def duration(self) -> Optional[float]:
@@ -49,50 +61,23 @@ class NodeResult:
     @property
     def is_success(self) -> bool:
         """检查是否执行成功"""
-        return self.state == ExecutionState.SUCCESS
+        return self.execution_state == ExecutionState.SUCCESS
     
     @property
     def is_failed(self) -> bool:
         """检查是否执行失败"""
-        return self.state == ExecutionState.FAILED
-    
-    def raise_if_failed(self):
-        """如果执行失败则抛出异常 - 用于需要严格异常处理的场景"""
-        if self.is_failed:
-            raise RuntimeError(f"节点 {self.node_name} 执行失败: {self.error}")
-    
-    def get_error_summary(self) -> str:
-        """获取错误摘要(不包含堆栈跟踪)"""
-        if not self.error:
-            return ""
-        return self.error.split("\n堆栈跟踪:")[0]
-
-
-@dataclass
-class AgentContext:
-    """Agent执行上下文"""
-    task_id: str
-    agent_type: AgentType
-    available_tools: List[str]
-    messages: List[Message] = field(default_factory=list)
-    variables: Dict[str, Any] = field(default_factory=dict)
-    node_results: List[NodeResult] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    
-    def to_execution_context(self) -> ExecutionContext:
-        """转换为ExecutionContext"""
-        return ExecutionContext(
-            task_id=self.task_id,
-            agent_type=self.agent_type,
-            available_tools=self.available_tools,
-            messages=self.messages,
-            variables=self.variables,
-            metadata=self.metadata
-        )
+        return self.execution_state == ExecutionState.FAILED
 
 
 class BaseNode(ABC):
-    """节点基类 - 所有节点必须继承此类"""
+    """节点基类 - 基于LangGraph设计理念
+    
+    核心改进：
+    1. 节点函数接收完整状态字典作为输入
+    2. 返回状态更新字典（而不是复杂的NodeOutput）
+    3. 支持返回Command对象进行流程控制
+    4. 简化的执行接口
+    """
     
     def __init__(self, 
                  name: str,
@@ -105,169 +90,92 @@ class BaseNode(ABC):
         self.config = kwargs
         
     @abstractmethod
-    async def execute(self, input_data: NodeInput) -> NodeOutput:
+    async def execute(self, state: Dict[str, Any]) -> Union[Dict[str, Any], Command]:
         """
-        执行节点逻辑
+        执行节点逻辑 - 基于LangGraph设计
         
         Args:
-            input_data: 节点输入数据
+            state: 当前图状态字典
             
         Returns:
-            NodeOutput: 节点输出结果
+            Union[Dict[str, Any], Command]: 
+            - Dict: 状态更新字典，会被合并到当前状态
+            - Command: 同时包含状态更新和流程控制的命令对象
         """
         pass
         
-    async def pre_execute(self, input_data: NodeInput) -> NodeInput:
-        """执行前钩子 - 可以修改输入数据"""
-        return input_data
+    async def pre_execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """执行前钩子 - 可以修改状态"""
+        return state
         
-    async def post_execute(self, output: NodeOutput) -> NodeOutput:
-        """执行后钩子 - 可以修改输出数据"""
-        return output
+    async def post_execute(self, state_update: Dict[str, Any]) -> Dict[str, Any]:
+        """执行后钩子 - 可以修改状态更新"""
+        return state_update
     
-    def parse_tool_arguments(self, tool_input: str) -> Dict[str, Any]:
-        """
-        通用工具参数解析方法 - 支持多种格式
-        
-        Args:
-            tool_input: 工具输入字符串
-            
-        Returns:
-            Dict[str, Any]: 解析后的参数字典
-        """
-        if not tool_input or not tool_input.strip():
-            return {}
-        
-        tool_input = tool_input.strip()
-        
-        # 1. 尝试解析JSON格式
-        try:
-            import json
-            # 检查是否是JSON对象格式
-            if tool_input.startswith('{') and tool_input.endswith('}'):
-                return json.loads(tool_input)
-            # 检查是否是JSON数组格式
-            elif tool_input.startswith('[') and tool_input.endswith(']'):
-                return {"items": json.loads(tool_input)}
-        except (json.JSONDecodeError, ValueError):
-            pass
-        
-        # 2. 尝试解析键值对格式 (key=value, key2=value2 或换行分隔)
-        try:
-            if '=' in tool_input:
-                arguments = {}
-                # 支持逗号或换行分隔
-                separators = [',', '\n', ';']
-                lines = tool_input
-                for sep in separators:
-                    if sep in lines:
-                        lines = lines.replace(sep, '\n')
-                        break
-                
-                for line in lines.split('\n'):
-                    line = line.strip()
-                    if '=' in line:
-                        key, value = line.split('=', 1)
-                        key = key.strip()
-                        value = value.strip().strip('"\'')  # 去除引号
-                        
-                        # 尝试智能类型转换
-                        if value.lower() in ['true', 'false']:
-                            arguments[key] = value.lower() == 'true'
-                        elif value.isdigit():
-                            arguments[key] = int(value)
-                        elif '.' in value and value.replace('.', '').isdigit():
-                            arguments[key] = float(value)
-                        elif value.startswith('[') and value.endswith(']'):
-                            # 尝试解析为列表
-                            try:
-                                import json
-                                arguments[key] = json.loads(value)
-                            except:
-                                arguments[key] = value
-                        else:
-                            arguments[key] = value
-                
-                if arguments:
-                    return arguments
-        except Exception:
-            pass
-        
-        # 3. 尝试解析YAML风格的键值对
-        try:
-            if ':' in tool_input and '\n' in tool_input:
-                import re
-                arguments = {}
-                lines = tool_input.split('\n')
-                for line in lines:
-                    line = line.strip()
-                    if ':' in line and not line.startswith('#'):
-                        match = re.match(r'^([^:]+):\s*(.*)$', line)
-                        if match:
-                            key = match.group(1).strip()
-                            value = match.group(2).strip().strip('"\'')
-                            
-                            # 智能类型转换
-                            if value.lower() in ['true', 'false']:
-                                arguments[key] = value.lower() == 'true'
-                            elif value.isdigit():
-                                arguments[key] = int(value)
-                            elif '.' in value and value.replace('.', '').isdigit():
-                                arguments[key] = float(value)
-                            else:
-                                arguments[key] = value
-                
-                if arguments:
-                    return arguments
-        except Exception:
-            pass
-        
-        # 4. 默认处理：包装为input参数
-        return {"input": tool_input}
-        
-    async def run(self, input_data: NodeInput, raise_on_error: bool = False) -> NodeResult:
-        """运行节点 - 包含前后处理逻辑"""
+    async def run(self, state: Dict[str, Any]) -> NodeResult:
+        """执行节点并返回结果"""
         result = NodeResult(
             node_name=self.name,
             node_type=self.node_type,
-            output=None,
-            state=ExecutionState.RUNNING
+            state_update={},
+            execution_state=ExecutionState.RUNNING
         )
         
         try:
-            # 前处理
-            input_data = await self.pre_execute(input_data)
+            # 执行前钩子
+            state = await self.pre_execute(state)
             
             # 执行核心逻辑
-            output = await self.execute(input_data)
+            output = await self.execute(state)
             
-            # 后处理
-            output = await self.post_execute(output)
+            # 处理返回结果
+            if isinstance(output, Command):
+                result.state_update = output.update
+                result.metadata["command"] = output
+            elif isinstance(output, dict):
+                result.state_update = output
+            else:
+                raise ValueError(f"节点 {self.name} 返回了无效的输出类型: {type(output)}")
             
-            result.output = output
-            result.state = ExecutionState.SUCCESS
-            result.end_time = datetime.now()
+            # 执行后钩子
+            result.state_update = await self.post_execute(result.state_update)
+            
+            result.execution_state = ExecutionState.SUCCESS
             
         except Exception as e:
-            # 记录详细的异常信息，包含堆栈跟踪
-            import traceback
-            result.state = ExecutionState.FAILED
-            result.error = f"{str(e)}\n堆栈跟踪:\n{traceback.format_exc()}"
+            result.execution_state = ExecutionState.FAILED
+            result.error = str(e)
+            
+        finally:
             result.end_time = datetime.now()
             
-            # 记录异常日志
-            print(f"节点 {self.name} 执行失败: {e}")
-            print(f"详细错误: {result.error}")
-            
-            # 根据参数决定是否抛出异常
-            if raise_on_error:
-                raise
-            
         return result
+    
+    def get_state_value(self, state: Dict[str, Any], key: str, default: Any = None) -> Any:
+        """安全获取状态值"""
+        return state.get(key, default)
+    
+    def get_messages(self, state: Dict[str, Any]) -> List[Message]:
+        """获取消息列表"""
+        return self.get_state_value(state, "messages", [])
+    
+    def add_message(self, state_update: Dict[str, Any], message: Message):
+        """添加消息到状态更新"""
+        if "messages" not in state_update:
+            state_update["messages"] = []
+        state_update["messages"].append(message)
+    
+    def create_ai_message(self, content: str) -> Message:
+        """创建AI消息"""
+        return Message(role=MessageRole.ASSISTANT, content=content)
+    
+    def create_user_message(self, content: str) -> Message:
+        """创建用户消息"""
+        return Message(role=MessageRole.USER, content=content)
 
 
 class BaseAgent(ABC):
-    """Agent基类 - 所有Agent必须继承此类"""
+    """Agent基类 - 基于StateGraph的智能代理"""
     
     def __init__(self,
                  agent_type: AgentType,
@@ -281,24 +189,13 @@ class BaseAgent(ABC):
         
     @abstractmethod
     async def run(self, query: str, context: Optional[Dict[str, Any]] = None) -> TaskResult:
-        """
-        运行Agent
-        
-        Args:
-            query: 用户查询
-            context: 额外上下文
-            
-        Returns:
-            TaskResult: 任务执行结果
-        """
+        """运行Agent"""
         pass
         
     @abstractmethod
-    def build_graph(self) -> "Graph":
-        """构建执行图"""
+    def build_graph(self) -> "StateGraph":
+        """构建StateGraph"""
         pass
-        
-    # 提示词构建现在由各个Node负责，Agent只负责传递上下文信息
         
     async def initialize(self):
         """初始化Agent"""
@@ -310,23 +207,14 @@ class BaseAgent(ABC):
 
 
 class BaseExecutor(ABC):
-    """执行器基类 - 负责执行图"""
+    """执行器基类 - 基于StateGraph"""
     
     @abstractmethod
     async def execute(self, 
-                     graph: "Graph", 
-                     context: AgentContext,
-                     **kwargs) -> List[NodeResult]:
-        """
-        执行图
-        
-        Args:
-            graph: 要执行的图
-            context: 执行上下文
-            
-        Returns:
-            List[NodeResult]: 节点执行结果列表
-        """
+                     graph: "StateGraph", 
+                     initial_state: Dict[str, Any],
+                     config: Dict[str, Any]) -> Dict[str, Any]:
+        """执行StateGraph"""
         pass
 
 
