@@ -5,12 +5,13 @@
 import gradio as gr
 from typing import Dict, List, Any, Tuple
 import json
+from .workflow_chat import WorkflowChat
 
 class StoryInterface:
     """剧情生成工作流界面"""
     
     def __init__(self):
-        pass
+        self.workflow_chat = WorkflowChat()
     
     def create_story_interface(self) -> Dict[str, Any]:
         """创建完整的剧情生成界面"""
@@ -19,20 +20,21 @@ class StoryInterface:
             gr.Markdown("## 🎭 剧情生成工作流")
             gr.Markdown("基于云枢市角色和地点数据，自动生成游戏风格的剧情CSV文件")
             
-            with gr.Row():
-                # 左侧配置面板
-                with gr.Column(scale=1):
+            with gr.Row(equal_height=True):
+                # 左侧配置面板 - 固定高度并添加滚动条
+                with gr.Column(scale=1, min_width=400):
+                    # 使用固定高度容器确保与右侧一致
                     config_components = self._create_config_panel()
                 
-                # 右侧执行和结果面板
-                with gr.Column(scale=2):
-                    execution_components = self._create_execution_panel()
+                # 右侧工作流聊天界面 - 与Agent窗口相同高度
+                with gr.Column(scale=2, min_width=600):
+                    workflow_components = self.workflow_chat.create_workflow_chat_interface()
             
             # 底部结果展示
             result_components = self._create_result_panel()
         
         # 合并所有组件
-        all_components = {**config_components, **execution_components, **result_components}
+        all_components = {**config_components, **workflow_components, **result_components}
         
         return all_components
     
@@ -40,128 +42,88 @@ class StoryInterface:
         """创建配置面板"""
         components = {}
         
-        with gr.Accordion("📋 剧情配置", open=True):
-            # 角色选择
-            gr.Markdown("### 👥 角色选择")
-            components['character_selector'] = gr.CheckboxGroup(
-                label="选择参与剧情的角色",
-                choices=[],  # 将通过事件动态填充
-                value=[],
-                info="至少选择1个角色"
-            )
+        # 创建固定高度的滚动容器
+        with gr.Column(elem_id="config_panel_container", elem_classes=["config-panel-scroll"]):
+            with gr.Accordion("📋 剧情配置", open=True):
+                # 角色选择
+                gr.Markdown("### 👥 角色选择")
+                components['character_selector'] = gr.CheckboxGroup(
+                    label="选择参与剧情的角色",
+                    choices=[],  # 将通过事件动态填充
+                    value=[],
+                    info="至少选择1个角色"
+                )
+                
+                components['refresh_characters_btn'] = gr.Button("🔄 刷新角色列表", size="sm")
+                
+                # 地点选择  
+                gr.Markdown("### 🏢 地点选择")
+                components['location_selector'] = gr.CheckboxGroup(
+                    label="选择剧情发生地点",
+                    choices=[],  # 将通过事件动态填充
+                    value=[],
+                    info="至少选择1个地点"
+                )
+                
+                components['refresh_locations_btn'] = gr.Button("🔄 刷新地点列表", size="sm")
+                
+                # 剧情类型配置
+                gr.Markdown("### 🎨 剧情设定")
+                components['story_type'] = gr.Radio(
+                    label="剧情类型",
+                    choices=[
+                        ("日常生活", "daily_life"),
+                        ("浪漫恋爱", "romance"), 
+                        ("冒险探索", "adventure"),
+                        ("悬疑推理", "mystery")
+                    ],
+                    value="daily_life",
+                    info="选择剧情的主要风格"
+                )
+                
+                components['story_length'] = gr.Radio(
+                    label="剧情长度",
+                    choices=[
+                        ("简短(1-2个阶段)", "short"),
+                        ("中等(3-5个阶段)", "medium"),
+                        ("详细(5-8个阶段)", "long")
+                    ],
+                    value="medium",
+                    info="控制每个角色的剧情细分程度"
+                )
+                
+                components['relationship_depth'] = gr.Radio(
+                    label="关系深度",
+                    choices=[
+                        ("陌生人", "stranger"),
+                        ("普通朋友", "casual"),
+                        ("亲密朋友", "close"),
+                        ("恋人关系", "intimate")
+                    ],
+                    value="casual",
+                    info="角色间的初始关系设定"
+                )
             
-            components['refresh_characters_btn'] = gr.Button("🔄 刷新角色列表", size="sm")
-            
-            # 地点选择  
-            gr.Markdown("### 🏢 地点选择")
-            components['location_selector'] = gr.CheckboxGroup(
-                label="选择剧情发生地点",
-                choices=[],  # 将通过事件动态填充
-                value=[],
-                info="至少选择1个地点"
-            )
-            
-            components['refresh_locations_btn'] = gr.Button("🔄 刷新地点列表", size="sm")
-            
-            # 剧情类型配置
-            gr.Markdown("### 🎨 剧情设定")
-            components['story_type'] = gr.Radio(
-                label="剧情类型",
-                choices=[
-                    ("日常生活", "daily_life"),
-                    ("浪漫恋爱", "romance"), 
-                    ("冒险探索", "adventure"),
-                    ("悬疑推理", "mystery")
-                ],
-                value="daily_life",
-                info="选择剧情的主要风格"
-            )
-            
-            components['story_length'] = gr.Radio(
-                label="剧情长度",
-                choices=[
-                    ("简短(1-2个阶段)", "short"),
-                    ("中等(3-5个阶段)", "medium"),
-                    ("详细(5-8个阶段)", "long")
-                ],
-                value="medium",
-                info="控制每个角色的剧情细分程度"
-            )
-            
-            components['relationship_depth'] = gr.Radio(
-                label="关系深度",
-                choices=[
-                    ("陌生人", "stranger"),
-                    ("普通朋友", "casual"),
-                    ("亲密朋友", "close"),
-                    ("恋人关系", "intimate")
-                ],
-                value="casual",
-                info="角色间的初始关系设定"
-            )
-        
-        with gr.Accordion("📊 数据预览", open=False):
-            components['characters_preview'] = gr.Dataframe(
-                label="选中角色信息",
-                headers=["角色名", "年龄", "性格", "活动地点"],
-                datatype=["str", "str", "str", "str"],
-                interactive=False,
-                visible=True
-            )
-            
-            components['locations_preview'] = gr.Dataframe(
-                label="选中地点信息", 
-                headers=["地点名", "类型", "区域", "氛围"],
-                datatype=["str", "str", "str", "str"],
-                interactive=False,
-                visible=True
-            )
+            with gr.Accordion("📊 数据预览", open=False):
+                components['characters_preview'] = gr.Dataframe(
+                    label="选中角色信息",
+                    headers=["角色名", "年龄", "性格", "活动地点"],
+                    datatype=["str", "str", "str", "str"],
+                    interactive=False,
+                    visible=True
+                )
+                
+                components['locations_preview'] = gr.Dataframe(
+                    label="选中地点信息", 
+                    headers=["地点名", "类型", "区域", "氛围"],
+                    datatype=["str", "str", "str", "str"],
+                    interactive=False,
+                    visible=True
+                )
         
         return components
     
-    def _create_execution_panel(self) -> Dict[str, Any]:
-        """创建执行面板"""
-        components = {}
-        
-        with gr.Column():
-            gr.Markdown("### 🚀 执行工作流")
-            
-            # 执行按钮
-            components['generate_btn'] = gr.Button(
-                "🎬 开始生成剧情",
-                variant="primary",
-                size="lg"
-            )
-            
-            # 执行状态
-            components['execution_status'] = gr.Markdown(
-                "🔵 就绪状态，等待配置完成",
-                visible=True
-            )
-            
-            # 进度显示
-            components['progress_display'] = gr.HTML(
-                """
-                <div style='padding: 10px; border-radius: 5px; background: #f8f9fa;'>
-                    <h4>🔄 工作流进度</h4>
-                    <div style='margin: 5px 0;'>
-                        <span style='color: #6c757d;'>📋 剧情规划</span> → 
-                        <span style='color: #6c757d;'>👥 角色分析</span> → 
-                        <span style='color: #6c757d;'>📚 剧情生成</span> → 
-                        <span style='color: #6c757d;'>📄 CSV导出</span>
-                    </div>
-                </div>
-                """,
-                visible=False
-            )
-            
-            # 生成结果汇总
-            components['generation_summary'] = gr.JSON(
-                label="生成结果汇总",
-                visible=False
-            )
-        
-        return components
+
     
     def _create_result_panel(self) -> Dict[str, Any]:
         """创建结果展示面板"""

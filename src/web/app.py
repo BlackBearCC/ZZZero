@@ -22,7 +22,7 @@ from web.components.config_panel import ConfigPanel
 from web.components.chat_interface import ChatInterface
 from web.components.story_interface import StoryInterface
 from web.handlers.event_handlers import EventHandlers
-from web.handlers.story_handlers import StoryHandlers
+from web.handlers.workflow_handlers import WorkflowHandlers
 from web.utils.text_processing import TextProcessor
 from web.utils.file_utils import FileUtils
 from web.utils.styles import CUSTOM_CSS, HTML_HEAD
@@ -77,7 +77,7 @@ class AgentApp:
         self.chat_interface = ChatInterface()
         self.story_interface = StoryInterface()
         self.event_handlers = EventHandlers(self)
-        self.story_handlers = StoryHandlers(self)
+        self.workflow_handlers = WorkflowHandlers(self)
         self.text_processor = TextProcessor()
         self.file_utils = FileUtils()
         
@@ -361,10 +361,61 @@ class AgentApp:
         
         # === 剧情工作流事件绑定 ===
         
+        # 工作流聊天事件绑定
+        if story_components.get('start_workflow_btn'):
+            story_components['start_workflow_btn'].click(
+                fn=self.workflow_handlers.on_start_workflow,
+                inputs=[
+                    story_components.get('character_selector'),
+                    story_components.get('location_selector'),
+                    story_components.get('story_type'),
+                    story_components.get('story_length'),
+                    story_components.get('relationship_depth')
+                ],
+                outputs=[
+                    story_components.get('workflow_chatbot'),
+                    story_components.get('node_indicator'),
+                    story_components.get('quick_replies'),
+                    story_components.get('user_input'),
+                    story_components.get('send_btn')
+                ]
+            )
+        
+        if story_components.get('send_btn'):
+            story_components['send_btn'].click(
+                fn=self.workflow_handlers.on_user_input,
+                inputs=[
+                    story_components.get('user_input'),
+                    story_components.get('workflow_chatbot')
+                ],
+                outputs=[
+                    story_components.get('workflow_chatbot'),
+                    story_components.get('node_indicator'),
+                    story_components.get('quick_replies'),
+                    story_components.get('user_input'),
+                    story_components.get('send_btn')
+                ]
+            ).then(
+                lambda: "",  # 清空输入框
+                outputs=[story_components.get('user_input')]
+            )
+        
+        if story_components.get('reset_workflow_btn'):
+            story_components['reset_workflow_btn'].click(
+                fn=self.workflow_handlers.on_reset_workflow,
+                outputs=[
+                    story_components.get('workflow_chatbot'),
+                    story_components.get('node_indicator'),
+                    story_components.get('quick_replies'),
+                    story_components.get('user_input'),
+                    story_components.get('send_btn')
+                ]
+            )
+        
         # 刷新角色和地点列表
         if story_components.get('refresh_characters_btn'):
             story_components['refresh_characters_btn'].click(
-                fn=self.story_handlers.on_refresh_characters,
+                fn=self.workflow_handlers.on_refresh_characters,
                 outputs=[
                     story_components.get('character_selector'),
                     story_components.get('characters_preview')
@@ -373,7 +424,7 @@ class AgentApp:
         
         if story_components.get('refresh_locations_btn'):
             story_components['refresh_locations_btn'].click(
-                fn=self.story_handlers.on_refresh_locations,
+                fn=self.workflow_handlers.on_refresh_locations,
                 outputs=[
                     story_components.get('location_selector'),
                     story_components.get('locations_preview')
@@ -383,40 +434,16 @@ class AgentApp:
         # 角色和地点选择变化
         if story_components.get('character_selector'):
             story_components['character_selector'].change(
-                fn=self.story_handlers.on_characters_change,
+                fn=self.workflow_handlers.on_characters_change,
                 inputs=[story_components['character_selector']],
                 outputs=[story_components.get('characters_preview')]
             )
         
         if story_components.get('location_selector'):
             story_components['location_selector'].change(
-                fn=self.story_handlers.on_locations_change,
+                fn=self.workflow_handlers.on_locations_change,
                 inputs=[story_components['location_selector']],
                 outputs=[story_components.get('locations_preview')]
-            )
-        
-        # 剧情生成按钮
-        if story_components.get('generate_btn'):
-            story_components['generate_btn'].click(
-                fn=self.story_handlers.on_generate_story,
-                inputs=[
-                    story_components.get('character_selector'),
-                    story_components.get('location_selector'),
-                    story_components.get('story_type'),
-                    story_components.get('story_length'),
-                    story_components.get('relationship_depth')
-                ],
-                outputs=[
-                    story_components.get('execution_status'),
-                    story_components.get('progress_display'),
-                    story_components.get('generation_summary'),
-                    story_components.get('story_table'),
-                    story_components.get('download_file'),
-                    story_components.get('stats_display'),
-                    story_components.get('story_outline'),
-                    story_components.get('character_relationships'),
-                    story_components.get('location_usage')
-                ]
             )
 
         # 页面加载事件
@@ -515,7 +542,7 @@ class AgentApp:
             input_files_html, output_files_html = await self.event_handlers.on_refresh_file_lists()
             
             # 初始化剧情工作流数据
-            story_character_choices, story_location_choices = await self.story_handlers.on_story_load()
+            story_character_choices, story_location_choices = await self.workflow_handlers.on_story_load()
             
             return (
                 status_html,

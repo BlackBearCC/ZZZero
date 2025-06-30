@@ -43,13 +43,13 @@ class StoryWorkflow:
         """加载游戏角色和地点数据"""
         try:
             # 加载角色数据
-            char_path = os.path.join(os.path.dirname(__file__), '../agents/yunhub_characters.json')
+            char_path = os.path.join(os.path.dirname(__file__), '../../config/yunhub_characters.json')
             if os.path.exists(char_path):
                 with open(char_path, 'r', encoding='utf-8') as f:
                     self.characters_data = json.load(f)
             
             # 加载地点数据
-            loc_path = os.path.join(os.path.dirname(__file__), '../agents/yunhub_locations.json')
+            loc_path = os.path.join(os.path.dirname(__file__), '../../config/yunhub_locations.json')
             if os.path.exists(loc_path):
                 with open(loc_path, 'r', encoding='utf-8') as f:
                     self.locations_data = json.load(f)

@@ -120,7 +120,7 @@ class GameStoryGenerator:
         logger.info(f"🎮 开始生成{character_name}的游戏剧情表格...")
         
         # 加载所有NPC角色
-        with open("src/agents/workflow/yunhub_characters.json", "r", encoding="utf-8") as f:
+        with open("config/yunhub_characters.json", "r", encoding="utf-8") as f:
             characters_data = json.load(f)
         
         # 逐个角色生成剧情线，使用质量模型

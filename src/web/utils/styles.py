@@ -248,7 +248,57 @@ CUSTOM_CSS = """
     font-feature-settings: "kern" 1, "liga" 1 !important; /* 字符间距优化 */
     text-rendering: optimizeSpeed !important; /* 优化渲染性能 */
     font-size: 14px !important; /* 固定字体大小 */
-    min-height: 1.4em !important; /* 最小高度，防止跳动 */
+}
+
+/* 配置面板滚动样式 */
+.config-panel-scroll {
+    height: 600px !important;
+    max-height: 600px !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    padding-right: 8px !important;
+    box-sizing: border-box !important;
+}
+
+/* 美化滚动条 */
+.config-panel-scroll::-webkit-scrollbar {
+    width: 6px !important;
+}
+
+.config-panel-scroll::-webkit-scrollbar-track {
+    background: #f1f1f1 !important;
+    border-radius: 3px !important;
+}
+
+.config-panel-scroll::-webkit-scrollbar-thumb {
+    background: #c1c1c1 !important;
+    border-radius: 3px !important;
+}
+
+.config-panel-scroll::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8 !important;
+}
+
+/* 工作流聊天界面高度与Agent窗口保持一致 */
+#workflow_chatbot {
+    height: 500px !important;
+    min-height: 500px !important;
+    max-height: 500px !important;
+}
+
+/* 快捷回复区域样式 */
+#quick_replies_area {
+    margin: 10px 0 !important;
+}
+
+.quick-reply-tag:hover {
+    transform: translateY(-1px) !important;
+    box-shadow: 0 2px 8px rgba(0, 123, 255, 0.3) !important;
+}
+
+.quick-reply-tag:active {
+    transform: translateY(0) !important;
+    box-shadow: 0 1px 4px rgba(0, 123, 255, 0.3) !important;
 }
 
 /* 针对机器人回复进行特殊优化 */
