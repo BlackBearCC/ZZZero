@@ -307,11 +307,10 @@ class CompiledStateGraph(Generic[T]):
         self.config = kwargs
         
     async def invoke(self, 
-                    initial_state: Optional[Dict[str, Any]] = None,
-                    config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                     initial_state: Optional[Dict[str, Any]] = None,
+                     config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """调用图执行"""
-        from .executor import StateGraphExecutor
-        
+        # 使用本文件中定义的StateGraphExecutor
         executor = StateGraphExecutor()
         return await executor.execute(
             self.graph, 
@@ -323,8 +322,7 @@ class CompiledStateGraph(Generic[T]):
                     initial_state: Optional[Dict[str, Any]] = None,
                     config: Optional[Dict[str, Any]] = None):
         """流式执行图"""
-        from .executor import StateGraphExecutor
-        
+        # 使用本文件中定义的StateGraphExecutor
         executor = StateGraphExecutor()
         async for result in executor.stream_execute(
             self.graph,

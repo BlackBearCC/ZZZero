@@ -20,7 +20,9 @@ from tools.mcp_tools import MCPToolManager
 # 导入重构后的模块
 from web.components.config_panel import ConfigPanel
 from web.components.chat_interface import ChatInterface
+from web.components.story_interface import StoryInterface
 from web.handlers.event_handlers import EventHandlers
+from web.handlers.story_handlers import StoryHandlers
 from web.utils.text_processing import TextProcessor
 from web.utils.file_utils import FileUtils
 from web.utils.styles import CUSTOM_CSS, HTML_HEAD
@@ -73,7 +75,9 @@ class AgentApp:
         # 初始化组件和处理器
         self.config_panel = ConfigPanel()
         self.chat_interface = ChatInterface()
+        self.story_interface = StoryInterface()
         self.event_handlers = EventHandlers(self)
+        self.story_handlers = StoryHandlers(self)
         self.text_processor = TextProcessor()
         self.file_utils = FileUtils()
         
@@ -152,24 +156,32 @@ class AgentApp:
             gr.Markdown(f"# {self.title}")
             gr.Markdown(f"{self.description}")
             
-            with gr.Row():
-                # 左侧配置面板
-                with gr.Column(scale=1):
-                    config_components = self.config_panel.create_full_panel()
+            # 创建Tab界面
+            with gr.Tabs() as tabs:
+                # Tab 1: Agent助手
+                with gr.TabItem("🤖 Agent助手", id="agent_tab"):
+                    with gr.Row():
+                        # 左侧配置面板
+                        with gr.Column(scale=1):
+                            config_components = self.config_panel.create_full_panel()
+                        
+                        # 右侧聊天界面
+                        with gr.Column(scale=3):
+                            chat_components = self.chat_interface.create_full_interface()
                 
-                # 右侧聊天界面
-                with gr.Column(scale=3):
-                    chat_components = self.chat_interface.create_full_interface()
+                # Tab 2: 剧情生成工作流
+                with gr.TabItem("🎭 剧情生成工作流", id="story_tab"):
+                    story_components = self.story_interface.create_story_interface()
             
             # === 事件绑定 ===
-            self._bind_events(config_components, chat_components, app)
+            self._bind_events(config_components, chat_components, story_components, app)
             
             # 添加自定义CSS
             app.css = CUSTOM_CSS
             
         return app
     
-    def _bind_events(self, config_components: Dict[str, Any], chat_components: Dict[str, Any], app):
+    def _bind_events(self, config_components: Dict[str, Any], chat_components: Dict[str, Any], story_components: Dict[str, Any], app):
         """绑定所有事件处理器"""
         # 配置变化事件
         for component in [
@@ -347,6 +359,66 @@ class AgentApp:
         # 角色信息管理事件
         self._bind_role_events(config_components)
         
+        # === 剧情工作流事件绑定 ===
+        
+        # 刷新角色和地点列表
+        if story_components.get('refresh_characters_btn'):
+            story_components['refresh_characters_btn'].click(
+                fn=self.story_handlers.on_refresh_characters,
+                outputs=[
+                    story_components.get('character_selector'),
+                    story_components.get('characters_preview')
+                ]
+            )
+        
+        if story_components.get('refresh_locations_btn'):
+            story_components['refresh_locations_btn'].click(
+                fn=self.story_handlers.on_refresh_locations,
+                outputs=[
+                    story_components.get('location_selector'),
+                    story_components.get('locations_preview')
+                ]
+            )
+        
+        # 角色和地点选择变化
+        if story_components.get('character_selector'):
+            story_components['character_selector'].change(
+                fn=self.story_handlers.on_characters_change,
+                inputs=[story_components['character_selector']],
+                outputs=[story_components.get('characters_preview')]
+            )
+        
+        if story_components.get('location_selector'):
+            story_components['location_selector'].change(
+                fn=self.story_handlers.on_locations_change,
+                inputs=[story_components['location_selector']],
+                outputs=[story_components.get('locations_preview')]
+            )
+        
+        # 剧情生成按钮
+        if story_components.get('generate_btn'):
+            story_components['generate_btn'].click(
+                fn=self.story_handlers.on_generate_story,
+                inputs=[
+                    story_components.get('character_selector'),
+                    story_components.get('location_selector'),
+                    story_components.get('story_type'),
+                    story_components.get('story_length'),
+                    story_components.get('relationship_depth')
+                ],
+                outputs=[
+                    story_components.get('execution_status'),
+                    story_components.get('progress_display'),
+                    story_components.get('generation_summary'),
+                    story_components.get('story_table'),
+                    story_components.get('download_file'),
+                    story_components.get('stats_display'),
+                    story_components.get('story_outline'),
+                    story_components.get('character_relationships'),
+                    story_components.get('location_usage')
+                ]
+            )
+
         # 页面加载事件
         app.load(
             fn=self._on_load,
@@ -357,7 +429,9 @@ class AgentApp:
                 chat_components.get('dynamic_table'), 
                 config_components.get('memory_status'), 
                 config_components.get('input_files_display'), 
-                config_components.get('output_files_display')
+                config_components.get('output_files_display'),
+                story_components.get('character_selector'),
+                story_components.get('location_selector')
             ]
         )
 
@@ -440,6 +514,9 @@ class AgentApp:
             # 获取文件列表
             input_files_html, output_files_html = await self.event_handlers.on_refresh_file_lists()
             
+            # 初始化剧情工作流数据
+            story_character_choices, story_location_choices = await self.story_handlers.on_story_load()
+            
             return (
                 status_html,
                 gr.update(choices=choices, value=default_enabled),
@@ -447,7 +524,9 @@ class AgentApp:
                 gr.update(value=[], headers=None, visible=False),  # 初始隐藏表格
                 memory_status_html,  # 记忆状态
                 input_files_html,
-                output_files_html
+                output_files_html,
+                story_character_choices,  # 剧情角色选择
+                story_location_choices    # 剧情地点选择
             )
             
         except Exception as e:
@@ -460,7 +539,9 @@ class AgentApp:
                 gr.update(value=[], headers=None, visible=False),
                 "<div style='color: red;'>❌ 记忆状态获取失败</div>",
                 "❌ 获取文件列表失败",
-                "❌ 获取文件列表失败"
+                "❌ 获取文件列表失败",
+                gr.update(choices=[], value=[]),  # 剧情角色选择
+                gr.update(choices=[], value=[])   # 剧情地点选择
             )
     
     async def _refresh_mcp_servers(self):
