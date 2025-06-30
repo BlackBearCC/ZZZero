@@ -326,16 +326,12 @@ class DoubaoLLM(BaseLLMProvider):
                 if result.get("type") == "reasoning_chunk":
                     reasoning_chunk = result.get("content", "")
                     accumulated_reasoning += reasoning_chunk
-                    # 输出推理过程
-                    if not accumulated_content:  # 第一次输出时添加标题
-                        if not accumulated_reasoning.startswith("**🧠 推理过程：**"):
-                            yield "**🧠 推理过程：**\n"
+                    # 直接输出推理过程，不添加标题
                     yield reasoning_chunk
                 
                 elif result.get("type") == "content_chunk":
                     content_chunk = result.get("content", "")
-                    if not accumulated_content:  # 第一次输出内容时添加分隔符
-                        yield "\n\n**结论：**\n"
+                    # 直接输出内容，不添加"结论："前缀
                     accumulated_content += content_chunk
                     yield content_chunk
                 

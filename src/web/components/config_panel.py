@@ -53,10 +53,18 @@ class ConfigPanel:
                 step=1,
                 label="最大迭代次数"
             )
+            
+            # 添加简化输出选项
+            simplified_output = gr.Checkbox(
+                label="简化输出模式",
+                value=True,
+                info="开启后只显示最终答案，关闭则显示详细推理过程"
+            )
         
         return {
             "agent_type": agent_type,
-            "max_iterations": max_iterations
+            "max_iterations": max_iterations,
+            "simplified_output": simplified_output
         }
     
     def create_mcp_server_config(self) -> Dict[str, Any]:

@@ -48,6 +48,7 @@ class AgentApp:
             'temperature': 0.7,
             'agent_type': 'react',
             'max_iterations': 5,
+            'simplified_output': True,  # 默认启用简化输出
             'available_tools': [],
             'enabled_mcp_servers': ['csv', 'chromadb', 'python', 'role_info', 'roleplay'],
             'batch_enabled': False,
@@ -121,7 +122,8 @@ class AgentApp:
                 memory_enabled=True,  # 启用记忆功能
                 memory_store=memory_store,  # 传递记忆存储
                 short_term_limit=3000,  # 短期记忆限制
-                session_id=session_id  # 会话ID
+                session_id=session_id,  # 会话ID
+                simplified_output=self.current_config.get('simplified_output', True)  # 传递简化输出配置
             )
             
             # 同时设置current_agent以兼容其他方法
@@ -176,6 +178,7 @@ class AgentApp:
             config_components.get('temperature'), 
             config_components.get('agent_type'), 
             config_components.get('max_iterations'), 
+            config_components.get('simplified_output'),  # 添加简化输出选项
             config_components.get('available_tools'), 
             config_components.get('enabled_mcp_servers')
         ]:
@@ -188,6 +191,7 @@ class AgentApp:
                         config_components.get('temperature'), 
                         config_components.get('agent_type'), 
                         config_components.get('max_iterations'), 
+                        config_components.get('simplified_output'),  # 添加简化输出选项
                         config_components.get('available_tools'), 
                         config_components.get('enabled_mcp_servers')
                     ],

@@ -115,7 +115,7 @@ class EventHandlers:
     
     async def on_config_change(self, *args):
         """配置变化时自动应用"""
-        llm_provider, model_name, temperature, agent_type, max_iterations, available_tools, enabled_mcp_servers = args
+        llm_provider, model_name, temperature, agent_type, max_iterations, simplified_output, available_tools, enabled_mcp_servers = args
         
         # 更新配置
         old_config = self.app.current_config.copy()
@@ -125,6 +125,7 @@ class EventHandlers:
             'temperature': temperature,
             'agent_type': agent_type,
             'max_iterations': max_iterations,
+            'simplified_output': simplified_output,  # 添加简化输出配置
             'available_tools': available_tools,
             'enabled_mcp_servers': enabled_mcp_servers
         })
@@ -1515,8 +1516,7 @@ class EventHandlers:
             # 流式处理完成，最终应用完整的样式处理（关键词高亮、表格提取等）
             processed_text, tables_data = self.app.text_processor.highlight_agent_keywords(full_response, is_streaming=False)
             
-            # 更新助手回复内容，添加完成标记
-            assistant_reply["content"] = processed_text + '<span class="response-complete"> ✨ 回复完成</span>'
+
             
             # 准备表格更新
             table_update = self.app.text_processor.prepare_table_update(tables_data)

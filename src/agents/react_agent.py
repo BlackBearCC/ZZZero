@@ -35,9 +35,10 @@ class ReactAgent(BaseAgent):
     class ThoughtNode(BaseNode):
         """思考节点 - 分析问题并制定下一步行动计划"""
         
-        def __init__(self, name: str, llm: BaseLLMProvider, use_think_mode: bool = True, **kwargs):
+        def __init__(self, name: str, llm: BaseLLMProvider, use_think_mode: bool = True, simplified_output: bool = True, **kwargs):
             super().__init__(name, NodeType.THINK, "思考分析节点", llm=llm, **kwargs)
             self.use_think_mode = use_think_mode
+            self.simplified_output = simplified_output
             
         async def execute(self, state: Dict[str, Any]) -> Union[Dict[str, Any], Command]:
             """执行思考分析"""
@@ -103,19 +104,24 @@ class ReactAgent(BaseAgent):
                 
                 print(f"[ThoughtNode] 分析结果 - 需要工具: {needs_tools}, 置信度: {confidence}")
                 
-                # 创建思考消息
-                thought_content = f"💭 思考 {thought_count}:\n\n"
-                
-                # 如果有推理过程，先显示推理过程
-                if reasoning_content:
-                    thought_content += f"**🧠 推理过程：**\n{reasoning_content}\n\n"
-                
-                thought_content += f"**分析**: {analysis_text}"
-                if strategy_text:
-                    thought_content += f"\n\n**策略**: {strategy_text}"
-                if tools_text:
-                    thought_content += f"\n\n**工具需求**: {tools_text}"
-                thought_content += f"\n\n**信心评估**: {confidence}/10"
+                # 创建思考消息 - 根据简化模式决定输出格式
+                if self.simplified_output:
+                    # 简化模式：直接使用原始响应
+                    thought_content = response_text
+                else:
+                    # 详细模式：显示完整推理过程
+                    thought_content = f"💭 思考 {thought_count}:\n\n"
+                    
+                    # 如果有推理过程，先显示推理过程
+                    if reasoning_content:
+                        thought_content += f"**🧠 推理过程：**\n{reasoning_content}\n\n"
+                    
+                    thought_content += f"**分析**: {analysis_text}"
+                    if strategy_text:
+                        thought_content += f"\n\n**策略**: {strategy_text}"
+                    if tools_text:
+                        thought_content += f"\n\n**工具需求**: {tools_text}"
+                    thought_content += f"\n\n**信心评估**: {confidence}/10"
                 
                 thought_message = self.create_ai_message(thought_content)
                 thought_message.metadata = {
@@ -683,6 +689,7 @@ class ReactAgent(BaseAgent):
                  short_term_limit: int = 30000,
                  session_id: Optional[str] = None,
                  use_think_mode: bool = True,
+                 simplified_output: bool = True,  # 新增简化输出模式
                  **kwargs):
         """
         初始化ReAct Agent
@@ -708,6 +715,7 @@ class ReactAgent(BaseAgent):
         self.tool_manager = tool_manager
         self.max_iterations = max_iterations
         self.use_think_mode = use_think_mode
+        self.simplified_output = simplified_output  # 保存简化输出模式
         self.executor = StateGraphExecutor(max_iterations=max_iterations)
         
         # 记忆管理
@@ -744,7 +752,7 @@ class ReactAgent(BaseAgent):
                 )
             else:
                 # 使用内置的分离式ReAct节点架构
-                thought_node = self.ThoughtNode("thought", self.llm, use_think_mode=self.use_think_mode)
+                thought_node = self.ThoughtNode("thought", self.llm, use_think_mode=self.use_think_mode, simplified_output=self.simplified_output)
                 action_node = self.ActionNode("action", self.llm, self.tool_manager)
                 observation_node = self.ObservationNode("observation", self.llm, self.max_iterations)
                 final_answer_node = self.FinalAnswerNode("final_answer", self.llm)
