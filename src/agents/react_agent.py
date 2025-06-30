@@ -35,8 +35,9 @@ class ReactAgent(BaseAgent):
     class ThoughtNode(BaseNode):
         """思考节点 - 分析问题并制定下一步行动计划"""
         
-        def __init__(self, name: str, llm: BaseLLMProvider, **kwargs):
+        def __init__(self, name: str, llm: BaseLLMProvider, use_think_mode: bool = True, **kwargs):
             super().__init__(name, NodeType.THINK, "思考分析节点", llm=llm, **kwargs)
+            self.use_think_mode = use_think_mode
             
         async def execute(self, state: Dict[str, Any]) -> Union[Dict[str, Any], Command]:
             """执行思考分析"""
@@ -46,16 +47,40 @@ class ReactAgent(BaseAgent):
             
             thought_count = state.get("thought_count", 0) + 1
             
+            print(f"[ThoughtNode] 开始思考，迭代: {thought_count}")
+            print(f"[ThoughtNode] 消息数量: {len(messages)}")
+            print(f"[ThoughtNode] 可用工具: {available_tools}")
+            print(f"[ThoughtNode] 使用Think模式: {self.use_think_mode}")
+            
             # 使用集成的build_prompt方法
             system_prompt = self.build_prompt("thought", 
                                              query=messages[-1].content if messages else "",
                                              tools=", ".join(available_tools) if available_tools else "无",
                                              context=memory_context)
             
+            print(f"[ThoughtNode] 系统提示词长度: {len(system_prompt)}")
+            
             try:
-                # 使用集成的generate方法
-                response = await self.generate(messages, system_prompt=system_prompt)
+                reasoning_content = ""
+                
+                # 根据配置选择调用方式
+                mode = "think" if self.use_think_mode else "normal"
+                print(f"[ThoughtNode] 使用模式: {mode}")
+                
+                response = await self.generate(messages, system_prompt=system_prompt, mode=mode)
                 response_text = response.content if hasattr(response, 'content') else str(response)
+                
+                # 检查是否有推理过程
+                reasoning_content = ""
+                if hasattr(response, 'metadata') and response.metadata.get("reasoning_content"):
+                    reasoning_content = response.metadata["reasoning_content"]
+                    print(f"[ThoughtNode] 推理过程长度: {len(reasoning_content)}")
+                    print(f"[ThoughtNode] 推理过程预览: {reasoning_content[:200]}...")
+                
+                print(f"[ThoughtNode] 响应长度: {len(response_text)}")
+                print(f"[ThoughtNode] 有推理过程: {bool(reasoning_content)}")
+                
+                print(f"[ThoughtNode] LLM响应预览: {response_text[:300]}...")
                 
                 # 使用集成的parse方法
                 thought_analysis = self.parse(response_text, format_type="structured")
@@ -76,8 +101,16 @@ class ReactAgent(BaseAgent):
                 except (ValueError, TypeError):
                     confidence = 5
                 
+                print(f"[ThoughtNode] 分析结果 - 需要工具: {needs_tools}, 置信度: {confidence}")
+                
                 # 创建思考消息
-                thought_content = f"💭 思考 {thought_count}:\n\n**分析**: {analysis_text}"
+                thought_content = f"💭 思考 {thought_count}:\n\n"
+                
+                # 如果有推理过程，先显示推理过程
+                if reasoning_content:
+                    thought_content += f"**🧠 推理过程：**\n{reasoning_content}\n\n"
+                
+                thought_content += f"**分析**: {analysis_text}"
                 if strategy_text:
                     thought_content += f"\n\n**策略**: {strategy_text}"
                 if tools_text:
@@ -89,7 +122,9 @@ class ReactAgent(BaseAgent):
                     "node_type": "thought",
                     "thought_count": thought_count,
                     "needs_tools": needs_tools,
-                    "confidence": confidence
+                    "confidence": confidence,
+                    "has_reasoning": bool(reasoning_content),
+                    "reasoning_length": len(reasoning_content) if reasoning_content else 0
                 }
                 
                 # 创建状态更新
@@ -97,19 +132,22 @@ class ReactAgent(BaseAgent):
                     "messages": [thought_message],
                     "thought_count": thought_count,
                     "last_thought": analysis_text,
+                    "reasoning_content": reasoning_content,
                     "needs_tools": needs_tools,
                     "confidence": confidence
                 }
                 
                 # 决定下一步行动
-                if needs_tools:
-                    return Command(update=state_update, goto="action")
-                else:
-                    return Command(update=state_update, goto="final_answer")
+                next_node = "action" if needs_tools else "final_answer"
+                print(f"[ThoughtNode] 决定跳转到: {next_node}")
+                
+                return Command(update=state_update, goto=next_node)
                     
             except Exception as e:
                 error_msg = str(e)
                 print(f"[ThoughtNode] LLM调用失败: {error_msg}")
+                import traceback
+                print(f"[ThoughtNode] 详细错误信息:\n{traceback.format_exc()}")
                 
                 error_message = self.create_ai_message(
                     f"思考过程中遇到问题: {error_msg}，我将基于现有信息尽力回答。"
@@ -644,6 +682,7 @@ class ReactAgent(BaseAgent):
                  memory_store: Optional[SQLiteMemoryStore] = None,
                  short_term_limit: int = 30000,
                  session_id: Optional[str] = None,
+                 use_think_mode: bool = True,
                  **kwargs):
         """
         初始化ReAct Agent
@@ -668,6 +707,7 @@ class ReactAgent(BaseAgent):
         self.llm = llm
         self.tool_manager = tool_manager
         self.max_iterations = max_iterations
+        self.use_think_mode = use_think_mode
         self.executor = StateGraphExecutor(max_iterations=max_iterations)
         
         # 记忆管理
@@ -704,7 +744,7 @@ class ReactAgent(BaseAgent):
                 )
             else:
                 # 使用内置的分离式ReAct节点架构
-                thought_node = self.ThoughtNode("thought", self.llm)
+                thought_node = self.ThoughtNode("thought", self.llm, use_think_mode=self.use_think_mode)
                 action_node = self.ActionNode("action", self.llm, self.tool_manager)
                 observation_node = self.ObservationNode("observation", self.llm, self.max_iterations)
                 final_answer_node = self.FinalAnswerNode("final_answer", self.llm)

@@ -14,6 +14,19 @@ from .types import (
     ToolCall, AgentType, NodeType, TaskResult, MessageRole
 )
 
+# 为了避免循环导入，使用TYPE_CHECKING
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from ..llm.base import ThinkResult, BaseLLMProvider
+else:
+    # 运行时动态导入
+    try:
+        from ..llm.base import ThinkResult, BaseLLMProvider
+    except ImportError:
+        # 如果导入失败，定义临时类型
+        ThinkResult = Any
+        BaseLLMProvider = Any
+
 
 T = TypeVar('T')
 
@@ -186,12 +199,14 @@ class BaseNode(ABC):
     async def generate(self, 
                       messages: List[Message], 
                       system_prompt: Optional[str] = None,
+                      mode: str = "normal",
                       **kwargs) -> Message:
         """调用LLM生成回复
         
         Args:
             messages: 消息历史
             system_prompt: 系统提示（可选）
+            mode: 生成模式，'normal' 或 'think'
             **kwargs: LLM参数
             
         Returns:
@@ -210,13 +225,21 @@ class BaseNode(ABC):
                 content=system_prompt
             ))
         
-        return await self.llm.generate(llm_messages, **kwargs)
+        return await self.llm.generate(llm_messages, mode=mode, **kwargs)
     
     async def stream_generate(self, 
                              messages: List[Message], 
                              system_prompt: Optional[str] = None,
+                             mode: str = "normal",
                              **kwargs):
-        """流式调用LLM生成回复"""
+        """流式调用LLM生成回复
+        
+        Args:
+            messages: 消息历史
+            system_prompt: 系统提示（可选）
+            mode: 生成模式，'normal' 或 'think'
+            **kwargs: LLM参数
+        """
         if not self.llm:
             raise ValueError(f"节点 {self.name} 未配置LLM")
         
@@ -230,8 +253,10 @@ class BaseNode(ABC):
                 content=system_prompt
             ))
         
-        async for chunk in self.llm.stream_generate(llm_messages, **kwargs):
+        async for chunk in self.llm.stream_generate(llm_messages, mode=mode, **kwargs):
             yield chunk
+    
+
     
     def parse(self, text: str, format_type: str = "json", **kwargs) -> Any:
         """解析文本数据

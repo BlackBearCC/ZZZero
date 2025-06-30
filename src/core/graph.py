@@ -459,11 +459,19 @@ class StateGraphExecutor(BaseExecutor):
                         command = node_results[i].metadata["command"]
                         if isinstance(command, Command):
                             commands.append(command)
+                            print(f"[StateGraphExecutor] 节点 {node_name} 返回Command: {command}")
+                            
                             if command.goto:
                                 if isinstance(command.goto, str):
-                                    next_nodes.append(command.goto)
+                                    if command.goto not in ["__end__", "END"]:
+                                        next_nodes.append(command.goto)
+                                        print(f"[StateGraphExecutor] 通过Command跳转到: {command.goto}")
                                 elif isinstance(command.goto, list):
-                                    next_nodes.extend(command.goto)
+                                    for target in command.goto:
+                                        if target not in ["__end__", "END"]:
+                                            next_nodes.append(target)
+                                            print(f"[StateGraphExecutor] 通过Command跳转到: {target}")
+                            # 如果有Command，跳过图的默认路由逻辑
                             continue
                     
                     # 使用图的路由逻辑

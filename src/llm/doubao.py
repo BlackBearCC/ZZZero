@@ -38,7 +38,7 @@ class DoubaoLLM(BaseLLMProvider):
             # 优先使用环境变量中的URL
             self.config.api_base = os.getenv('DOUBAO_BASE_URL', "https://ark.cn-beijing.volces.com/api/v3")
     
-    async def think(self, 
+    async def _think(self, 
                    messages: List[Message],
                    **kwargs) -> ThinkResult:
         """
@@ -112,7 +112,7 @@ class DoubaoLLM(BaseLLMProvider):
                     metadata=metadata
                 )
     
-    async def stream_think(self,
+    async def _stream_think(self,
                           messages: List[Message],
                           **kwargs) -> AsyncIterator[Dict[str, Any]]:
         """
@@ -222,13 +222,44 @@ class DoubaoLLM(BaseLLMProvider):
                                     "accumulated_content": accumulated_content
                                 }
                                 
-                    except json.JSONDecodeError:
+                    except json.JSONDecodeError as e:
+                        # 跳过JSON解析错误，但输出调试信息
+                        print(f"[DoubaoLLM.stream_think] JSON解析失败: {line_text[:100]}")
+                        continue
+                    except Exception as e:
+                        print(f"[DoubaoLLM.stream_think] 处理chunk时出错: {e}")
                         continue
             
     async def generate(self, 
                       messages: List[Message],
+                      mode: str = "normal",
                       **kwargs) -> Message:
-        """生成回复"""
+        """生成回复
+        
+        Args:
+            messages: 消息列表
+            mode: 生成模式，'normal' 或 'think'
+            **kwargs: 其他参数
+        """
+        # 如果是think模式，调用think方法并返回Message格式
+        if mode == "think":
+            think_result = await self._think(messages, **kwargs)
+            
+            # 构建包含推理过程的完整内容
+            full_content = think_result.content
+            if think_result.reasoning_content:
+                full_content = f"**🧠 推理过程：**\n{think_result.reasoning_content}\n\n**结论：**\n{think_result.content}"
+            
+            return Message(
+                role=MessageRole.ASSISTANT,
+                content=full_content,
+                metadata={
+                    **think_result.metadata,
+                    "mode": "think",
+                    "has_reasoning": bool(think_result.reasoning_content),
+                    "reasoning_content": think_result.reasoning_content
+                }
+            )
         headers = {
             "Authorization": f"Bearer {self.config.api_key}",
             "Content-Type": "application/json"
@@ -279,9 +310,47 @@ class DoubaoLLM(BaseLLMProvider):
                 
     async def stream_generate(self,
                                            messages: List[Message],
+                                           mode: str = "normal",
                                            interrupt_checker=None,
                                            **kwargs) -> AsyncIterator[str]:
-        """支持中断检查的流式生成"""
+        """支持中断检查的流式生成
+        
+        Args:
+            messages: 消息列表
+            mode: 生成模式，'normal' 或 'think'
+            interrupt_checker: 中断检查器（可选）
+            **kwargs: 其他参数
+        """
+        # 如果是think模式，使用流式think
+        if mode == "think":
+            accumulated_reasoning = ""
+            accumulated_content = ""
+            
+            async for result in self._stream_think(messages, **kwargs):
+                if result.get("type") == "reasoning_chunk":
+                    reasoning_chunk = result.get("content", "")
+                    accumulated_reasoning += reasoning_chunk
+                    # 输出推理过程
+                    if not accumulated_content:  # 第一次输出时添加标题
+                        if not accumulated_reasoning.startswith("**🧠 推理过程：**"):
+                            yield "**🧠 推理过程：**\n"
+                    yield reasoning_chunk
+                
+                elif result.get("type") == "content_chunk":
+                    content_chunk = result.get("content", "")
+                    if not accumulated_content:  # 第一次输出内容时添加分隔符
+                        yield "\n\n**结论：**\n"
+                    accumulated_content += content_chunk
+                    yield content_chunk
+                
+                elif result.get("type") == "think_complete":
+                    # think完成，不需要额外输出
+                    break
+                
+                # 中断检查
+                if interrupt_checker and interrupt_checker(accumulated_reasoning + accumulated_content):
+                    break
+            return
         headers = {
             "Authorization": f"Bearer {self.config.api_key}",
             "Content-Type": "application/json"

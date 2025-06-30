@@ -73,18 +73,32 @@ class BaseLLMProvider(BaseLLM):
     @abstractmethod
     async def generate(self, 
                       messages: List[Message],
+                      mode: str = "normal",
                       **kwargs) -> Message:
-        """生成回复 - 子类必须实现"""
+        """生成回复 - 子类必须实现
+        
+        Args:
+            messages: 消息列表
+            mode: 生成模式，'normal' 或 'think'
+            **kwargs: 其他参数
+        """
         pass
         
     @abstractmethod
     async def stream_generate(self,
                             messages: List[Message],
+                            mode: str = "normal",
                             **kwargs) -> AsyncIterator[str]:
-        """流式生成 - 子类必须实现"""
+        """流式生成 - 子类必须实现
+        
+        Args:
+            messages: 消息列表
+            mode: 生成模式，'normal' 或 'think'
+            **kwargs: 其他参数
+        """
         pass
     
-    async def think(self, 
+    async def _think(self, 
                    messages: List[Message],
                    **kwargs) -> ThinkResult:
         """
@@ -111,7 +125,7 @@ class BaseLLMProvider(BaseLLM):
             }
         )
     
-    async def stream_think(self,
+    async def _stream_think(self,
                           messages: List[Message],
                           **kwargs) -> AsyncIterator[Dict[str, Any]]:
         """
