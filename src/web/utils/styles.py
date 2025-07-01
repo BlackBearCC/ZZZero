@@ -537,6 +537,241 @@ CUSTOM_CSS = """
     color: #334155 !important;
     margin: 0 !important;
 }
+
+/* 工作流相关样式 */
+/* 工作流节点指示器样式 */
+.workflow-node-indicator {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 15px;
+    margin: 10px 0;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.workflow-node-indicator h4 {
+    color: #374151;
+    margin: 0 0 10px 0;
+    text-align: center;
+    font-weight: 600;
+    font-size: 16px;
+}
+
+.workflow-node {
+    text-align: center;
+    padding: 12px;
+    border-radius: 8px;
+    margin: 0 5px;
+    flex: 1;
+    border: 2px solid;
+    transition: all 0.3s ease;
+    backdrop-filter: blur(10px);
+}
+
+.workflow-node-active {
+    border-color: #fbbf24;
+    background: rgba(251, 191, 36, 0.15);
+    box-shadow: 0 0 20px rgba(251, 191, 36, 0.3);
+    transform: scale(1.05);
+}
+
+.workflow-node-completed {
+    border-color: #10b981;
+    background: rgba(16, 185, 129, 0.15);
+}
+
+.workflow-node-error {
+    border-color: #ef4444;
+    background: rgba(239, 68, 68, 0.15);
+    animation: shake 0.5s ease-in-out;
+}
+
+.workflow-node-pending {
+    border-color: #64748b;
+    background: rgba(148, 163, 184, 0.1);
+}
+
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-5px); }
+    75% { transform: translateX(5px); }
+}
+
+.workflow-node-icon {
+    font-size: 28px;
+    margin-bottom: 5px;
+    display: block;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.workflow-node-name {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.workflow-arrow {
+    color: #cbd5e0;
+    font-size: 20px;
+    margin: 0 8px;
+    font-weight: bold;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+/* 快捷回复样式优化 */
+.quick-replies-container {
+    margin: 10px 0;
+    padding: 15px;
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    border-radius: 12px;
+    border: 1px solid #dee2e6;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.quick-replies-title {
+    color: #495057;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.quick-replies-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.quick-reply-tag {
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    color: white;
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    border: none;
+    display: inline-block;
+    user-select: none;
+    box-shadow: 0 2px 4px rgba(0, 123, 255, 0.3);
+    text-decoration: none;
+}
+
+.quick-reply-tag:hover {
+    background: linear-gradient(135deg, #0056b3 0%, #004085 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 123, 255, 0.4);
+}
+
+.quick-reply-tag:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(0, 123, 255, 0.3);
+}
+
+/* 工作流聊天消息样式 */
+.workflow-message {
+    margin: 8px 0;
+    padding: 12px 16px;
+    border-radius: 12px;
+    border-left: 4px solid;
+    background: rgba(255, 255, 255, 0.8);
+    backdrop-filter: blur(10px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.workflow-message-start {
+    border-left-color: #3b82f6;
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(59, 130, 246, 0.05) 100%);
+}
+
+.workflow-message-progress {
+    border-left-color: #f59e0b;
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, rgba(245, 158, 11, 0.05) 100%);
+}
+
+.workflow-message-complete {
+    border-left-color: #10b981;
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(16, 185, 129, 0.05) 100%);
+}
+
+.workflow-message-error {
+    border-left-color: #ef4444;
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(239, 68, 68, 0.05) 100%);
+}
+
+.workflow-message-input-request {
+    border-left-color: #8b5cf6;
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(139, 92, 246, 0.05) 100%);
+    animation: gentle-pulse 2s infinite;
+}
+
+@keyframes gentle-pulse {
+    0%, 100% { 
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1); 
+    }
+    50% { 
+        box-shadow: 0 4px 16px rgba(139, 92, 246, 0.3); 
+    }
+}
+
+/* 工作流控制按钮样式 */
+.workflow-control-btn {
+    transition: all 0.3s ease;
+    border-radius: 8px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.workflow-control-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.workflow-control-btn:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+    .workflow-node-indicator {
+        padding: 10px;
+    }
+    
+    .workflow-node {
+        padding: 8px;
+        margin: 0 2px;
+    }
+    
+    .workflow-node-icon {
+        font-size: 20px;
+    }
+    
+    .workflow-node-name {
+        font-size: 10px;
+    }
+    
+    .workflow-arrow {
+        font-size: 16px;
+        margin: 0 4px;
+    }
+    
+    .quick-replies-list {
+        flex-direction: column;
+    }
+    
+    .quick-reply-tag {
+        text-align: center;
+        padding: 10px 16px;
+    }
+}
 """
 
 # HTML头部代码（包含JavaScript库）

@@ -93,9 +93,10 @@ class WorkflowChat:
             ("📄", "CSV导出", "export")
         ]
         
+        # 使用白色背景与大背景色一致
         indicator_html = """
-        <div style='padding: 15px; border-radius: 10px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); margin: 10px 0;'>
-            <h4 style='color: white; margin: 0 0 10px 0; text-align: center;'>🔄 工作流进度</h4>
+        <div style='padding: 15px; border-radius: 10px; background: #ffffff; margin: 10px 0; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);'>
+            <h4 style='color: #374151; margin: 0 0 10px 0; text-align: center; font-weight: 600;'>🔄 工作流进度</h4>
             <div style='display: flex; justify-content: space-between; align-items: center;'>
         """
         
@@ -103,32 +104,36 @@ class WorkflowChat:
             # 判断节点状态
             if current_node == node_id:
                 status_class = "active"
-                color = "#ffd700"
-                bg_color = "rgba(255, 215, 0, 0.2)"
+                color = "#f59e0b"  # 橙色
+                bg_color = "rgba(245, 158, 11, 0.1)"
+                border_color = "#f59e0b"
             elif self.node_states.get(node_id, "pending") == "completed":
                 status_class = "completed"
-                color = "#28a745"
-                bg_color = "rgba(40, 167, 69, 0.2)"
+                color = "#10b981"  # 绿色
+                bg_color = "rgba(16, 185, 129, 0.1)"
+                border_color = "#10b981"
             elif self.node_states.get(node_id, "pending") == "error":
                 status_class = "error"
-                color = "#dc3545"
-                bg_color = "rgba(220, 53, 69, 0.2)"
+                color = "#ef4444"  # 红色
+                bg_color = "rgba(239, 68, 68, 0.1)"
+                border_color = "#ef4444"
             else:
                 status_class = "pending"
-                color = "#6c757d"
-                bg_color = "rgba(108, 117, 125, 0.2)"
+                color = "#9ca3af"  # 灰色
+                bg_color = "rgba(156, 163, 175, 0.1)"
+                border_color = "#d1d5db"
             
             indicator_html += f"""
-                <div style='text-align: center; padding: 10px; border-radius: 8px; background: {bg_color}; margin: 0 5px; flex: 1;'>
-                    <div style='font-size: 24px; color: {color};'>{icon}</div>
-                    <div style='font-size: 12px; color: {color}; font-weight: bold; margin-top: 5px;'>{name}</div>
+                <div style='text-align: center; padding: 12px; border-radius: 8px; background: {bg_color}; margin: 0 5px; flex: 1; border: 2px solid {border_color}; transition: all 0.3s ease;'>
+                    <div style='font-size: 28px; color: {color}; margin-bottom: 5px;'>{icon}</div>
+                    <div style='font-size: 12px; color: {color}; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;'>{name}</div>
                 </div>
             """
             
             # 添加箭头（除了最后一个节点）
             if i < len(nodes) - 1:
                 indicator_html += """
-                    <div style='color: white; font-size: 18px; margin: 0 5px;'>→</div>
+                    <div style='color: #9ca3af; font-size: 20px; margin: 0 8px; font-weight: bold;'>→</div>
                 """
         
         indicator_html += """
@@ -214,12 +219,9 @@ class WorkflowChat:
         )
     
     def enable_user_input(self, prompt: str = "请输入...", quick_replies: List[str] = None) -> Tuple[str, str, bool]:
-        """启用用户输入"""
-        if quick_replies is None:
-            quick_replies = []
-        
+        """启用用户输入 - 简化版"""
         return (
-            self._create_quick_replies(quick_replies),  # 显示快捷回复
+            "",  # 不显示快捷回复
             prompt,  # 设置提示文本
             True     # 启用发送按钮
         )
@@ -264,54 +266,5 @@ class WorkflowChat:
             ), self.update_node_state(node_name.lower().replace(" ", "_"), "error")
 
     def _create_quick_replies(self, replies: List[str]) -> str:
-        """创建快捷回复HTML"""
-        if not replies:
-            return ""
-        
-        html = """
-        <div style='margin: 10px 0; padding: 10px; background: #f8f9fa; border-radius: 8px; border: 1px solid #e9ecef;'>
-            <div style='color: #6c757d; font-size: 12px; margin-bottom: 8px;'>💬 快捷回复</div>
-            <div style='display: flex; flex-wrap: wrap; gap: 8px;'>
-        """
-        
-        for reply in replies:
-            html += f"""
-                <span 
-                    class='quick-reply-tag' 
-                    style='
-                        background: #007bff; 
-                        color: white; 
-                        padding: 6px 12px; 
-                        border-radius: 16px; 
-                        font-size: 13px; 
-                        cursor: pointer; 
-                        transition: all 0.2s ease;
-                        border: none;
-                        display: inline-block;
-                        user-select: none;
-                    '
-                    onmouseover='this.style.background="#0056b3"'
-                    onmouseout='this.style.background="#007bff"'
-                    onclick='
-                        let input = document.querySelector("#user_input textarea");
-                        if (input) {{
-                            input.value = "{reply}";
-                            input.dispatchEvent(new Event("input", {{bubbles: true}}));
-                            // 触发发送按钮
-                            let sendBtn = document.querySelector("#send_btn");
-                            if (sendBtn) {{
-                                sendBtn.click();
-                            }}
-                        }}
-                    '
-                >
-                    {reply}
-                </span>
-            """
-        
-        html += """
-            </div>
-        </div>
-        """
-        
-        return html 
+        """创建快捷回复HTML - 简化版，不再使用"""
+        return ""  # 直接返回空字符串，不再生成快捷回复 
