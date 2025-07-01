@@ -468,15 +468,61 @@ class StoryPlanningNode(BaseNode):
 
 # 输出要求
 
-请以JSON格式输出剧情规划，简洁明了：
+请以JSON格式输出详细的剧情规划框架，包含以下核心要素：
 
 ```json
 {{
-  "planning": "基于上述角色、地点和配置，制定一个完整的剧情规划框架，包括故事主题、核心冲突、主要情节发展和关键转折点。规划应该符合指定的剧情类型和情感基调，合理安排角色互动和地点运用。"
+  "planning": {{
+    "故事主题与核心冲突": {{
+      "故事主题": "基于主角性格特征和生活背景确定的主题",
+      "核心冲突": "结合参与角色设计的合理冲突点"
+    }},
+    "角色关系网络": {{
+      "主角关系定位": {{
+        "与角色A": "具体关系定位和发展路径",
+        "与角色B": "具体关系定位和发展路径"
+      }},
+      "角色间关系": "相互关系和互动模式",
+      "关系发展路径": "关系演变的可能性和方向"
+    }},
+    "主要剧情线": {{
+      "开端": "设定背景和初始情况的具体描述",
+      "发展": "矛盾逐步升级和角色互动的详细过程",
+      "高潮": "核心冲突达到顶点的关键事件",
+      "结局": "问题解决和角色成长的完整描述"
+    }},
+    "地点运用策略": {{
+      "地点功能定位": {{
+        "地点1": "在剧情中的功能定位和氛围作用",
+        "地点2": "在剧情中的功能定位和氛围作用"
+      }},
+      "氛围营造": "地点氛围如何服务于情节发展",
+      "空间转换意义": "空间转换的叙事作用"
+    }},
+    "关键事件节点": [
+      {{
+        "事件名": "重要转折点描述",
+        "触发条件": "前置要求和条件",
+        "预期结果": "对后续剧情的影响",
+        "逻辑关联": "与其他事件的逻辑关系"
+      }}
+    ],
+    "情感张力设计": {{
+      "情感基调": "根据配置的mood_tone设计基调",
+      "情感起伏曲线": "情感发展的具体安排",
+      "表达方式": "符合主角性格的情感表达",
+      "理性感性平衡": "理性与感性冲突的处理"
+    }}
+  }}
 }}
 ```
 
-请确保规划内容详细且具有可执行性。
+请确保：
+1. 至少包含5个重要的关键事件节点
+2. 角色关系网络清晰详细
+3. 地点运用策略具体可操作
+4. 情感张力设计符合角色特征
+5. 所有要素相互呼应，形成完整框架
 """
         
         # 流式调用LLM并在每个chunk时yield
@@ -708,7 +754,7 @@ class PlotGenerationNode(BaseNode):
 
 # 输出要求
 
-请以JSON格式输出剧情内容，结构简洁：
+请以JSON格式输出丰富的剧情内容：
 
 ```json
 {{
@@ -721,18 +767,31 @@ class PlotGenerationNode(BaseNode):
         "小节内容": "详细的剧情内容和场景描述",
         "地点": "发生地点",
         "参与角色": ["主角", "其他角色"],
-        "关键对话": "浓缩的重要对话内容"
+        "关键对话": [
+          {{
+            "发言者": "角色名",
+            "对话内容": "具体对话"
+          }}
+        ],
+        "情感基调": "本小节的情感氛围",
+        "关键事件": "本小节的核心事件",
+        "推进作用": "对整体剧情的推进作用"
       }}
-    ]
+    ],
+    "剧情总结": {{
+      "主要冲突": "核心矛盾点",
+      "情感发展": "角色关系的整体发展",
+      "后续铺垫": "为后续剧情设置的伏笔"
+    }}
   }}
 }}
 ```
 
 请确保：
-1. 生成3-6个剧情小节
-2. 小节内容详细生动
-3. 对话符合角色特征
-4. 剧情连贯有逻辑
+1. 生成4-6个剧情小节
+2. 小节内容详细生动，包含场景描述
+3. 对话丰富且符合角色特征
+4. 剧情连贯有逻辑，情感层次分明
 """
         
         # 流式调用LLM
@@ -922,9 +981,10 @@ class CSVExportNode(BaseNode):
             
             filepath = output_dir / filename
             
-            # CSV标题行 - 精简字段
+            # CSV标题行 - 增强字段
             csv_headers = [
-                "剧情名称", "小节ID", "小节标题", "小节内容", "地点", "参与角色", "关键对话"
+                "剧情名称", "小节ID", "小节标题", "小节内容", "地点", "参与角色", 
+                "关键对话", "情感基调", "关键事件", "推进作用"
             ]
             
             csv_data = []
@@ -938,6 +998,14 @@ class CSVExportNode(BaseNode):
                 logger.info(f"成功解析JSON格式剧情数据，剧情名称: {story_name}，包含 {len(scenes)} 个小节")
                 
                 for scene in scenes:
+                    # 处理关键对话数组
+                    dialogues = scene.get('关键对话', [])
+                    if isinstance(dialogues, list):
+                        dialogue_text = '; '.join([f"{d.get('发言者', '')}：{d.get('对话内容', '')}" 
+                                                 for d in dialogues if isinstance(d, dict)])
+                    else:
+                        dialogue_text = str(dialogues)
+                    
                     csv_data.append([
                         story_name,
                         scene.get('小节ID', ''),
@@ -945,7 +1013,10 @@ class CSVExportNode(BaseNode):
                         scene.get('小节内容', ''),
                         scene.get('地点', ''),
                         ', '.join(scene.get('参与角色', [])),
-                        scene.get('关键对话', '')
+                        dialogue_text,
+                        scene.get('情感基调', ''),
+                        scene.get('关键事件', ''),
+                        scene.get('推进作用', '')
                     ])
                     
             elif isinstance(plot_content, str):
@@ -966,6 +1037,14 @@ class CSVExportNode(BaseNode):
                         logger.info(f"从字符串解析JSON成功，剧情名称: {story_name}，包含 {len(scenes)} 个小节")
                         
                         for scene in scenes:
+                            # 处理关键对话数组
+                            dialogues = scene.get('关键对话', [])
+                            if isinstance(dialogues, list):
+                                dialogue_text = '; '.join([f"{d.get('发言者', '')}：{d.get('对话内容', '')}" 
+                                                         for d in dialogues if isinstance(d, dict)])
+                            else:
+                                dialogue_text = str(dialogues)
+                            
                             csv_data.append([
                                 story_name,
                                 scene.get('小节ID', ''),
@@ -973,7 +1052,10 @@ class CSVExportNode(BaseNode):
                                 scene.get('小节内容', ''),
                                 scene.get('地点', ''),
                                 ', '.join(scene.get('参与角色', [])),
-                                scene.get('关键对话', '')
+                                dialogue_text,
+                                scene.get('情感基调', ''),
+                                scene.get('关键事件', ''),
+                                scene.get('推进作用', '')
                             ])
                     else:
                         raise ValueError("未找到story.剧情小节字段")
@@ -992,7 +1074,10 @@ class CSVExportNode(BaseNode):
                                 line,
                                 "默认地点",
                                 "主角",
-                                line[:50] + "..." if len(line) > 50 else line
+                                line[:50] + "..." if len(line) > 50 else line,
+                                "中性",
+                                f"事件{i+1}",
+                                "剧情推进"
                             ])
             else:
                 logger.error(f"无法处理的剧情数据类型: {type(plot_content)}")
