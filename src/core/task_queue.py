@@ -59,6 +59,7 @@ class TaskQueue:
         self.is_running = False
         self.current_task: Optional[QueueTask] = None
         self.executor_task: Optional[asyncio.Task] = None
+        self.executor_thread = None
         self._callbacks: Dict[str, List[Callable]] = {
             'task_added': [],
             'task_started': [],
@@ -173,7 +174,34 @@ class TaskQueue:
             return
         
         self.is_running = True
-        self.executor_task = asyncio.create_task(self._execute_queue())
+        
+        # 检查是否有运行的事件循环
+        try:
+            loop = asyncio.get_running_loop()
+            # 如果有运行的事件循环，直接创建任务
+            self.executor_task = asyncio.create_task(self._execute_queue())
+        except RuntimeError:
+            # 没有运行的事件循环，在新线程中启动
+            import threading
+            
+            def run_in_thread():
+                """在新线程中运行事件循环"""
+                try:
+                    # 创建新的事件循环
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    
+                    # 运行队列执行器
+                    loop.run_until_complete(self._execute_queue())
+                except Exception as e:
+                    logger.error(f"队列执行线程异常: {e}")
+                finally:
+                    loop.close()
+            
+            # 启动后台线程
+            self.executor_thread = threading.Thread(target=run_in_thread, daemon=True)
+            self.executor_thread.start()
+        
         logger.info("任务队列已启动")
         self._trigger_callback('queue_started')
     
@@ -184,8 +212,17 @@ class TaskQueue:
             return
         
         self.is_running = False
-        if self.executor_task:
+        
+        # 取消异步任务（如果存在）
+        if hasattr(self, 'executor_task') and self.executor_task:
             self.executor_task.cancel()
+        
+        # 等待线程结束（如果存在）
+        if hasattr(self, 'executor_thread') and self.executor_thread:
+            # 给线程一些时间来响应停止信号
+            self.executor_thread.join(timeout=2.0)
+            if self.executor_thread.is_alive():
+                logger.warning("队列执行线程未能及时停止")
         
         logger.info("任务队列已停止")
         self._trigger_callback('queue_stopped')
@@ -247,9 +284,26 @@ class TaskQueue:
             from src.workflow.story_workflow import StoryWorkflow
             
             # 获取LLM实例
-            from src.llm.base import LLMFactory
-            llm_config = task.config.get('llm_config', {})
-            llm = LLMFactory.create_llm(llm_config)
+            from src.llm.base import LLMFactory, LLMConfig
+            llm_config_dict = task.config.get('llm_config', {})
+            # 字段映射转换
+            if 'model' in llm_config_dict:
+                llm_config_dict['model_name'] = llm_config_dict.pop('model')
+            if 'base_url' in llm_config_dict:
+                base_url = llm_config_dict.pop('base_url')
+                # 只有当 base_url 不为空时才设置 api_base，避免覆盖默认值
+                if base_url and base_url.strip():
+                    llm_config_dict['api_base'] = base_url
+            # 处理API key - 如果是占位符则不传递，让LLM从环境变量获取
+            if 'api_key' in llm_config_dict:
+                api_key = llm_config_dict.get('api_key')
+                if api_key == 'dummy_key' or not api_key or not api_key.strip():
+                    # 移除占位符或空的API key，让LLM从环境变量获取
+                    llm_config_dict.pop('api_key', None)
+            llm_config = LLMConfig(**llm_config_dict)
+            llm = LLMFactory.create(llm_config)
+            # 初始化LLM实例，设置默认配置
+            await llm.initialize()
             
             workflow = StoryWorkflow(llm=llm)
             result = await workflow.execute_story_generation(task.config)
@@ -296,4 +350,4 @@ class TaskQueue:
 
 
 # 全局任务队列实例
-task_queue = TaskQueue() 
+task_queue = TaskQueue()

@@ -202,12 +202,14 @@ class StoryWorkflow:
             'protagonist': config.get('protagonist', '方知衡'),
             'selected_characters': config.get('selected_characters', []),
             'selected_locations': config.get('selected_locations', []),
+            'story_count': config.get('story_count', 5),  # 剧情数量配置
             'story_type': config.get('story_type', 'daily_life'),
             'story_length': config.get('story_length', 'medium'),
             'relationship_depth': config.get('relationship_depth', 'casual'),
             'time_setting': config.get('time_setting', 'current'),
             'mood_tone': config.get('mood_tone', 'neutral'),
-            'interaction_level': config.get('interaction_level', 'normal')
+            'interaction_level': config.get('interaction_level', 'normal'),
+            'llm': self.llm  # 传递LLM实例
         }
         
         # 编译并执行图工作流
