@@ -569,29 +569,7 @@ class StoryPlanningNode(BaseNode):
             logger.error(error_msg)
             raise Exception(error_msg)
         
-        # 更新UI - 完成状态
-        if workflow_chat:
-            # 显示最终完成状态，保留完整内容
-            final_display_content = ""
-            if think_content.strip():
-                final_display_content += f"""
-<div style="background: #f8f9fa; border-left: 4px solid #6c757d; padding: 10px; margin: 10px 0; border-radius: 4px;">
-🤔 思考过程：<br>
-{think_content}
-</div>"""
-            
-            if final_content.strip():
-                final_display_content += f"""
-<div style="background: #e8f5e9; border-left: 4px solid #28a745; padding: 10px; margin: 10px 0; border-radius: 4px;">
-📋 规划结果：<br>
-{final_content}
-</div>"""
-            
-            await workflow_chat.add_node_message(
-                "剧情规划",
-                final_display_content if final_display_content else final_content,
-                "completed"
-            )
+        # 流式显示已经包含完整结果，无需额外的完成状态显示
         
         # 尝试解析JSON格式的结果
         try:
@@ -847,29 +825,7 @@ class PlotGenerationNode(BaseNode):
             logger.error(error_msg)
             raise Exception(error_msg)
         
-        # 更新UI - 完成状态
-        if workflow_chat:
-            # 显示最终完成状态，保留完整内容
-            final_display_content = ""
-            if think_content.strip():
-                final_display_content += f"""
-<div style="background: #f8f9fa; border-left: 4px solid #6c757d; padding: 10px; margin: 10px 0; border-radius: 4px;">
-🤔 思考过程：<br>
-{think_content}
-</div>"""
-            
-            if final_content.strip():
-                final_display_content += f"""
-<div style="background: #e8f5e9; border-left: 4px solid #28a745; padding: 10px; margin: 10px 0; border-radius: 4px;">
-📖 剧情内容：<br>
-{final_content}
-</div>"""
-            
-            await workflow_chat.add_node_message(
-                "剧情生成",
-                final_display_content if final_display_content else final_content,
-                "completed"
-            )
+        # 流式显示已经包含完整结果，无需额外的完成状态显示
         
         # 尝试解析JSON格式的结果
         try:
