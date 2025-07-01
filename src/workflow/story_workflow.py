@@ -441,24 +441,23 @@ class StoryPlanningNode(BaseNode):
 """
                         location_details.append(detail)
         
-        # 构建完整的LLM提示词，不省略任何资料
+        # 构建通用的剧情规划提示词
         planning_prompt = f"""
-你是一名专业的剧情策划师，需要基于以下完整信息制定详细的剧情规划框架：
+你是一名专业的剧情策划师，需要基于以下信息制定剧情规划框架：
 
-# 主角完整人设
+# 主角设定
 
-方知衡（主角）：
 {protagonist_data}
 
-# 参与角色详细信息
+# 参与角色信息
 
 {''.join(character_details) if character_details else '无其他角色参与'}
 
-# 地点详细信息
+# 地点信息
 
 {''.join(location_details) if location_details else '无特定地点限制'}
 
-# 用户配置参数
+# 剧情配置
 
 - 剧情类型：{story_type}
 - 剧情长度：{story_length}
@@ -467,42 +466,17 @@ class StoryPlanningNode(BaseNode):
 - 情感基调：{mood_tone}
 - 互动程度：{interaction_level}
 
-# 规划要求
+# 输出要求
 
-请基于上述完整信息生成详细的剧情规划框架，包含以下核心要素：
+请以JSON格式输出剧情规划，简洁明了：
 
-## 1. 故事主题与核心冲突
-- 基于方知衡的性格特征和生活背景确定主题
-- 结合参与角色设计合理的冲突点
-- 确保冲突符合天文学家的专业背景
+```json
+{{
+  "planning": "基于上述角色、地点和配置，制定一个完整的剧情规划框架，包括故事主题、核心冲突、主要情节发展和关键转折点。规划应该符合指定的剧情类型和情感基调，合理安排角色互动和地点运用。"
+}}
+```
 
-## 2. 角色关系网络
-- 方知衡与每个角色的具体关系定位
-- 角色间的相互关系和互动模式
-- 关系发展的可能路径
-
-## 3. 主要剧情线（四幕结构）
-- 开端：设定背景和初始情况
-- 发展：矛盾逐步升级和角色互动
-- 高潮：核心冲突达到顶点
-- 结局：问题解决和角色成长
-
-## 4. 地点运用策略
-- 每个地点在剧情中的功能定位
-- 地点氛围如何服务于情节发展
-- 空间转换的叙事意义
-
-## 5. 关键事件节点
-- 至少5个重要转折点
-- 每个事件的触发条件和预期结果
-- 事件间的逻辑关联
-
-## 6. 情感张力设计
-- 根据{mood_tone}基调设计情感起伏曲线
-- 考虑方知衡内敛性格的情感表达方式
-- 平衡理性与感性的冲突
-
-请确保剧情符合方知衡的人物设定，充分体现其作为天文学家的理性严谨与内敛温和特质，同时巧妙运用所选角色和地点的独特魅力。
+请确保规划内容详细且具有可执行性。
 """
         
         # 流式调用LLM并在每个chunk时yield
@@ -619,14 +593,57 @@ class StoryPlanningNode(BaseNode):
                 "completed"
             )
         
+        # 尝试解析JSON格式的结果
+        try:
+            # 使用BaseNode的parse功能解析JSON
+            from parsers.json_parser import JSONParser
+            parser = JSONParser()
+            
+            # 从生成的内容中提取JSON部分
+            json_content = self._extract_json_from_content(final_content)
+            parsed_result = parser.parse(json_content)
+            
+            if parsed_result and 'planning' in parsed_result:
+                planning_data = parsed_result['planning']
+                logger.info("成功解析剧情规划JSON结果")
+            else:
+                # 如果解析失败，使用原始内容作为备选
+                planning_data = final_content
+                logger.warning("剧情规划JSON解析失败，使用原始内容")
+                
+        except Exception as parse_error:
+            logger.warning(f"剧情规划JSON解析异常: {parse_error}，使用原始内容")
+            planning_data = final_content
+        
         # 最终完整结果
         output_data = input_data.copy()
-        output_data['planning_result'] = final_content  # 只传递正式结果给下一个节点
+        output_data['planning_result'] = planning_data  # 传递解析后的结果给下一个节点
         
-        print(f"✅ 剧情规划完成，final_content长度: {len(final_content)}")
-        logger.info(f"剧情规划节点输出数据: planning_result长度={len(final_content)}")
+        print(f"✅ 剧情规划完成，planning_data类型: {type(planning_data)}")
+        logger.info(f"剧情规划节点输出数据: planning_result类型={type(planning_data)}")
         logger.info(f"剧情规划节点输出数据键: {list(output_data.keys())}")
         yield output_data
+    
+    def _extract_json_from_content(self, content: str) -> str:
+        """从生成内容中提取JSON部分"""
+        import re
+        
+        # 查找```json...```代码块
+        json_pattern = r'```json\s*(.*?)\s*```'
+        matches = re.findall(json_pattern, content, re.DOTALL | re.IGNORECASE)
+        
+        if matches:
+            return matches[0].strip()
+        
+        # 如果没有代码块，尝试查找以{开头}结尾的内容
+        json_pattern2 = r'\{.*\}'
+        matches2 = re.findall(json_pattern2, content, re.DOTALL)
+        
+        if matches2:
+            return matches2[0].strip()
+        
+        # 如果都没找到，返回原内容
+        return content.strip()
     
     async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """兼容性方法，实际使用 execute_stream"""
@@ -690,20 +707,19 @@ class PlotGenerationNode(BaseNode):
         mood_tone = input_data.get('mood_tone', 'neutral')
         interaction_level = input_data.get('interaction_level', 'normal')
         
-        # 构建剧情生成提示词 - 不省略任何内容
+        # 构建通用的剧情生成提示词
         plot_prompt = f"""
-你是一名专业的剧情编剧，需要基于剧情规划生成具体的剧情事件和对话内容。
+你是一名专业的剧情编剧，需要基于剧情规划生成具体的剧情内容。
 
-# 剧情规划基础
+# 剧情规划
 
 {planning_result}
 
-# 主角完整人设
+# 角色设定
 
-方知衡（主角）：
 {protagonist_data}
 
-# 用户配置参数
+# 剧情配置
 
 - 剧情类型：{story_type}
 - 剧情长度：{story_length}
@@ -712,57 +728,33 @@ class PlotGenerationNode(BaseNode):
 - 情感基调：{mood_tone}
 - 互动程度：{interaction_level}
 
-# 生成要求
+# 输出要求
 
-请基于上述完整信息生成具体的剧情内容，包含以下核心组件：
+请以JSON格式输出剧情内容，结构简洁：
 
-## 1. 详细剧情事件序列
-- 按时间顺序安排至少5-8个主要事件
-- 每个事件包含完整的场景设定
-- 体现方知衡的天文学家身份和性格特征
-
-## 2. 角色对话内容
-- 至少5段重要对话，每段不少于3个回合
-- 对话符合方知衡的语言风格（理性、精确、内敛）
-- 展现角色间的关系发展轨迹
-
-## 3. 场景细节描述
-- 具体的地点环境描写
-- 符合地点氛围的情节设计
-- 融入方知衡的生活习惯和学者气质
-
-## 4. 事件触发机制
-- 每个事件的前置条件设定
-- 玩家可能的选择分支
-- 不同选择的后续影响链
-
-## 5. 情感发展脉络
-- 基于{relationship_depth}设计关系进展
-- 符合{mood_tone}基调的情感表达
-- 体现方知衡"外冷内热"的性格层次
-
-## 6. 游戏化元素
-- 剧情完成条件
-- 可能的成就或里程碑
-- 后续剧情的伏笔铺垫
-
-# 输出格式要求
-
-每个事件请按以下结构输出：
-
-```
-【事件ID】：事件名称
-【场景地点】：具体位置和环境描述
-【参与角色】：方知衡 + 其他角色
-【事件描述】：详细的情节发展
-【关键对话】：完整的对话内容
-【触发条件】：前置要求
-【选择分支】：玩家可选择的行动
-【完成结果】：对后续剧情的影响
-【情感变化】：角色关系或心理状态的变化
+```json
+{{
+  "story": {{
+    "剧情名称": "整个剧情的名称",
+    "剧情小节": [
+      {{
+        "小节ID": "SCENE_001",
+        "小节标题": "小节的简短标题",
+        "小节内容": "详细的剧情内容和场景描述",
+        "地点": "发生地点",
+        "参与角色": ["主角", "其他角色"],
+        "关键对话": "浓缩的重要对话内容"
+      }}
+    ]
+  }}
+}}
 ```
 
-请确保所有内容都符合方知衡的人设，充分展现其作为角色独特的个人魅力。
+请确保：
+1. 生成3-6个剧情小节
+2. 小节内容详细生动
+3. 对话符合角色特征
+4. 剧情连贯有逻辑
 """
         
         # 流式调用LLM
@@ -879,11 +871,54 @@ class PlotGenerationNode(BaseNode):
                 "completed"
             )
         
+        # 尝试解析JSON格式的结果
+        try:
+            # 使用BaseNode的parse功能解析JSON
+            from parsers.json_parser import JSONParser
+            parser = JSONParser()
+            
+            # 从生成的内容中提取JSON部分
+            json_content = self._extract_json_from_content(final_content)
+            parsed_result = parser.parse(json_content)
+            
+            if parsed_result and 'story' in parsed_result:
+                story_data = parsed_result['story']
+                logger.info("成功解析剧情生成JSON结果")
+            else:
+                # 如果解析失败，使用原始内容作为备选
+                story_data = final_content
+                logger.warning("剧情生成JSON解析失败，使用原始内容")
+                
+        except Exception as parse_error:
+            logger.warning(f"剧情生成JSON解析异常: {parse_error}，使用原始内容")
+            story_data = final_content
+        
         output_data = input_data.copy()
-        output_data['plot_content'] = final_content
+        output_data['plot_content'] = story_data
         
         print("✅ 剧情生成完成")
         yield output_data
+    
+    def _extract_json_from_content(self, content: str) -> str:
+        """从生成内容中提取JSON部分"""
+        import re
+        
+        # 查找```json...```代码块
+        json_pattern = r'```json\s*(.*?)\s*```'
+        matches = re.findall(json_pattern, content, re.DOTALL | re.IGNORECASE)
+        
+        if matches:
+            return matches[0].strip()
+        
+        # 如果没有代码块，尝试查找以{开头}结尾的内容
+        json_pattern2 = r'\{.*\}'
+        matches2 = re.findall(json_pattern2, content, re.DOTALL)
+        
+        if matches2:
+            return matches2[0].strip()
+        
+        # 如果都没找到，返回原内容
+        return content.strip()
     
     async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """兼容性方法，实际使用 execute_stream"""
@@ -900,7 +935,7 @@ class CSVExportNode(BaseNode):
         super().__init__(name="csv_export")
     
     async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """执行CSV导出"""
+        """执行CSV导出 - 支持JSON数据解析"""
         print("📄 开始导出CSV...")
         
         workflow_chat = input_data.get('workflow_chat')
@@ -910,7 +945,7 @@ class CSVExportNode(BaseNode):
         if workflow_chat:
             await workflow_chat.add_node_message(
                 "CSV导出",
-                "正在将剧情数据导出为CSV格式...",
+                "正在解析剧情数据并导出为CSV格式...",
                 "progress"
             )
         
@@ -919,6 +954,7 @@ class CSVExportNode(BaseNode):
             from datetime import datetime
             import csv
             import os
+            import json
             from pathlib import Path
             
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -930,34 +966,81 @@ class CSVExportNode(BaseNode):
             
             filepath = output_dir / filename
             
-            # 构建CSV内容（简化版，直接使用生成的剧情内容）
+            # CSV标题行 - 精简字段
             csv_headers = [
-                "剧情ID", "NPC", "剧情名", "剧情阶段", "触发地点", 
-                "前置条件", "描述", "关键事件", "触发概率", 
-                "完成条件", "解锁剧情", "状态"
+                "剧情名称", "小节ID", "小节标题", "小节内容", "地点", "参与角色", "关键对话"
             ]
             
-            # 将剧情内容分段并转换为CSV格式
-            lines = plot_content.split('\n')
             csv_data = []
+            story_name = ""
             
-            # 简单解析剧情内容
-            for i, line in enumerate(lines[:10]):  # 取前10行作为剧情事件
-                if line.strip():
+            # 解析JSON格式的剧情数据
+            if isinstance(plot_content, dict) and '剧情小节' in plot_content:
+                # plot_content是已解析的JSON对象
+                story_name = plot_content.get('剧情名称', '未命名剧情')
+                scenes = plot_content.get('剧情小节', [])
+                logger.info(f"成功解析JSON格式剧情数据，剧情名称: {story_name}，包含 {len(scenes)} 个小节")
+                
+                for scene in scenes:
                     csv_data.append([
-                        f"PLOT_{i+1:03d}",  # 剧情ID
-                        "自动生成",  # NPC
-                        line[:20] + "..." if len(line) > 20 else line,  # 剧情名
-                        f"阶段{i+1}",  # 剧情阶段
-                        "默认地点",  # 触发地点
-                        "无" if i == 0 else f"完成PLOT_{i:03d}",  # 前置条件
-                        line,  # 描述
-                        f"事件{i+1}",  # 关键事件
-                        f"{100-i*10}%",  # 触发概率
-                        "完成对话",  # 完成条件
-                        f"PLOT_{i+2:03d}" if i < 9 else "",  # 解锁剧情
-                        "未触发"  # 状态
+                        story_name,
+                        scene.get('小节ID', ''),
+                        scene.get('小节标题', ''),
+                        scene.get('小节内容', ''),
+                        scene.get('地点', ''),
+                        ', '.join(scene.get('参与角色', [])),
+                        scene.get('关键对话', '')
                     ])
+                    
+            elif isinstance(plot_content, str):
+                # 尝试从字符串中解析JSON
+                try:
+                    # 使用JSONParser解析
+                    from parsers.json_parser import JSONParser
+                    parser = JSONParser()
+                    
+                    # 提取JSON内容
+                    json_content = self._extract_json_from_content(plot_content)
+                    parsed_data = parser.parse(json_content)
+                    
+                    if parsed_data and 'story' in parsed_data:
+                        story_data = parsed_data['story']
+                        story_name = story_data.get('剧情名称', '未命名剧情')
+                        scenes = story_data.get('剧情小节', [])
+                        logger.info(f"从字符串解析JSON成功，剧情名称: {story_name}，包含 {len(scenes)} 个小节")
+                        
+                        for scene in scenes:
+                            csv_data.append([
+                                story_name,
+                                scene.get('小节ID', ''),
+                                scene.get('小节标题', ''),
+                                scene.get('小节内容', ''),
+                                scene.get('地点', ''),
+                                ', '.join(scene.get('参与角色', [])),
+                                scene.get('关键对话', '')
+                            ])
+                    else:
+                        raise ValueError("未找到story.剧情小节字段")
+                        
+                except Exception as parse_error:
+                    logger.warning(f"JSON解析失败: {parse_error}，使用文本分段方式")
+                    # 回退到简单文本分段方式
+                    story_name = "文本解析剧情"
+                    lines = plot_content.split('\n')
+                    for i, line in enumerate(lines[:10]):
+                        if line.strip():
+                            csv_data.append([
+                                story_name,
+                                f"SCENE_{i+1:03d}",
+                                f"第{i+1}节",
+                                line,
+                                "默认地点",
+                                "主角",
+                                line[:50] + "..." if len(line) > 50 else line
+                            ])
+            else:
+                logger.error(f"无法处理的剧情数据类型: {type(plot_content)}")
+                raise ValueError(f"无法处理的剧情数据类型: {type(plot_content)}")
             
             # 写入CSV文件
             with open(filepath, 'w', encoding='utf-8-sig', newline='') as f:
@@ -976,12 +1059,12 @@ class CSVExportNode(BaseNode):
 - 文件名：{filename}
 - 保存路径：{filepath}
 - 绝对路径：{abs_filepath}
-- 文件大小：{len(plot_content)} 字符
 
 # 统计信息
 
-- 生成剧情事件数：{len(csv_data)} 个
-- 原始内容长度：{len(plot_content)} 字符
+- 剧情名称：{story_name}
+- 导出小节数：{len(csv_data)} 个
+- 数据解析方式：{'JSON结构化解析' if isinstance(plot_content, dict) else 'JSON字符串解析'}
 
 # 访问文件
 
@@ -1012,6 +1095,7 @@ class CSVExportNode(BaseNode):
         except Exception as e:
             error_msg = f"CSV导出失败: {str(e)}"
             print(error_msg)
+            logger.error(error_msg, exc_info=True)
             
             if workflow_chat:
                 await workflow_chat.add_node_message(
@@ -1020,4 +1104,25 @@ class CSVExportNode(BaseNode):
                     "error"
                 )
             
-            raise e 
+            raise e
+    
+    def _extract_json_from_content(self, content: str) -> str:
+        """从生成内容中提取JSON部分"""
+        import re
+        
+        # 查找```json...```代码块
+        json_pattern = r'```json\s*(.*?)\s*```'
+        matches = re.findall(json_pattern, content, re.DOTALL | re.IGNORECASE)
+        
+        if matches:
+            return matches[0].strip()
+        
+        # 如果没有代码块，尝试查找以{开头}结尾的内容
+        json_pattern2 = r'\{.*\}'
+        matches2 = re.findall(json_pattern2, content, re.DOTALL)
+        
+        if matches2:
+            return matches2[0].strip()
+        
+        # 如果都没找到，返回原内容
+        return content.strip() 
