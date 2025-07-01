@@ -22,6 +22,12 @@ class WorkflowHandlers:
         self.story_workflow = None
         self.characters_data = {}
         self.locations_data = {}
+        
+        # 工作流上下文
+        self.planning_context = ""
+        self.character_context = ""
+        self.plot_context = ""
+        
         self._initialize_data()
         
     def _initialize_data(self):
@@ -60,25 +66,10 @@ class WorkflowHandlers:
                                story_type: str,
                                story_length: str,
                                relationship_depth: str):
-        """启动工作流 - 直接执行模式"""
+        """启动工作流 - 事件分发器"""
         try:
             # 重置工作流状态
             progress_html, quick_replies, user_placeholder, send_interactive = self.workflow_chat.reset_workflow()
-            
-            # 发送启动消息
-            await self.workflow_chat.add_node_message(
-                "系统", 
-                f"🚀 工作流启动！配置参数：角色{len(selected_characters)}个，地点{len(selected_locations)}个，类型{story_type}", 
-                "start"
-            )
-            
-            quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
-            yield (
-                self.workflow_chat.update_node_state("planning", "active"),
-                quick_replies,
-                placeholder,
-                send_btn_interactive
-            )
             
             # 验证输入
             if not selected_characters:
@@ -87,12 +78,11 @@ class WorkflowHandlers:
                     "❌ 错误：请至少选择一个角色", 
                     "error"
                 )
-                quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
                 yield (
                     self.workflow_chat.update_node_state("planning", "error"),
-                    quick_replies,
-                    placeholder,
-                    send_btn_interactive
+                    "",
+                    "",
+                    False
                 )
                 return
             
@@ -102,12 +92,11 @@ class WorkflowHandlers:
                     "❌ 错误：请至少选择一个地点", 
                     "error"
                 )
-                quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
                 yield (
                     self.workflow_chat.update_node_state("planning", "error"),
-                    quick_replies,
-                    placeholder,
-                    send_btn_interactive
+                    "",
+                    "",
+                    False
                 )
                 return
             
@@ -121,16 +110,15 @@ class WorkflowHandlers:
                     "❌ 错误：工作流初始化失败",
                     "error"
                 )
-                quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
                 yield (
                     self.workflow_chat.update_node_state("planning", "error"),
-                    quick_replies,
-                    placeholder,
-                    send_btn_interactive
+                    "",
+                    "",
+                    False
                 )
                 return
             
-            # 执行配置
+            # 配置参数
             config = {
                 'selected_characters': selected_characters,
                 'selected_locations': selected_locations,
@@ -139,139 +127,14 @@ class WorkflowHandlers:
                 'relationship_depth': relationship_depth
             }
             
-            # 节点1：剧情规划
-            await self.workflow_chat.add_node_message(
-                "剧情规划",
-                f"正在分析角色关系和地点配置...\n角色：{', '.join(selected_characters[:3])}{'...' if len(selected_characters) > 3 else ''}\n地点：{', '.join(selected_locations[:3])}{'...' if len(selected_locations) > 3 else ''}",
-                "progress"
-            )
-            quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
-            yield (
-                self.workflow_chat.update_node_state("planning", "active"),
-                quick_replies,
-                placeholder,
-                send_btn_interactive
-            )
+            # 设置LLM
+            if self.app and self.app.llm:
+                self.story_workflow.llm = self.app.llm
             
-            await asyncio.sleep(2)  # 模拟处理时间
-            
-            # 完成剧情规划
-            await self.workflow_chat.add_node_message(
-                "剧情规划",
-                "✅ 剧情大纲规划完成！\n- 确定了主要角色关系网络\n- 分析了地点间的联系\n- 生成了故事主线框架",
-                "complete"
-            )
-            quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
-            yield (
-                self.workflow_chat.update_node_state("planning", "completed"),
-                quick_replies,
-                placeholder,
-                send_btn_interactive
-            )
-            
-            # 节点2：角色分析
-            await self.workflow_chat.add_node_message(
-                "角色分析",
-                "正在深入分析每个角色的性格特征和行为模式...",
-                "start"
-            )
-            quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
-            yield (
-                self.workflow_chat.update_node_state("character", "active"),
-                quick_replies,
-                placeholder,
-                send_btn_interactive
-            )
-            
-            await asyncio.sleep(2)
-            
-            # 完成角色分析
-            await self.workflow_chat.add_node_message(
-                "角色分析",
-                f"✅ 角色分析完成！\n- 分析了{len(selected_characters)}个角色的详细属性\n- 建立了角色间的关系网络\n- 确定了角色的行为动机",
-                "complete"
-            )
-            quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
-            yield (
-                self.workflow_chat.update_node_state("character", "completed"),
-                quick_replies,
-                placeholder,
-                send_btn_interactive
-            )
-            
-            # 节点3：剧情生成
-            await self.workflow_chat.add_node_message(
-                "剧情生成",
-                "正在生成具体的剧情事件和对话...",
-                "start"
-            )
-            quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
-            yield (
-                self.workflow_chat.update_node_state("plot", "active"),
-                quick_replies,
-                placeholder,
-                send_btn_interactive
-            )
-            
-            await asyncio.sleep(3)  # 剧情生成需要更多时间
-            
-            # 完成剧情生成
-            await self.workflow_chat.add_node_message(
-                "剧情生成",
-                "✅ 剧情生成完成！\n- 生成了详细的剧情事件链\n- 创建了角色对话和行为\n- 设置了触发条件和完成条件",
-                "complete"
-            )
-            quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
-            yield (
-                self.workflow_chat.update_node_state("plot", "completed"),
-                quick_replies,
-                placeholder,
-                send_btn_interactive
-            )
-            
-            # 节点4：CSV导出
-            await self.workflow_chat.add_node_message(
-                "CSV导出",
-                "正在将生成的剧情数据导出为CSV格式...",
-                "start"
-            )
-            quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
-            yield (
-                self.workflow_chat.update_node_state("export", "active"),
-                quick_replies,
-                placeholder,
-                send_btn_interactive
-            )
-            
-            await asyncio.sleep(1)
-            
-            await self.workflow_chat.add_node_message(
-                "CSV导出",
-                "✅ CSV导出完成！\n- 生成了标准格式的剧情CSV文件\n- 包含了所有必要的游戏数据字段\n- 文件已准备好下载",
-                "complete"
-            )
-            quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
-            yield (
-                self.workflow_chat.update_node_state("export", "completed"),
-                quick_replies,
-                placeholder,
-                send_btn_interactive
-            )
-            
-            # 工作流完成
-            await self.workflow_chat.add_node_message(
-                "系统",
-                "🎉 剧情生成工作流完成！\n所有节点执行成功，结果已生成并可供下载",
-                "complete"
-            )
-            quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
-            yield (
-                self.workflow_chat._create_workflow_progress(),
-                quick_replies,
-                placeholder,
-                send_btn_interactive
-            )
-            
+            # 调用真正的工作流执行
+            async for progress_update in self.story_workflow.execute_workflow_stream(config, self.workflow_chat):
+                yield progress_update
+                
         except Exception as e:
             error_msg = f"工作流执行失败: {str(e)}"
             logger.error(error_msg)
@@ -281,14 +144,15 @@ class WorkflowHandlers:
                 error_msg,
                 "error"
             )
-            quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
             yield (
                 self.workflow_chat.update_node_state("planning", "error"),
-                quick_replies,
-                placeholder,
-                send_btn_interactive
+                "",
+                "",
+                False
             )
-    
+
+
+
     async def on_user_input(self, user_input: str, workflow_progress: str):
         """处理用户输入 - 简化版，不支持交互"""
         try:

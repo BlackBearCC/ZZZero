@@ -170,56 +170,57 @@ class WorkflowChat:
     def _format_result_content(self, message: str, message_type: str) -> str:
         """格式化结果内容"""
         if message_type == "complete":
-            # 提取有用信息，去掉无意义的描述
-            if "剧情大纲规划完成" in message:
-                return """
+            # 处理真实的LLM生成内容
+            if len(message) > 500:
+                # 长内容需要截断显示
+                preview = message[:500] + "..."
+                return f"""
                 <div style='color: #10b981;'>
-                    <div style='font-weight: 600; margin-bottom: 8px;'>✅ 规划完成</div>
-                    <ul style='margin: 0; padding-left: 20px; font-size: 14px;'>
-                        <li>角色关系网络已建立</li>
-                        <li>地点连接分析完成</li>
-                        <li>故事主线框架已生成</li>
-                    </ul>
+                    <div style='font-weight: 600; margin-bottom: 8px;'>✅ 执行完成</div>
+                    <div style='background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 6px; padding: 10px; font-size: 13px; max-height: 200px; overflow-y: auto;'>
+                        <pre style='white-space: pre-wrap; margin: 0; font-family: inherit;'>{preview}</pre>
+                    </div>
+                    <div style='margin-top: 8px; font-size: 12px; color: #6c757d;'>
+                        总长度: {len(message)} 字符 | <a href="#" onclick="this.previousElementSibling.previousElementSibling.firstElementChild.style.maxHeight='none'; this.style.display='none';">展开全部</a>
+                    </div>
                 </div>
                 """
-            elif "角色分析完成" in message:
-                return """
+            else:
+                # 短内容直接显示
+                return f"""
                 <div style='color: #10b981;'>
-                    <div style='font-weight: 600; margin-bottom: 8px;'>✅ 分析完成</div>
-                    <ul style='margin: 0; padding-left: 20px; font-size: 14px;'>
-                        <li>角色详细属性已分析</li>
-                        <li>角色关系网络已构建</li>
-                        <li>行为动机已确定</li>
-                    </ul>
+                    <div style='font-weight: 600; margin-bottom: 8px;'>✅ 执行完成</div>
+                    <div style='background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 6px; padding: 10px; font-size: 13px;'>
+                        <pre style='white-space: pre-wrap; margin: 0; font-family: inherit;'>{message}</pre>
+                    </div>
                 </div>
                 """
-            elif "剧情生成完成" in message:
-                return """
-                <div style='color: #10b981;'>
-                    <div style='font-weight: 600; margin-bottom: 8px;'>✅ 生成完成</div>
-                    <ul style='margin: 0; padding-left: 20px; font-size: 14px;'>
-                        <li>剧情事件链已生成</li>
-                        <li>角色对话已创建</li>
-                        <li>触发条件已设置</li>
-                    </ul>
+        elif message_type == "streaming":
+            # 流式内容显示
+            return f"""
+            <div style='color: #f59e0b;'>
+                <div style='font-weight: 600; margin-bottom: 8px;'>⚡ 实时生成中...</div>
+                <div style='background: #fffbeb; border: 1px solid #fbbf24; border-radius: 6px; padding: 10px; font-size: 13px; max-height: 300px; overflow-y: auto; border-left: 4px solid #f59e0b;'>
+                    <pre style='white-space: pre-wrap; margin: 0; font-family: inherit; line-height: 1.4;'>{message}</pre>
+                    <div style='display: inline-block; width: 8px; height: 8px; background-color: #f59e0b; border-radius: 50%; margin-left: 4px; animation: pulse 1s infinite;'></div>
                 </div>
-                """
-            elif "CSV导出完成" in message:
-                return """
-                <div style='color: #10b981;'>
-                    <div style='font-weight: 600; margin-bottom: 8px;'>✅ 导出完成</div>
-                    <ul style='margin: 0; padding-left: 20px; font-size: 14px;'>
-                        <li>CSV文件已生成</li>
-                        <li>游戏数据字段已包含</li>
-                        <li>文件已准备下载</li>
-                    </ul>
+                <div style='margin-top: 5px; font-size: 12px; color: #92400e;'>
+                    当前长度: {len(message)} 字符
                 </div>
-                """
+            </div>
+            """
         elif message_type == "progress":
             return f"""
             <div style='color: #f59e0b;'>
                 <div style='font-weight: 600; margin-bottom: 5px;'>⏳ 执行中...</div>
                 <div style='font-size: 14px;'>{message}</div>
+            </div>
+            """
+        elif message_type == "error":
+            return f"""
+            <div style='color: #ef4444;'>
+                <div style='font-weight: 600; margin-bottom: 5px;'>❌ 执行失败</div>
+                <div style='font-size: 14px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 8px;'>{message}</div>
             </div>
             """
         

@@ -7,6 +7,7 @@ import json
 import asyncio
 import csv
 import random
+import logging
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
@@ -18,7 +19,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from core.graph import StateGraph
 from core.base import BaseNode
 from llm.base import LLMFactory
-from core.types import LLMConfig, TaskResult
+from core.types import LLMConfig, TaskResult, Message, MessageRole
+
+logger = logging.getLogger(__name__)
 
 class StoryWorkflow:
     """剧情生成工作流管理器"""
@@ -146,104 +149,209 @@ class StoryWorkflow:
         
         return result
 
+    async def execute_workflow_stream(self, config: Dict[str, Any], workflow_chat):
+        """流式执行工作流"""
+        try:
+            # 准备初始输入
+            initial_input = {
+                'characters_data': self.characters_data,
+                'locations_data': self.locations_data,
+                'config': config,
+                'selected_characters': config.get('selected_characters', []),
+                'selected_locations': config.get('selected_locations', []),
+                'story_type': config.get('story_type', 'daily_life'),
+                'story_length': config.get('story_length', 'medium'),
+                'relationship_depth': config.get('relationship_depth', 'casual'),
+                'workflow_chat': workflow_chat,  # 传递UI更新器
+                'llm': self.llm  # 传递LLM实例
+            }
+            
+            # 创建图工作流
+            if not self.graph:
+                await self.create_story_graph()
+            
+            # 手动逐步执行每个节点
+            current_state = initial_input.copy()
+            
+            # ===== 执行节点1：剧情规划 =====
+            yield (
+                workflow_chat.update_node_state("planning", "active"),
+                "",
+                "剧情规划开始执行...",
+                False
+            )
+            
+            planning_node = self.graph.nodes["story_planning"]
+            current_state = await planning_node.execute(current_state)
+            
+            yield (
+                workflow_chat.update_node_state("planning", "completed"),
+                "",
+                "剧情规划完成",
+                False
+            )
+            
+            # ===== 执行节点2：角色分析 =====
+            yield (
+                workflow_chat.update_node_state("character", "active"),
+                "",
+                "角色分析开始执行...",
+                False
+            )
+            
+            character_node = self.graph.nodes["character_analysis"]
+            current_state = await character_node.execute(current_state)
+            
+            yield (
+                workflow_chat.update_node_state("character", "completed"),
+                "",
+                "角色分析完成",
+                False
+            )
+            
+            # ===== 执行节点3：剧情生成 =====
+            yield (
+                workflow_chat.update_node_state("plot", "active"),
+                "",
+                "剧情生成开始执行...",
+                False
+            )
+            
+            plot_node = self.graph.nodes["plot_generation"]
+            current_state = await plot_node.execute(current_state)
+            
+            yield (
+                workflow_chat.update_node_state("plot", "completed"),
+                "",
+                "剧情生成完成",
+                False
+            )
+            
+            # ===== 执行节点4：CSV导出 =====
+            yield (
+                workflow_chat.update_node_state("export", "active"),
+                "",
+                "CSV导出开始执行...",
+                False
+            )
+            
+            csv_node = self.graph.nodes["csv_export"]
+            current_state = await csv_node.execute(current_state)
+            
+            yield (
+                workflow_chat.update_node_state("export", "completed"),
+                "",
+                "工作流执行完成",
+                False
+            )
+                
+        except Exception as e:
+            logger.error(f"工作流流式执行失败: {e}")
+            await workflow_chat.add_node_message(
+                "系统",
+                f"工作流执行失败: {str(e)}",
+                "error"
+            )
+            yield (
+                workflow_chat.update_node_state("planning", "error"),
+                "",
+                "",
+                False
+            )
+
 
 class StoryPlanningNode(BaseNode):
     """剧情规划节点 - 分析角色关系和故事大纲"""
     
     async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """执行剧情规划"""
+        """执行剧情规划 - 流式版本"""
         print("🎯 开始剧情规划...")
         
+        workflow_chat = input_data.get('workflow_chat')
+        llm = input_data.get('llm')
         selected_characters = input_data.get('selected_characters', [])
         selected_locations = input_data.get('selected_locations', [])
         story_type = input_data.get('story_type', 'daily_life')
+        relationship_depth = input_data.get('relationship_depth', 'casual')
         
-        # 构建角色信息
-        characters_info = []
-        char_list = input_data.get('characters_data', {}).get("角色列表", {})
+        # 更新UI - 开始状态
+        if workflow_chat:
+            await workflow_chat.add_node_message(
+                "剧情规划",
+                "正在分析角色关系和地点配置，生成剧情框架...",
+                "progress"
+            )
         
-        for char_name in selected_characters:
-            if char_name in char_list:
-                char_info = char_list[char_name]
-                characters_info.append({
-                    'name': char_name,
-                    'info': char_info
-                })
-        
-        # 构建地点信息
-        locations_info = []
-        districts = input_data.get('locations_data', {}).get("districts", {})
-        
-        for district_name, district_info in districts.items():
-            district_locations = district_info.get("locations", {})
-            for loc_name, loc_info in district_locations.items():
-                if loc_info.get('name') in selected_locations:
-                    locations_info.append({
-                        'name': loc_info.get('name'),
-                        'info': loc_info
-                    })
-        
-        # LLM生成剧情规划
-        if self.llm:
-            prompt = f"""
-# 剧情规划任务
+        # 构建LLM提示词
+        planning_prompt = f"""
+请基于以下信息制定详细的剧情规划框架：
 
-## 角色信息
-{json.dumps(characters_info, ensure_ascii=False, indent=2)}
+**角色信息：**
+{', '.join(selected_characters)}
 
-## 地点信息  
-{json.dumps(locations_info, ensure_ascii=False, indent=2)}
+**地点信息：**
+{', '.join(selected_locations)}
 
-## 剧情类型
-{story_type}
+**剧情类型：** {story_type}
+**关系深度：** {relationship_depth}
 
-## 任务要求
-请为这些角色在指定地点创建一个完整的剧情规划，包括：
-1. 故事主线概述
-2. 角色关系分析
-3. 关键剧情节点
-4. 地点利用方案
+请生成：
+1. 故事主题和核心冲突
+2. 角色关系网络图
+3. 主要剧情线（开端-发展-高潮-结局）
+4. 各地点的作用和意义
+5. 关键事件节点（至少3个）
 
-输出格式为JSON：
-{{
-  "story_outline": "故事主线概述",
-  "character_relationships": [
-    {{"char1": "角色1", "char2": "角色2", "relationship": "关系描述"}}
-  ],
-  "key_plot_points": ["关键剧情点1", "关键剧情点2"],
-  "location_usage": [
-    {{"location": "地点名", "purpose": "用途描述"}}
-  ]
-}}
+请以结构化的方式输出，包含具体的情节细节。
 """
-            
+        
+        # 流式调用LLM
+        full_content = ""
+        if llm:
             try:
-                response = await self.llm.generate(prompt)
-                if isinstance(response, str):
-                    planning_result = json.loads(response)
-                else:
-                    planning_result = response
-            except Exception as e:
-                print(f"剧情规划生成失败: {e}")
-                planning_result = {
-                    "story_outline": "默认剧情概述",
-                    "character_relationships": [],
-                    "key_plot_points": [],
-                    "location_usage": []
-                }
+                # 构建消息列表
+                message = Message(role=MessageRole.USER, content=planning_prompt)
+                messages = [message]
+                
+                # 尝试流式调用
+                async for chunk in llm.stream_generate(messages):
+                    full_content += chunk
+                    
+                    # 实时更新UI
+                    if workflow_chat:
+                        await workflow_chat.add_node_message(
+                            "剧情规划",
+                            full_content,
+                            "streaming"
+                        )
+                        
+            except AttributeError:
+                # LLM不支持流式，使用普通调用
+                message = Message(role=MessageRole.USER, content=planning_prompt)
+                messages = [message]
+                response = await llm.generate(messages)
+                full_content = response.content
+                
+                if workflow_chat:
+                    await workflow_chat.add_node_message(
+                        "剧情规划",
+                        full_content,
+                        "streaming"
+                    )
         else:
-            planning_result = {
-                "story_outline": "默认剧情概述", 
-                "character_relationships": [],
-                "key_plot_points": [],
-                "location_usage": []
-            }
+            full_content = "默认剧情规划（LLM未初始化）"
+        
+        # 更新UI - 完成状态
+        if workflow_chat:
+            await workflow_chat.add_node_message(
+                "剧情规划",
+                full_content,
+                "complete"
+            )
         
         # 传递给下一个节点
         output_data = input_data.copy()
-        output_data['planning_result'] = planning_result
-        output_data['characters_info'] = characters_info
-        output_data['locations_info'] = locations_info
+        output_data['planning_result'] = full_content
         
         print("✅ 剧情规划完成")
         return output_data
@@ -253,151 +361,196 @@ class CharacterAnalysisNode(BaseNode):
     """角色分析节点 - 深度分析角色特征和行为模式"""
     
     async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """执行角色分析"""
+        """执行角色分析 - 流式版本"""
         print("👥 开始角色分析...")
         
-        characters_info = input_data.get('characters_info', [])
-        planning_result = input_data.get('planning_result', {})
+        workflow_chat = input_data.get('workflow_chat')
+        llm = input_data.get('llm')
+        selected_characters = input_data.get('selected_characters', [])
+        planning_result = input_data.get('planning_result', '')
         
-        character_analysis = []
+        # 更新UI - 开始状态
+        if workflow_chat:
+            await workflow_chat.add_node_message(
+                "角色分析",
+                "正在深入分析角色属性和关系网络...",
+                "progress"
+            )
         
-        for char_data in characters_info:
-            char_name = char_data['name']
-            char_info = char_data['info']
-            
-            # 分析角色特征
-            analysis = {
-                'name': char_name,
-                'personality_traits': char_info.get('性格', '').split('、'),
-                'daily_schedule': char_info.get('每日行程', {}),
-                'activity_locations': char_info.get('活动地点', []),
-                'potential_plots': char_info.get('可触发剧情', []),
-                'interaction_style': self._analyze_interaction_style(char_info),
-                'story_role': self._determine_story_role(char_info)
-            }
-            
-            character_analysis.append(analysis)
+        # 构建角色分析提示词
+        character_prompt = f"""
+基于以下剧情规划，对每个角色进行深入分析：
+
+**剧情规划背景：**
+{planning_result[:500]}...
+
+**需要分析的角色：**
+{', '.join(selected_characters)}
+
+请为每个角色生成：
+1. 详细性格描述和行为特征
+2. 在剧情中的作用和地位
+3. 与其他角色的具体关系
+4. 角色动机和目标
+5. 角色弧光（成长轨迹）
+6. 典型对话风格示例
+
+请以角色名为标题，分别详细描述每个角色。
+"""
+        
+        # 流式调用LLM
+        full_content = ""
+        if llm:
+            try:
+                # 构建消息列表
+                message = Message(role=MessageRole.USER, content=character_prompt)
+                messages = [message]
+                
+                # 尝试流式调用
+                async for chunk in llm.stream_generate(messages):
+                    full_content += chunk
+                    
+                    # 实时更新UI
+                    if workflow_chat:
+                        await workflow_chat.add_node_message(
+                            "角色分析",
+                            full_content,
+                            "streaming"
+                        )
+                        
+            except AttributeError:
+                # LLM不支持流式，使用普通调用
+                message = Message(role=MessageRole.USER, content=character_prompt)
+                messages = [message]
+                response = await llm.generate(messages)
+                full_content = response.content
+                
+                if workflow_chat:
+                    await workflow_chat.add_node_message(
+                        "角色分析",
+                        full_content,
+                        "streaming"
+                    )
+        else:
+            full_content = "默认角色分析（LLM未初始化）"
+        
+        # 更新UI - 完成状态
+        if workflow_chat:
+            await workflow_chat.add_node_message(
+                "角色分析",
+                full_content,
+                "complete"
+            )
         
         output_data = input_data.copy()
-        output_data['character_analysis'] = character_analysis
+        output_data['character_analysis'] = full_content
         
         print("✅ 角色分析完成")
         return output_data
-    
-    def _analyze_interaction_style(self, char_info: Dict[str, Any]) -> str:
-        """分析角色互动风格"""
-        personality = char_info.get('性格', '')
-        if '温和' in personality or '善良' in personality:
-            return '温和友善'
-        elif '冷艳' in personality or '厌世' in personality:
-            return '冷淡疏离'
-        elif '火爆' in personality or '强干' in personality:
-            return '直接热情'
-        else:
-            return '中性平和'
-    
-    def _determine_story_role(self, char_info: Dict[str, Any]) -> str:
-        """确定角色在故事中的作用"""
-        plots = char_info.get('可触发剧情', [])
-        if len(plots) > 5:
-            return '主要角色'
-        elif len(plots) > 2:
-            return '重要配角'
-        else:
-            return '背景角色'
 
 
 class PlotGenerationNode(BaseNode):
     """剧情生成节点 - 生成具体的剧情事件"""
     
     async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """执行剧情生成"""
+        """执行剧情生成 - 流式版本"""
         print("📚 开始生成剧情...")
         
-        planning_result = input_data.get('planning_result', {})
-        character_analysis = input_data.get('character_analysis', [])
-        locations_info = input_data.get('locations_info', [])
+        workflow_chat = input_data.get('workflow_chat')
+        llm = input_data.get('llm')
         config = input_data.get('config', {})
+        character_analysis = input_data.get('character_analysis', '')
+        planning_result = input_data.get('planning_result', '')
         
-        # 生成剧情事件
-        story_events = []
+        # 更新UI - 开始状态
+        if workflow_chat:
+            await workflow_chat.add_node_message(
+                "剧情生成",
+                "正在生成具体的剧情事件和对话内容...",
+                "progress"
+            )
         
-        # 根据角色分析和地点信息生成剧情
-        for i, char_analysis in enumerate(character_analysis):
-            char_name = char_analysis['name']
-            potential_plots = char_analysis['potential_plots']
-            activity_locations = char_analysis['activity_locations']
-            
-            # 为每个角色生成3-5个剧情事件
-            for j, plot_idea in enumerate(potential_plots[:5]):
-                # 选择适合的地点
-                suitable_location = self._find_suitable_location(
-                    activity_locations, locations_info
-                )
+        # 构建剧情生成提示词
+        plot_prompt = f"""
+基于前面的规划和角色分析，生成具体的剧情内容：
+
+**配置参数：**
+- 剧情类型：{config.get('story_type', 'daily_life')}
+- 剧情长度：{config.get('story_length', 'medium')}
+- 关系深度：{config.get('relationship_depth', 'casual')}
+
+**剧情规划：**
+{planning_result[:400]}...
+
+**角色分析结果：**
+{character_analysis[:400]}...
+
+请生成：
+1. 详细的剧情事件序列（按时间顺序）
+2. 每个事件的具体场景描述
+3. 角色对话内容（至少3段重要对话）
+4. 事件触发条件和完成条件
+5. 分支剧情选项（如果有）
+6. 情感张力点和戏剧冲突
+
+输出格式要求：
+- 事件ID：事件名称
+- 场景：具体地点和环境
+- 参与角色：主要和次要角色
+- 对话内容：关键对话
+- 触发条件：什么情况下发生
+- 结果：对剧情的影响
+"""
+        
+        # 流式调用LLM
+        full_content = ""
+        if llm:
+            try:
+                # 构建消息列表
+                message = Message(role=MessageRole.USER, content=plot_prompt)
+                messages = [message]
                 
-                event = {
-                    'plot_id': f"{char_name}_{j+1:02d}",
-                    'character': char_name,
-                    'plot_name': plot_idea,
-                    'location': suitable_location,
-                    'description': f"在{suitable_location}发生的{plot_idea}相关剧情",
-                    'trigger_condition': self._generate_trigger_condition(j),
-                    'success_condition': f"完成{plot_idea}相关互动",
-                    'unlock_plots': self._generate_unlock_plots(char_name, j+2),
-                    'probability': self._calculate_probability(j),
-                    'stage': f"阶段{j+1}",
-                    'keywords': self._extract_keywords(plot_idea, suitable_location)
-                }
+                # 尝试流式调用
+                async for chunk in llm.stream_generate(messages):
+                    full_content += chunk
+                    
+                    # 实时更新UI
+                    if workflow_chat:
+                        await workflow_chat.add_node_message(
+                            "剧情生成",
+                            full_content,
+                            "streaming"
+                        )
+                        
+            except AttributeError:
+                # LLM不支持流式，使用普通调用
+                message = Message(role=MessageRole.USER, content=plot_prompt)
+                messages = [message]
+                response = await llm.generate(messages)
+                full_content = response.content
                 
-                story_events.append(event)
+                if workflow_chat:
+                    await workflow_chat.add_node_message(
+                        "剧情生成",
+                        full_content,
+                        "streaming"
+                    )
+        else:
+            full_content = "默认剧情生成（LLM未初始化）"
+        
+        # 更新UI - 完成状态
+        if workflow_chat:
+            await workflow_chat.add_node_message(
+                "剧情生成",
+                full_content,
+                "complete"
+            )
         
         output_data = input_data.copy()
-        output_data['story_events'] = story_events
+        output_data['plot_content'] = full_content
         
-        print(f"✅ 剧情生成完成，共生成{len(story_events)}个剧情事件")
+        print("✅ 剧情生成完成")
         return output_data
-    
-    def _find_suitable_location(self, activity_locations: List[str], 
-                               locations_info: List[Dict[str, Any]]) -> str:
-        """为剧情寻找合适的地点"""
-        for loc_name in activity_locations:
-            for loc_info in locations_info:
-                if loc_info['name'] == loc_name:
-                    return loc_name
-        
-        # 如果没有匹配的选择地点，返回第一个活动地点
-        return activity_locations[0] if activity_locations else "未知地点"
-    
-    def _generate_trigger_condition(self, index: int) -> str:
-        """生成触发条件"""
-        if index == 0:
-            return "无"
-        else:
-            return f"完成前置剧情阶段{index}"
-    
-    def _generate_unlock_plots(self, char_name: str, next_index: int) -> List[str]:
-        """生成解锁剧情"""
-        return [f"{char_name}_{next_index:02d}"] if next_index <= 5 else []
-    
-    def _calculate_probability(self, index: int) -> str:
-        """计算触发概率"""
-        probabilities = ["85%", "75%", "65%", "55%", "45%"]
-        return probabilities[min(index, len(probabilities)-1)]
-    
-    def _extract_keywords(self, plot_idea: str, location: str) -> List[str]:
-        """提取关键词"""
-        keywords = []
-        if "相遇" in plot_idea or "邂逅" in plot_idea:
-            keywords.extend(["相遇", "初识"])
-        if "交流" in plot_idea or "聊天" in plot_idea:
-            keywords.extend(["对话", "交流"])
-        if "帮助" in plot_idea:
-            keywords.extend(["帮助", "互助"])
-        if "回忆" in plot_idea or "故事" in plot_idea:
-            keywords.extend(["回忆", "分享"])
-        
-        keywords.append(location)
-        return keywords
 
 
 class CSVExportNode(BaseNode):
@@ -407,52 +560,112 @@ class CSVExportNode(BaseNode):
         """执行CSV导出"""
         print("📄 开始导出CSV...")
         
-        story_events = input_data.get('story_events', [])
+        workflow_chat = input_data.get('workflow_chat')
+        plot_content = input_data.get('plot_content', '')
         
-        # 准备CSV数据
-        csv_headers = [
-            "剧情ID", "NPC", "剧情名", "剧情阶段", "触发地点", 
-            "前置条件", "描述", "关键事件", "触发概率", 
-            "完成条件", "解锁剧情", "状态"
-        ]
+        # 更新UI - 开始状态
+        if workflow_chat:
+            await workflow_chat.add_node_message(
+                "CSV导出",
+                "正在将剧情数据导出为CSV格式...",
+                "progress"
+            )
         
-        csv_data = []
-        for event in story_events:
-            csv_data.append([
-                event.get('plot_id', ''),
-                event.get('character', ''),
-                event.get('plot_name', ''),
-                event.get('stage', ''),
-                event.get('location', ''),
-                event.get('trigger_condition', '无'),
-                event.get('description', ''),
-                '; '.join(event.get('keywords', [])),
-                event.get('probability', '50%'),
-                event.get('success_condition', ''),
-                '; '.join(event.get('unlock_plots', [])),
-                "未触发"
-            ])
-        
-        # 生成文件名
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"story_plot_{timestamp}.csv"
-        
-        # 确保输出目录存在
-        output_dir = Path("workspace/output")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        filepath = output_dir / filename
-        
-        # 写入CSV文件
-        with open(filepath, 'w', encoding='utf-8-sig', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(csv_headers)
-            writer.writerows(csv_data)
-        
-        output_data = input_data.copy()
-        output_data['export_file'] = str(filepath)
-        output_data['csv_data'] = csv_data
-        output_data['csv_headers'] = csv_headers
-        
-        print(f"✅ CSV导出完成: {filepath}")
-        return output_data 
+        try:
+            # 生成文件名
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"story_plot_{timestamp}.csv"
+            
+            # 确保输出目录存在
+            output_dir = Path("workspace/output")
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            filepath = output_dir / filename
+            
+            # 构建CSV内容（简化版，直接使用生成的剧情内容）
+            csv_headers = [
+                "剧情ID", "NPC", "剧情名", "剧情阶段", "触发地点", 
+                "前置条件", "描述", "关键事件", "触发概率", 
+                "完成条件", "解锁剧情", "状态"
+            ]
+            
+            # 将剧情内容分段并转换为CSV格式
+            lines = plot_content.split('\n')
+            csv_data = []
+            
+            # 简单解析剧情内容
+            for i, line in enumerate(lines[:10]):  # 取前10行作为剧情事件
+                if line.strip():
+                    csv_data.append([
+                        f"PLOT_{i+1:03d}",  # 剧情ID
+                        "自动生成",  # NPC
+                        line[:20] + "..." if len(line) > 20 else line,  # 剧情名
+                        f"阶段{i+1}",  # 剧情阶段
+                        "默认地点",  # 触发地点
+                        "无" if i == 0 else f"完成PLOT_{i:03d}",  # 前置条件
+                        line,  # 描述
+                        f"事件{i+1}",  # 关键事件
+                        f"{100-i*10}%",  # 触发概率
+                        "完成对话",  # 完成条件
+                        f"PLOT_{i+2:03d}" if i < 9 else "",  # 解锁剧情
+                        "未触发"  # 状态
+                    ])
+            
+            # 写入CSV文件
+            with open(filepath, 'w', encoding='utf-8-sig', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(csv_headers)
+                writer.writerows(csv_data)
+            
+            # 获取绝对路径
+            abs_filepath = str(filepath.absolute())
+            
+            # 生成结果信息
+            result = f"""✅ CSV导出成功！
+
+**文件信息：**
+- 文件名：{filename}
+- 保存路径：{filepath}
+- 绝对路径：{abs_filepath}
+- 文件大小：{len(plot_content)} 字符
+
+**统计信息：**
+- 生成剧情事件数：{len(csv_data)} 个
+- 原始内容长度：{len(plot_content)} 字符
+
+**访问文件：**
+🔗 点击打开文件：file:///{abs_filepath.replace(os.sep, '/')}
+📂 在文件夹中查看：{filepath.parent}
+
+**下载说明：**
+文件已保存到项目的 workspace/output 目录中。
+"""
+            
+            # 更新UI - 完成状态
+            if workflow_chat:
+                await workflow_chat.add_node_message(
+                    "CSV导出",
+                    result,
+                    "complete"
+                )
+            
+            output_data = input_data.copy()
+            output_data['export_file'] = str(filepath)
+            output_data['csv_data'] = csv_data
+            output_data['csv_headers'] = csv_headers
+            
+            print(f"✅ CSV导出完成: {filepath}")
+            return output_data
+            
+        except Exception as e:
+            error_msg = f"CSV导出失败: {str(e)}"
+            print(error_msg)
+            
+            if workflow_chat:
+                await workflow_chat.add_node_message(
+                    "CSV导出",
+                    error_msg,
+                    "error"
+                )
+            
+            raise e 

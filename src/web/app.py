@@ -754,3 +754,18 @@ class AgentApp:
         """启动应用"""
         interface = self.create_interface()
         interface.launch(**kwargs) 
+
+
+if __name__ == "__main__":
+    import logging
+    logging.basicConfig(level=logging.INFO)
+    
+    # 创建并启动应用
+    app = AgentApp()
+    app.launch(
+        server_name="127.0.0.1",
+        server_port=7861,
+        share=False,
+        show_error=True,
+        debug=False
+    ) 

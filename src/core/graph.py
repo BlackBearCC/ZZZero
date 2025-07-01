@@ -523,7 +523,137 @@ class StateGraphExecutor(BaseExecutor):
                            graph: StateGraph,
                            initial_state: Dict[str, Any], 
                            config: Dict[str, Any]) -> AsyncIterator[Dict[str, Any]]:
-        """流式执行状态图"""
-        # 简化实现，实际使用时可以参考execute方法实现流式版本
-        result = await self.execute(graph, initial_state, config)
-        yield {"type": "final", "state": result} 
+        """流式执行状态图 - 真实实现"""
+        from .executor import StateManager, add_reducer
+        
+        # 设置默认状态合并器
+        state_manager = StateManager({
+            "messages": add_reducer,  # 消息列表使用追加合并
+        })
+        
+        # 初始化状态
+        current_state = initial_state.copy()
+        
+        # 执行统计
+        iteration = 0
+        current_nodes = [graph.entry_point] if graph.entry_point else []
+        visited_nodes = []
+        
+        print(f"[StreamExecutor] 开始流式执行图: {graph.name}")
+        yield {"type": "start", "message": f"开始执行工作流: {graph.name}", "state": current_state}
+        
+        while current_nodes and iteration < self.max_iterations:
+            iteration += 1
+            print(f"\n[StreamExecutor] === 迭代 {iteration} ===")
+            print(f"[StreamExecutor] 当前节点: {current_nodes}")
+            
+            # 逐个执行节点（流式）
+            for node_name in current_nodes:
+                if node_name in graph.nodes:
+                    node = graph.nodes[node_name]
+                    print(f"[StreamExecutor] 开始执行节点: {node_name}")
+                    
+                    # 发送节点开始信号
+                    yield {
+                        "type": "node_start", 
+                        "node": node_name, 
+                        "state": current_state,
+                        "iteration": iteration
+                    }
+                    
+                    try:
+                        # 执行节点
+                        result = await node.run(current_state)
+                        visited_nodes.append(node_name)
+                        
+                        print(f"[StreamExecutor] 节点 {node_name} 执行完成")
+                        
+                        # 发送节点完成信号
+                        yield {
+                            "type": "node_complete", 
+                            "node": node_name, 
+                            "result": result,
+                            "state": current_state
+                        }
+                        
+                        # 合并状态更新
+                        if result.is_success and result.state_update:
+                            current_state = state_manager.merge_state(
+                                current_state, 
+                                result.state_update
+                            )
+                            
+                            # 发送状态更新信号
+                            yield {
+                                "type": "state_update",
+                                "node": node_name,
+                                "update": result.state_update,
+                                "new_state": current_state
+                            }
+                        
+                    except Exception as e:
+                        print(f"[StreamExecutor] 节点 {node_name} 执行失败: {e}")
+                        
+                        # 发送错误信号
+                        yield {
+                            "type": "node_error",
+                            "node": node_name,
+                            "error": str(e),
+                            "state": current_state
+                        }
+                        # 继续执行其他节点
+                        continue
+            
+            # 确定下一步执行的节点
+            next_nodes = []
+            commands = []
+            sends = []
+            
+            for node_name in current_nodes:
+                # 使用图的路由逻辑
+                nodes, command, send_list = graph.get_next_nodes(node_name, current_state)
+                next_nodes.extend(nodes)
+                if command:
+                    commands.append(command)
+                sends.extend(send_list)
+            
+            # 处理Command状态更新
+            for command in commands:
+                if command.update:
+                    current_state = state_manager.merge_state(
+                        current_state, 
+                        command.update
+                    )
+            
+            # 处理Send对象（动态节点创建）
+            for send in sends:
+                if send.node in graph.nodes:
+                    current_state = state_manager.merge_state(current_state, send.state)
+                    next_nodes.append(send.node)
+            
+            # 过滤有效的下一个节点
+            current_nodes = [node for node in next_nodes if node in graph.nodes]
+            current_nodes = list(set(current_nodes))  # 去重
+            
+            print(f"[StreamExecutor] 下一轮节点: {current_nodes}")
+            
+            # 发送迭代完成信号
+            yield {
+                "type": "iteration_complete",
+                "iteration": iteration,
+                "next_nodes": current_nodes,
+                "state": current_state
+            }
+            
+            # 如果没有下一个节点，结束执行
+            if not current_nodes:
+                print(f"[StreamExecutor] 没有更多节点，执行结束")
+                break
+        
+        # 发送最终完成信号
+        yield {
+            "type": "final", 
+            "state": current_state,
+            "visited_nodes": visited_nodes,
+            "iterations": iteration
+        } 
