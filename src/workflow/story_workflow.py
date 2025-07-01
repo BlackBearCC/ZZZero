@@ -597,7 +597,7 @@ class StoryPlanningNode(BaseNode):
         
         # 更新UI - 完成状态
         if workflow_chat:
-            # 显示最终完成状态
+            # 显示最终完成状态，保留完整内容
             final_display_content = ""
             if think_content.strip():
                 final_display_content += f"""
@@ -775,30 +775,76 @@ class PlotGenerationNode(BaseNode):
                 
                 logger.info(f"剧情生成: 开始流式LLM调用，提示词长度: {len(plot_prompt)}")
                 
-                # 流式调用
+                # 使用think模式流式调用
                 chunk_count = 0
-                async for chunk in llm.stream_generate(messages):
+                think_content = ""
+                final_content = ""
+                full_content = ""  # 兼容模式
+                
+                async for chunk_data in llm.stream_generate(
+                    messages, 
+                    mode="think",
+                    return_dict=True  # 工作流需要字典格式来区分think和content
+                ):
                     chunk_count += 1
-                    full_content += chunk
                     
-                    # 实时更新UI - 每个chunk都更新
-                    if workflow_chat:
-                        try:
-                            await workflow_chat.add_node_message(
-                                "剧情生成",
-                                full_content,
-                                "streaming"
-                            )
-                        except Exception as ui_error:
-                            logger.warning(f"剧情生成UI更新失败: {ui_error}")
+                    # think模式返回的是字典格式：{"think": "思考内容", "content": "正式回答"}
+                    if isinstance(chunk_data, dict):
+                        think_part = chunk_data.get("think", "")
+                        content_part = chunk_data.get("content", "")
+                        
+                        think_content += think_part
+                        final_content += content_part
+                        
+                        # 实时更新UI - 显示思考过程和正式内容
+                        if workflow_chat:
+                            try:
+                                # 构建带样式区分的显示内容
+                                display_content = ""
+                                if think_content.strip():
+                                    display_content += f"""
+<div style="background: #f8f9fa; border-left: 4px solid #6c757d; padding: 10px; margin: 10px 0; border-radius: 4px;">
+🤔 思考过程：<br>
+{think_content}
+</div>"""
+                                
+                                if final_content.strip():
+                                    display_content += f"""
+<div style="background: #e8f5e9; border-left: 4px solid #28a745; padding: 10px; margin: 10px 0; border-radius: 4px;">
+📖 剧情内容：<br>
+{final_content}
+</div>"""
+                                
+                                await workflow_chat.add_node_message(
+                                    "剧情生成",
+                                    display_content,
+                                    "streaming"
+                                )
+                            except Exception as ui_error:
+                                logger.warning(f"剧情生成UI更新失败: {ui_error}")
+                    else:
+                        # 兼容字符串格式
+                        full_content += str(chunk_data)
+                        final_content = full_content
+                        
+                        if workflow_chat:
+                            try:
+                                await workflow_chat.add_node_message(
+                                    "剧情生成",
+                                    full_content,
+                                    "streaming"
+                                )
+                            except Exception as ui_error:
+                                logger.warning(f"剧情生成UI更新失败: {ui_error}")
                     
-                    # 每个chunk都yield
+                    # 每个chunk都yield，只传递正式内容给下一个节点
                     yield {
-                        'plot_content': full_content,
+                        'plot_content': final_content,  # 只传递正式内容
+                        'plot_think': think_content,    # 保存思考过程用于调试
                         'chunk_progress': f"{chunk_count} chunks processed"
                     }
                 
-                logger.info(f"剧情生成: 流式生成完成，总chunk数: {chunk_count}，内容长度: {len(full_content)}")
+                logger.info(f"剧情生成: 流式生成完成，总chunk数: {chunk_count}，内容长度: {len(final_content)}")
                         
             except Exception as e:
                 error_msg = f"剧情生成LLM调用失败: {type(e).__name__}: {str(e)}"
@@ -811,14 +857,30 @@ class PlotGenerationNode(BaseNode):
         
         # 更新UI - 完成状态
         if workflow_chat:
+            # 显示最终完成状态，保留完整内容
+            final_display_content = ""
+            if think_content.strip():
+                final_display_content += f"""
+<div style="background: #f8f9fa; border-left: 4px solid #6c757d; padding: 10px; margin: 10px 0; border-radius: 4px;">
+🤔 思考过程：<br>
+{think_content}
+</div>"""
+            
+            if final_content.strip():
+                final_display_content += f"""
+<div style="background: #e8f5e9; border-left: 4px solid #28a745; padding: 10px; margin: 10px 0; border-radius: 4px;">
+📖 剧情内容：<br>
+{final_content}
+</div>"""
+            
             await workflow_chat.add_node_message(
                 "剧情生成",
-                full_content,
+                final_display_content if final_display_content else final_content,
                 "completed"
             )
         
         output_data = input_data.copy()
-        output_data['plot_content'] = full_content
+        output_data['plot_content'] = final_content
         
         print("✅ 剧情生成完成")
         yield output_data
