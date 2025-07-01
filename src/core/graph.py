@@ -562,8 +562,33 @@ class StateGraphExecutor(BaseExecutor):
                     }
                     
                     try:
-                        # 执行节点
-                        result = await node.run(current_state)
+                        # 检查节点是否支持流式执行
+                        if hasattr(node, 'stream') and node.stream:
+                            # 流式执行节点
+                            final_result = None
+                            async for intermediate_result in node.run_stream(current_state):
+                                final_result = intermediate_result
+                                
+                                # 发送中间结果信号
+                                yield {
+                                    "type": "node_streaming",
+                                    "node": node_name,
+                                    "intermediate_result": intermediate_result,
+                                    "state": current_state
+                                }
+                                
+                                # 合并中间状态更新
+                                if intermediate_result.is_success and intermediate_result.state_update:
+                                    current_state = state_manager.merge_state(
+                                        current_state, 
+                                        intermediate_result.state_update
+                                    )
+                            
+                            result = final_result
+                        else:
+                            # 非流式执行节点
+                            result = await node.run(current_state)
+                        
                         visited_nodes.append(node_name)
                         
                         print(f"[StreamExecutor] 节点 {node_name} 执行完成")
@@ -576,8 +601,8 @@ class StateGraphExecutor(BaseExecutor):
                             "state": current_state
                         }
                         
-                        # 合并状态更新
-                        if result.is_success and result.state_update:
+                        # 合并最终状态更新
+                        if result and result.is_success and result.state_update:
                             current_state = state_manager.merge_state(
                                 current_state, 
                                 result.state_update

@@ -113,8 +113,8 @@ class WorkflowChat:
                 status_bg = "rgba(156, 163, 175, 0.1)"
                 status_text = "等待中..."
             
-            # 获取节点结果
-            result_content = self.node_results.get(node_id, "")
+            # 获取节点结果 - 修复键名不匹配问题
+            result_content = self.node_results.get(name, "")  # 使用节点显示名称作为key
             
             progress_html += f"""
             <div style='display: flex; align-items: flex-start; margin: 15px 0; padding: 15px; border-radius: 10px; background: {status_bg}; border-left: 4px solid {status_color};'>
@@ -207,40 +207,29 @@ class WorkflowChat:
     def _format_result_content(self, message: str, message_type: str) -> str:
         """格式化结果内容"""
         if message_type == "completed":
-            # 处理真实的LLM生成内容
-            if len(message) > 1000:
-                # 长内容需要截断显示，但提供展开选项
-                preview = message[:800] + "..."
-                return f"""
-                <div style='color: #10b981;'>
-                    <div style='font-weight: 600; margin-bottom: 8px;'>✅ 执行完成</div>
-                    <div style='background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 6px; padding: 12px; font-size: 13px; max-height: 300px; overflow-y: auto;'>
-                        <pre style='white-space: pre-wrap; margin: 0; font-family: inherit; line-height: 1.5;'>{preview}</pre>
-                        <div style='margin-top: 10px; text-align: center;'>
-                            <button onclick="this.parentElement.previousElementSibling.innerHTML = `<pre style='white-space: pre-wrap; margin: 0; font-family: inherit; line-height: 1.5;'>{message.replace('`', '\\`').replace('$', '\\$')}</pre>`; this.style.display='none';" 
-                                    style='background: #007bff; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 12px;'>
-                                展开完整内容
-                            </button>
-                        </div>
-                    </div>
-                    <div style='margin-top: 8px; font-size: 12px; color: #6c757d;'>
-                        总长度: {len(message)} 字符
-                    </div>
+            # 已完成状态 - 保持和流式生成一致的版式，只是颜色换成绿色
+            return f"""
+            <div style='color: #10b981;'>
+                <div style='font-weight: 600; margin-bottom: 8px; display: flex; align-items: center;'>
+                    <span>✅ 执行完成</span>
+                    <div style='margin-left: 10px; width: 12px; height: 12px; background-color: #10b981; border-radius: 50%;'></div>
                 </div>
-                """
-            else:
-                # 短内容直接显示
-                return f"""
-                <div style='color: #10b981;'>
-                    <div style='font-weight: 600; margin-bottom: 8px;'>✅ 执行完成</div>
-                    <div style='background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 6px; padding: 12px; font-size: 13px;'>
-                        <pre style='white-space: pre-wrap; margin: 0; font-family: inherit; line-height: 1.5;'>{message}</pre>
-                    </div>
-                    <div style='margin-top: 5px; font-size: 12px; color: #6c757d;'>
-                        长度: {len(message)} 字符
-                    </div>
+                <div id='content_display_{id(message)}' style='background: #f0f9ff; border: 1px solid #10b981; border-radius: 6px; padding: 12px; font-size: 13px; max-height: 400px; overflow-y: auto; border-left: 4px solid #10b981;'>
+                    <pre style='white-space: pre-wrap; margin: 0; font-family: inherit; line-height: 1.5; color: #065f46;'>{message}</pre>
                 </div>
-                """
+                <div style='margin-top: 5px; font-size: 12px; color: #065f46; display: flex; justify-content: between; align-items: center;'>
+                    <span>最终长度: {len(message)} 字符</span>
+                    <span style='margin-left: auto; font-style: italic;'>生成已完成</span>
+                </div>
+                <script>
+                    // 自动滚动到底部
+                    var contentDiv = document.getElementById('content_display_{id(message)}');
+                    if (contentDiv) {{
+                        contentDiv.scrollTop = contentDiv.scrollHeight;
+                    }}
+                </script>
+            </div>
+            """
         elif message_type == "streaming":
             # 流式内容实时显示 - 优化显示效果
             return f"""

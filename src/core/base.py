@@ -98,10 +98,12 @@ class BaseNode(ABC):
                  node_type: NodeType = NodeType.CUSTOM,
                  description: Optional[str] = None,
                  llm: Optional['BaseLLMProvider'] = None,
+                 stream: bool = True,  # 默认启用流式执行
                  **kwargs):
         self.name = name
         self.node_type = node_type
         self.description = description
+        self.stream = stream  # 是否支持流式执行
         self.config = kwargs
         
         # 集成的功能组件
@@ -124,6 +126,27 @@ class BaseNode(ABC):
             - Command: 同时包含状态更新和流程控制的命令对象
         """
         pass
+    
+    async def execute_stream(self, state: Dict[str, Any]):
+        """
+        流式执行节点逻辑 - 支持实时更新
+        
+        Args:
+            state: 当前图状态字典
+            
+        Yields:
+            Dict[str, Any]: 中间状态更新，用于实时反馈
+        """
+        # 默认实现：如果节点不支持流式，直接调用execute
+        if not self.stream:
+            result = await self.execute(state)
+            yield result
+        else:
+            # 子类应该重写此方法来实现真正的流式执行
+            # 如果子类没有重写execute_stream但开启了stream，
+            # 则调用execute方法作为兜底
+            result = await self.execute(state)
+            yield result
         
     async def pre_execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """执行前钩子 - 可以修改状态"""
@@ -146,8 +169,15 @@ class BaseNode(ABC):
             # 执行前钩子
             state = await self.pre_execute(state)
             
-            # 执行核心逻辑
-            output = await self.execute(state)
+            # 如果支持流式执行，使用流式执行并取最后结果
+            if self.stream:
+                last_output = None
+                async for output in self.execute_stream(state):
+                    last_output = output
+                output = last_output
+            else:
+                # 执行核心逻辑
+                output = await self.execute(state)
             
             # 处理返回结果
             if isinstance(output, Command):
@@ -171,6 +201,48 @@ class BaseNode(ABC):
             result.end_time = datetime.now()
             
         return result
+    
+    async def run_stream(self, state: Dict[str, Any]):
+        """流式执行节点并逐步返回结果"""
+        try:
+            # 执行前钩子
+            state = await self.pre_execute(state)
+            
+            # 流式执行核心逻辑
+            async for output in self.execute_stream(state):
+                # 处理返回结果并yield中间状态
+                intermediate_result = NodeResult(
+                    node_name=self.name,
+                    node_type=self.node_type,
+                    state_update={},
+                    execution_state=ExecutionState.RUNNING
+                )
+                
+                if isinstance(output, Command):
+                    intermediate_result.state_update = output.update
+                    intermediate_result.metadata["command"] = output
+                elif isinstance(output, dict):
+                    intermediate_result.state_update = output
+                else:
+                    # 对于无效输出，跳过此次yield
+                    continue
+                
+                # 执行后钩子
+                intermediate_result.state_update = await self.post_execute(intermediate_result.state_update)
+                
+                yield intermediate_result
+                
+        except Exception as e:
+            # 发送错误结果
+            error_result = NodeResult(
+                node_name=self.name,
+                node_type=self.node_type,
+                state_update={},
+                execution_state=ExecutionState.FAILED,
+                error=str(e)
+            )
+            error_result.end_time = datetime.now()
+            yield error_result
     
     def get_state_value(self, state: Dict[str, Any], key: str, default: Any = None) -> Any:
         """安全获取状态值"""
