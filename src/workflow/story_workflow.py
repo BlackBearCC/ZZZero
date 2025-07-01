@@ -182,7 +182,15 @@ class StoryWorkflow:
             )
             
             planning_node = self.graph.nodes["story_planning"]
-            current_state = await planning_node.execute(current_state)
+            # 改为流式执行，支持实时更新
+            async for chunk_update in planning_node.execute_stream(current_state):
+                current_state = chunk_update  # 更新状态
+                yield (
+                    workflow_chat._create_workflow_progress(),
+                    "",
+                    "剧情规划执行中...",
+                    False
+                )
             
             yield (
                 workflow_chat.update_node_state("planning", "completed"),
@@ -200,7 +208,15 @@ class StoryWorkflow:
             )
             
             character_node = self.graph.nodes["character_analysis"]
-            current_state = await character_node.execute(current_state)
+            # 改为流式执行，支持实时更新
+            async for chunk_update in character_node.execute_stream(current_state):
+                current_state = chunk_update  # 更新状态
+                yield (
+                    workflow_chat._create_workflow_progress(),
+                    "",
+                    "角色分析执行中...",
+                    False
+                )
             
             yield (
                 workflow_chat.update_node_state("character", "completed"),
@@ -218,7 +234,15 @@ class StoryWorkflow:
             )
             
             plot_node = self.graph.nodes["plot_generation"]
-            current_state = await plot_node.execute(current_state)
+            # 改为流式执行，支持实时更新
+            async for chunk_update in plot_node.execute_stream(current_state):
+                current_state = chunk_update  # 更新状态
+                yield (
+                    workflow_chat._create_workflow_progress(),
+                    "",
+                    "剧情生成执行中...",
+                    False
+                )
             
             yield (
                 workflow_chat.update_node_state("plot", "completed"),
@@ -313,40 +337,53 @@ class StoryPlanningNode(BaseNode):
                 message = Message(role=MessageRole.USER, content=planning_prompt)
                 messages = [message]
                 
-                # 尝试流式调用
-                async for chunk in llm.stream_generate(messages):
+                logger.info(f"开始调用LLM流式生成，消息数量: {len(messages)}")
+                logger.info(f"LLM类型: {type(llm)}")
+                logger.info(f"提示词长度: {len(planning_prompt)}")
+                
+                # 使用think模式流式调用，不设置超时时间
+                chunk_count = 0
+                async for chunk in llm.stream_generate(
+                    messages, 
+                    mode="think"  # 使用think模式
+                ):
+                    chunk_count += 1
+                    if chunk_count % 10 == 0:  # 每10个chunk记录一次
+                        logger.info(f"剧情规划: 已接收 {chunk_count} 个chunk，内容长度: {len(full_content)}")
+                    
                     full_content += chunk
                     
-                    # 实时更新UI
+                    # 实时更新UI - 确保每个chunk都立即显示
                     if workflow_chat:
-                        await workflow_chat.add_node_message(
-                            "剧情规划",
-                            full_content,
-                            "streaming"
-                        )
-                        
-            except AttributeError:
-                # LLM不支持流式，使用普通调用
-                message = Message(role=MessageRole.USER, content=planning_prompt)
-                messages = [message]
-                response = await llm.generate(messages)
-                full_content = response.content
+                        try:
+                            await workflow_chat.add_node_message(
+                                "剧情规划",
+                                full_content,
+                                "streaming"
+                            )
+                            # 小延时确保UI更新
+                            await asyncio.sleep(0.01)
+                            
+                        except Exception as ui_error:
+                            logger.warning(f"UI更新失败: {ui_error}")
                 
-                if workflow_chat:
-                    await workflow_chat.add_node_message(
-                        "剧情规划",
-                        full_content,
-                        "streaming"
-                    )
+                logger.info(f"LLM流式生成完成，总共接收 {chunk_count} 个chunk，最终内容长度: {len(full_content)}")
+                        
+            except Exception as e:
+                error_msg = f"LLM流式调用失败: {type(e).__name__}: {str(e)}"
+                logger.error(error_msg, exc_info=True)
+                raise Exception(error_msg)
         else:
-            full_content = "默认剧情规划（LLM未初始化）"
+            error_msg = "LLM未初始化"
+            logger.error(error_msg)
+            raise Exception(error_msg)
         
         # 更新UI - 完成状态
         if workflow_chat:
             await workflow_chat.add_node_message(
                 "剧情规划",
                 full_content,
-                "complete"
+                "completed"
             )
         
         # 传递给下一个节点
@@ -355,6 +392,13 @@ class StoryPlanningNode(BaseNode):
         
         print("✅ 剧情规划完成")
         return output_data
+    
+    async def execute_stream(self, input_data: Dict[str, Any]):
+        """流式执行剧情规划节点"""
+        # 先执行节点
+        result = await self.execute(input_data)
+        # 返回结果作为流式更新
+        yield result
 
 
 class CharacterAnalysisNode(BaseNode):
@@ -406,40 +450,47 @@ class CharacterAnalysisNode(BaseNode):
                 message = Message(role=MessageRole.USER, content=character_prompt)
                 messages = [message]
                 
-                # 尝试流式调用
+                logger.info(f"角色分析: 开始调用LLM流式生成，提示词长度: {len(character_prompt)}")
+                
+                # 不设置超时时间的流式调用
+                chunk_count = 0
                 async for chunk in llm.stream_generate(messages):
+                    chunk_count += 1
+                    if chunk_count % 10 == 0:  # 每10个chunk记录一次
+                        logger.info(f"角色分析: 已接收 {chunk_count} 个chunk，内容长度: {len(full_content)}")
+                    
                     full_content += chunk
                     
                     # 实时更新UI
                     if workflow_chat:
-                        await workflow_chat.add_node_message(
-                            "角色分析",
-                            full_content,
-                            "streaming"
-                        )
-                        
-            except AttributeError:
-                # LLM不支持流式，使用普通调用
-                message = Message(role=MessageRole.USER, content=character_prompt)
-                messages = [message]
-                response = await llm.generate(messages)
-                full_content = response.content
+                        try:
+                            await workflow_chat.add_node_message(
+                                "角色分析",
+                                full_content,
+                                "streaming"
+                            )
+                            # 小延时确保UI更新
+                            await asyncio.sleep(0.01)
+                        except Exception as ui_error:
+                            logger.warning(f"UI更新失败: {ui_error}")
                 
-                if workflow_chat:
-                    await workflow_chat.add_node_message(
-                        "角色分析",
-                        full_content,
-                        "streaming"
-                    )
+                logger.info(f"角色分析: LLM流式生成完成，总共接收 {chunk_count} 个chunk")
+                        
+            except Exception as e:
+                error_msg = f"角色分析LLM流式调用失败: {type(e).__name__}: {str(e)}"
+                logger.error(error_msg, exc_info=True)
+                raise Exception(error_msg)
         else:
-            full_content = "默认角色分析（LLM未初始化）"
+            error_msg = "角色分析: LLM未初始化"
+            logger.error(error_msg)
+            raise Exception(error_msg)
         
         # 更新UI - 完成状态
         if workflow_chat:
             await workflow_chat.add_node_message(
                 "角色分析",
                 full_content,
-                "complete"
+                "completed"
             )
         
         output_data = input_data.copy()
@@ -447,6 +498,13 @@ class CharacterAnalysisNode(BaseNode):
         
         print("✅ 角色分析完成")
         return output_data
+    
+    async def execute_stream(self, input_data: Dict[str, Any]):
+        """流式执行角色分析节点"""
+        # 先执行节点
+        result = await self.execute(input_data)
+        # 返回结果作为流式更新
+        yield result
 
 
 class PlotGenerationNode(BaseNode):
@@ -510,40 +568,47 @@ class PlotGenerationNode(BaseNode):
                 message = Message(role=MessageRole.USER, content=plot_prompt)
                 messages = [message]
                 
-                # 尝试流式调用
+                logger.info(f"剧情生成: 开始调用LLM流式生成，提示词长度: {len(plot_prompt)}")
+                
+                # 不设置超时时间的流式调用
+                chunk_count = 0
                 async for chunk in llm.stream_generate(messages):
+                    chunk_count += 1
+                    if chunk_count % 10 == 0:  # 每10个chunk记录一次
+                        logger.info(f"剧情生成: 已接收 {chunk_count} 个chunk，内容长度: {len(full_content)}")
+                    
                     full_content += chunk
                     
                     # 实时更新UI
                     if workflow_chat:
-                        await workflow_chat.add_node_message(
-                            "剧情生成",
-                            full_content,
-                            "streaming"
-                        )
-                        
-            except AttributeError:
-                # LLM不支持流式，使用普通调用
-                message = Message(role=MessageRole.USER, content=plot_prompt)
-                messages = [message]
-                response = await llm.generate(messages)
-                full_content = response.content
+                        try:
+                            await workflow_chat.add_node_message(
+                                "剧情生成",
+                                full_content,
+                                "streaming"
+                            )
+                            # 小延时确保UI更新
+                            await asyncio.sleep(0.01)
+                        except Exception as ui_error:
+                            logger.warning(f"UI更新失败: {ui_error}")
                 
-                if workflow_chat:
-                    await workflow_chat.add_node_message(
-                        "剧情生成",
-                        full_content,
-                        "streaming"
-                    )
+                logger.info(f"剧情生成: LLM流式生成完成，总共接收 {chunk_count} 个chunk")
+                        
+            except Exception as e:
+                error_msg = f"剧情生成LLM流式调用失败: {type(e).__name__}: {str(e)}"
+                logger.error(error_msg, exc_info=True)
+                raise Exception(error_msg)
         else:
-            full_content = "默认剧情生成（LLM未初始化）"
+            error_msg = "剧情生成: LLM未初始化"
+            logger.error(error_msg)
+            raise Exception(error_msg)
         
         # 更新UI - 完成状态
         if workflow_chat:
             await workflow_chat.add_node_message(
                 "剧情生成",
                 full_content,
-                "complete"
+                "completed"
             )
         
         output_data = input_data.copy()
@@ -551,6 +616,13 @@ class PlotGenerationNode(BaseNode):
         
         print("✅ 剧情生成完成")
         return output_data
+    
+    async def execute_stream(self, input_data: Dict[str, Any]):
+        """流式执行剧情生成节点"""
+        # 先执行节点
+        result = await self.execute(input_data)
+        # 返回结果作为流式更新
+        yield result
 
 
 class CSVExportNode(BaseNode):

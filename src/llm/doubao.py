@@ -82,8 +82,7 @@ class DoubaoLLM(BaseLLMProvider):
             async with session.post(
                 f"{self.config.api_base}/chat/completions",
                 headers=headers,
-                json=data,
-                timeout=aiohttp.ClientTimeout(total=self.config.timeout)
+                json=data
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
@@ -91,26 +90,27 @@ class DoubaoLLM(BaseLLMProvider):
                     
                 result = await response.json()
                 
-                # 提取推理内容和最终答案
-                choice = result["choices"][0]["message"]
-                reasoning_content = choice.get("reasoning_content", "")
-                content = choice.get("content", "")
+                # 解析think结果
+                if result.get("choices") and len(result["choices"]) > 0:
+                    choice = result["choices"][0]
+                    if choice.get("message"):
+                        reasoning_content = ""
+                        content = choice["message"].get("content", "")
+                        
+                        # 提取推理内容 (如果有)
+                        if choice["message"].get("reasoning"):
+                            reasoning_content = choice["message"]["reasoning"]
+                        
+                        # 提取usage信息
+                        usage = result.get("usage", {})
+                        
+                        return ThinkResult(
+                            reasoning_content=reasoning_content,
+                            content=content,
+                            usage=usage
+                        )
                 
-                # 构建元数据
-                metadata = {
-                    "model": deepseek_model,
-                    "usage": result.get("usage", {}),
-                    "finish_reason": result["choices"][0].get("finish_reason"),
-                    "has_reasoning": bool(reasoning_content),
-                    "reasoning_length": len(reasoning_content),
-                    "content_length": len(content)
-                }
-                
-                return ThinkResult(
-                    reasoning_content=reasoning_content,
-                    content=content,
-                    metadata=metadata
-                )
+                raise Exception("无效的think响应格式")
     
     async def _stream_think(self,
                           messages: List[Message],
@@ -160,8 +160,7 @@ class DoubaoLLM(BaseLLMProvider):
             async with session.post(
                 f"{self.config.api_base}/chat/completions",
                 headers=headers,
-                json=data,
-                timeout=aiohttp.ClientTimeout(total=self.config.timeout)
+                json=data
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
@@ -281,8 +280,7 @@ class DoubaoLLM(BaseLLMProvider):
             async with session.post(
                 f"{self.config.api_base}/chat/completions",
                 headers=headers,
-                json=data,
-                timeout=aiohttp.ClientTimeout(total=self.config.timeout)
+                json=data
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
@@ -308,6 +306,7 @@ class DoubaoLLM(BaseLLMProvider):
                                            messages: List[Message],
                                            mode: str = "normal",
                                            interrupt_checker=None,
+                                           timeout: int = None,
                                            **kwargs) -> AsyncIterator[str]:
         """支持中断检查的流式生成
         
@@ -315,8 +314,12 @@ class DoubaoLLM(BaseLLMProvider):
             messages: 消息列表
             mode: 生成模式，'normal' 或 'think'
             interrupt_checker: 中断检查器（可选）
+            timeout: 超时时间（秒），不设置则无超时限制
             **kwargs: 其他参数
         """
+        # 移除默认超时限制，允许长时间生成
+        actual_timeout = timeout if timeout is not None else None
+        
         # 如果是think模式，使用流式think
         if mode == "think":
             accumulated_reasoning = ""
@@ -343,6 +346,8 @@ class DoubaoLLM(BaseLLMProvider):
                 if interrupt_checker and interrupt_checker(accumulated_reasoning + accumulated_content):
                     break
             return
+            
+        # Normal模式的流式生成
         headers = {
             "Authorization": f"Bearer {self.config.api_key}",
             "Content-Type": "application/json"
@@ -372,8 +377,7 @@ class DoubaoLLM(BaseLLMProvider):
             async with session.post(
                 f"{self.config.api_base}/chat/completions",
                 headers=headers,
-                json=data,
-                timeout=aiohttp.ClientTimeout(total=self.config.timeout)
+                json=data
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()

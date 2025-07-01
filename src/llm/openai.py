@@ -70,8 +70,7 @@ class OpenAILLM(BaseLLMProvider):
             async with session.post(
                 f"{self.config.api_base}/chat/completions",
                 headers=headers,
-                json=data,
-                timeout=aiohttp.ClientTimeout(total=self.config.timeout)
+                json=data
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
@@ -80,30 +79,16 @@ class OpenAILLM(BaseLLMProvider):
                 result = await response.json()
                 
                 # 提取回复内容
-                choice = result["choices"][0]
-                message = choice["message"]
-                
-                # 处理工具调用
-                tool_calls = None
-                if "tool_calls" in message:
-                    from core.types import ToolCall
-                    tool_calls = []
-                    for tc in message["tool_calls"]:
-                        tool_calls.append(ToolCall(
-                            id=tc["id"],
-                            name=tc["function"]["name"],
-                            arguments=json.loads(tc["function"]["arguments"])
-                        ))
+                content = result["choices"][0]["message"]["content"]
                 
                 # 创建响应消息
                 return Message(
                     role=MessageRole.ASSISTANT,
-                    content=message.get("content", ""),
-                    tool_calls=tool_calls,
+                    content=content,
                     metadata={
                         "model": self.config.model_name,
                         "usage": result.get("usage", {}),
-                        "finish_reason": choice.get("finish_reason")
+                        "finish_reason": result["choices"][0].get("finish_reason")
                     }
                 )
                 
@@ -142,8 +127,7 @@ class OpenAILLM(BaseLLMProvider):
             async with session.post(
                 f"{self.config.api_base}/chat/completions",
                 headers=headers,
-                json=data,
-                timeout=aiohttp.ClientTimeout(total=self.config.timeout)
+                json=data
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
@@ -166,9 +150,10 @@ class OpenAILLM(BaseLLMProvider):
                         
                         # 提取增量内容
                         if chunk.get("choices") and len(chunk["choices"]) > 0:
-                            delta = chunk["choices"][0].get("delta", {})
-                            if "content" in delta:
-                                yield delta["content"]
+                            choice = chunk["choices"][0]
+                            if choice.get("delta") and choice["delta"].get("content"):
+                                content_chunk = choice["delta"]["content"]
+                                yield content_chunk
                                 
                     except json.JSONDecodeError:
                         continue

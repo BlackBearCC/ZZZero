@@ -8,6 +8,7 @@ import json
 from typing import Dict, Any, List, Tuple, Optional
 import asyncio
 import time
+import logging
 
 class WorkflowChat:
     """工作流聊天界面类"""
@@ -149,39 +150,81 @@ class WorkflowChat:
         progress_html += "</div>"
         return progress_html
     
-    async def add_node_message(self, node_name: str, message: str, message_type: str = "info") -> List:
-        """添加节点消息到聊天记录 - 简化版"""
-        # 直接更新节点结果而不是聊天记录
-        node_mapping = {
-            "剧情规划": "planning",
-            "角色分析": "character", 
-            "剧情生成": "plot",
-            "CSV导出": "export"
-        }
+    async def add_node_message(self, node_name: str, content: str, status: str = "completed"):
+        """添加节点消息并立即更新UI
         
-        node_id = node_mapping.get(node_name)
-        if node_id:
-            # 根据消息类型更新节点结果
-            if message_type in ["complete", "progress"]:
-                self.node_results[node_id] = self._format_result_content(message, message_type)
-        
-        return []  # 不再使用聊天记录
+        Args:
+            node_name: 节点名称
+            content: 消息内容
+            status: 状态 (running/completed/streaming)
+        """
+        try:
+            # 更新结果存储
+            if node_name not in self.node_results:
+                self.node_results[node_name] = ""
+            
+            if status == "streaming":
+                # 流式更新：完全替换内容
+                formatted_content = self._format_result_content(content, "streaming")
+            elif status == "completed":
+                # 完成状态：设置最终内容
+                formatted_content = self._format_result_content(content, "complete")
+            else:
+                # 其他状态
+                formatted_content = self._format_result_content(content, status)
+            
+            self.node_results[node_name] = formatted_content
+            
+            # 更新节点状态
+            node_mapping = {
+                "剧情规划": "planning",
+                "角色分析": "character", 
+                "剧情生成": "plot",
+                "CSV导出": "export"
+            }
+            
+            node_id = node_mapping.get(node_name)
+            if node_id:
+                if status == "streaming":
+                    self.node_states[node_id] = "active"
+                elif status == "completed":
+                    self.node_states[node_id] = "completed"
+                elif status in ["error", "failed"]:
+                    self.node_states[node_id] = "error"
+                else:
+                    self.node_states[node_id] = "active"
+            
+            # 记录日志
+            logging.getLogger(__name__).info(f"节点 {node_name} 内容已更新，状态: {status}，内容长度: {len(content)}")
+            
+            # 返回更新后的进度HTML供UI刷新
+            return self._create_workflow_progress()
+            
+        except Exception as e:
+            logging.getLogger(__name__).error(f"更新节点消息失败: {e}", exc_info=True)
+            return self._create_workflow_progress()
     
     def _format_result_content(self, message: str, message_type: str) -> str:
         """格式化结果内容"""
-        if message_type == "complete":
+        if message_type == "completed":
             # 处理真实的LLM生成内容
-            if len(message) > 500:
-                # 长内容需要截断显示
-                preview = message[:500] + "..."
+            if len(message) > 1000:
+                # 长内容需要截断显示，但提供展开选项
+                preview = message[:800] + "..."
                 return f"""
                 <div style='color: #10b981;'>
                     <div style='font-weight: 600; margin-bottom: 8px;'>✅ 执行完成</div>
-                    <div style='background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 6px; padding: 10px; font-size: 13px; max-height: 200px; overflow-y: auto;'>
-                        <pre style='white-space: pre-wrap; margin: 0; font-family: inherit;'>{preview}</pre>
+                    <div style='background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 6px; padding: 12px; font-size: 13px; max-height: 300px; overflow-y: auto;'>
+                        <pre style='white-space: pre-wrap; margin: 0; font-family: inherit; line-height: 1.5;'>{preview}</pre>
+                        <div style='margin-top: 10px; text-align: center;'>
+                            <button onclick="this.parentElement.previousElementSibling.innerHTML = `<pre style='white-space: pre-wrap; margin: 0; font-family: inherit; line-height: 1.5;'>{message.replace('`', '\\`').replace('$', '\\$')}</pre>`; this.style.display='none';" 
+                                    style='background: #007bff; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 12px;'>
+                                展开完整内容
+                            </button>
+                        </div>
                     </div>
                     <div style='margin-top: 8px; font-size: 12px; color: #6c757d;'>
-                        总长度: {len(message)} 字符 | <a href="#" onclick="this.previousElementSibling.previousElementSibling.firstElementChild.style.maxHeight='none'; this.style.display='none';">展开全部</a>
+                        总长度: {len(message)} 字符
                     </div>
                 </div>
                 """
@@ -190,41 +233,64 @@ class WorkflowChat:
                 return f"""
                 <div style='color: #10b981;'>
                     <div style='font-weight: 600; margin-bottom: 8px;'>✅ 执行完成</div>
-                    <div style='background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 6px; padding: 10px; font-size: 13px;'>
-                        <pre style='white-space: pre-wrap; margin: 0; font-family: inherit;'>{message}</pre>
+                    <div style='background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 6px; padding: 12px; font-size: 13px;'>
+                        <pre style='white-space: pre-wrap; margin: 0; font-family: inherit; line-height: 1.5;'>{message}</pre>
+                    </div>
+                    <div style='margin-top: 5px; font-size: 12px; color: #6c757d;'>
+                        长度: {len(message)} 字符
                     </div>
                 </div>
                 """
         elif message_type == "streaming":
-            # 流式内容显示
+            # 流式内容实时显示 - 优化显示效果
             return f"""
             <div style='color: #f59e0b;'>
-                <div style='font-weight: 600; margin-bottom: 8px;'>⚡ 实时生成中...</div>
-                <div style='background: #fffbeb; border: 1px solid #fbbf24; border-radius: 6px; padding: 10px; font-size: 13px; max-height: 300px; overflow-y: auto; border-left: 4px solid #f59e0b;'>
-                    <pre style='white-space: pre-wrap; margin: 0; font-family: inherit; line-height: 1.4;'>{message}</pre>
-                    <div style='display: inline-block; width: 8px; height: 8px; background-color: #f59e0b; border-radius: 50%; margin-left: 4px; animation: pulse 1s infinite;'></div>
+                <div style='font-weight: 600; margin-bottom: 8px; display: flex; align-items: center;'>
+                    <span>⚡ 实时生成中...</span>
+                    <div style='margin-left: 10px; width: 12px; height: 12px; background-color: #f59e0b; border-radius: 50%; animation: pulse 1.5s infinite;'></div>
                 </div>
-                <div style='margin-top: 5px; font-size: 12px; color: #92400e;'>
-                    当前长度: {len(message)} 字符
+                <div style='background: #fffbeb; border: 1px solid #fbbf24; border-radius: 6px; padding: 12px; font-size: 13px; max-height: 400px; overflow-y: auto; border-left: 4px solid #f59e0b;'>
+                    <pre style='white-space: pre-wrap; margin: 0; font-family: inherit; line-height: 1.5; color: #92400e;'>{message}</pre>
+                </div>
+                <div style='margin-top: 5px; font-size: 12px; color: #92400e; display: flex; justify-content: between; align-items: center;'>
+                    <span>当前长度: {len(message)} 字符</span>
+                    <span style='margin-left: auto; font-style: italic;'>内容持续更新中...</span>
                 </div>
             </div>
+            <style>
+                @keyframes pulse {{
+                    0% {{ opacity: 1; transform: scale(1); }}
+                    50% {{ opacity: 0.5; transform: scale(1.1); }}
+                    100% {{ opacity: 1; transform: scale(1); }}
+                }}
+            </style>
             """
         elif message_type == "progress":
             return f"""
             <div style='color: #f59e0b;'>
-                <div style='font-weight: 600; margin-bottom: 5px;'>⏳ 执行中...</div>
-                <div style='font-size: 14px;'>{message}</div>
+                <div style='font-weight: 600; margin-bottom: 5px; display: flex; align-items: center;'>
+                    <span>⏳ 执行中...</span>
+                    <div style='margin-left: 8px; width: 8px; height: 8px; background-color: #f59e0b; border-radius: 50%; animation: bounce 1s infinite;'></div>
+                </div>
+                <div style='font-size: 14px; color: #92400e; font-style: italic;'>{message}</div>
             </div>
+            <style>
+                @keyframes bounce {{
+                    0%, 20%, 50%, 80%, 100% {{ transform: translateY(0); }}
+                    40% {{ transform: translateY(-3px); }}
+                    60% {{ transform: translateY(-1px); }}
+                }}
+            </style>
             """
         elif message_type == "error":
             return f"""
             <div style='color: #ef4444;'>
                 <div style='font-weight: 600; margin-bottom: 5px;'>❌ 执行失败</div>
-                <div style='font-size: 14px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 8px;'>{message}</div>
+                <div style='font-size: 14px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 10px; border-left: 4px solid #ef4444;'>{message}</div>
             </div>
             """
         
-        return f"<div style='font-size: 14px;'>{message}</div>"
+        return f"<div style='font-size: 14px; padding: 8px;'>{message}</div>"
     
     async def add_user_input(self, user_input: str) -> List:
         """添加用户输入到聊天记录 - 简化版"""
