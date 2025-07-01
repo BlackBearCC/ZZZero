@@ -755,30 +755,11 @@ class PlotGenerationNode(BaseNode):
         if workflow_chat:
             await workflow_chat.add_node_message(
                 "剧情生成", 
-                f"正在基于规划结果和已有剧情参考生成具体剧情（规划长度：{len(planning_result)} 字符）...",
+                f"正在基于规划结果生成具体剧情（规划长度：{len(planning_result)} 字符）...",
                 "progress"
             )
         
-        # 获取已有剧情作为参考（与规划节点保持一致）
-        existing_stories_summary = {}
-        try:
-            from database import story_manager
-            
-            # 查询所有选中角色的已有剧情
-            all_characters = ['方知衡'] + selected_characters
-            existing_stories_summary = story_manager.get_character_existing_stories_summary(all_characters)
-                
-        except Exception as e:
-            logger.warning(f"获取已有剧情失败，将不使用历史参考: {e}")
-            existing_stories_summary = {
-                'existing_stories': [],
-                'story_themes': [],
-                'character_relationships': {},
-                'common_locations': [],
-                'story_styles': []
-            }
-        
-        # 获取完整的配置和规划结果
+        # 获取完整的配置和规划结果（先获取变量）
         protagonist_data = input_data.get('protagonist_data', '')
         characters_data = input_data.get('characters_data', {})
         selected_characters = input_data.get('selected_characters', [])
@@ -788,25 +769,6 @@ class PlotGenerationNode(BaseNode):
         story_length = input_data.get('story_length', 'medium')
         relationship_depth = input_data.get('relationship_depth', 'casual')
         
-        # 构建已有剧情参考信息（与规划节点保持一致）
-        existing_stories_info = ""
-        if existing_stories_summary.get('existing_stories'):
-            existing_stories_info = f"""
-# 已有剧情参考（保持一致性，避免重复）
-
-## 已有剧情风格样本（共 {existing_stories_summary.get('total_stories', 0)} 个）
-
-{chr(10).join([f"- {story['story_name']}: {story['main_conflict']}" for story in existing_stories_summary['existing_stories'][:5]])}
-
-## 已有故事风格特点
-
-{chr(10).join([f"- {style}" for style in existing_stories_summary['story_styles'][:5]])}
-
-**生成约束**：请保持与已有剧情的叙述风格一致，但避免主题重复。
-"""
-        else:
-            existing_stories_info = "# 无已有剧情参考（请建立独特的叙述风格）"
-
         # 构建通用的剧情生成提示词
         plot_prompt = f"""
 你是一名专业的剧情编剧，需要基于剧情规划生成具体的剧情内容。
@@ -818,8 +780,6 @@ class PlotGenerationNode(BaseNode):
 # 角色设定
 
 {protagonist_data}
-
-{existing_stories_info}
 
 # 剧情配置
 
