@@ -629,11 +629,11 @@ class StoryPlanningNode(BaseNode):
             
             if parsed_result and 'planning' in parsed_result:
                 planning_data = parsed_result['planning']
-                logger.info("成功解析剧情规划JSON结果")
+                logger.info(f"成功解析剧情规划JSON结果:{planning_data}")
             else:
                 # 如果解析失败，使用原始内容作为备选
                 planning_data = final_content
-                logger.warning("剧情规划JSON解析失败，使用原始内容")
+                logger.warning(f"剧情规划JSON解析失败，使用原始内容:{planning_data}")
                 
         except Exception as parse_error:
             logger.warning(f"剧情规划JSON解析异常: {parse_error}，使用原始内容")
