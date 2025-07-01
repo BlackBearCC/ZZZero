@@ -413,6 +413,8 @@ class StoryPlanningNode(BaseNode):
         
         # 获取已有剧情作为参考
         existing_stories_summary = {}
+        existing_story_ids = []
+        max_story_number = 0
         try:
             from database import story_manager
             
@@ -420,11 +422,26 @@ class StoryPlanningNode(BaseNode):
             all_characters = ['方知衡'] + selected_characters
             existing_stories_summary = story_manager.get_character_existing_stories_summary(all_characters)
             
+            # 获取所有现有的故事ID，用于避免重复
+            all_stories = story_manager.get_stories_by_filter({}, limit=1000)
+            existing_story_ids = [story['story_id'] for story in all_stories]
+            
+            # 分析现有ID模式，找出最大编号
+            import re
+            story_numbers = []
+            for story_id in existing_story_ids:
+                # 匹配STORY_XXX格式的ID
+                match = re.match(r'STORY_(\d+)', story_id)
+                if match:
+                    story_numbers.append(int(match.group(1)))
+            
+            max_story_number = max(story_numbers) if story_numbers else 0
+            
             existing_count = existing_stories_summary.get('total_stories', 0)
             if workflow_chat and existing_count > 0:
                 await workflow_chat.add_node_message(
                     "剧情规划",
-                    f"已找到 {existing_count} 个相关剧情作为参考，正在分析剧情风格和主题...",
+                    f"已找到 {existing_count} 个相关剧情作为参考，现有最大故事编号: {max_story_number}，正在分析剧情风格和主题...",
                     "progress"
                 )
                 
@@ -437,6 +454,8 @@ class StoryPlanningNode(BaseNode):
                 'common_locations': [],
                 'story_styles': []
             }
+            existing_story_ids = []
+            max_story_number = 0
         
         # 构建详细的角色信息
         character_details = []
@@ -483,16 +502,19 @@ class StoryPlanningNode(BaseNode):
 
 ## 已有剧情列表（共 {existing_stories_summary.get('total_stories', 0)} 个）
 
-{chr(10).join([f"- {story['story_name']}: {story['main_conflict']}" for story in existing_stories_summary['existing_stories'][:10]])}
+{chr(10).join([f"- {story.get('story_id', 'N/A')}: {story.get('story_overview', story.get('main_conflict', 'N/A'))}" for story in existing_stories_summary['existing_stories'][:10]])}
 
-## 已使用的剧情主题（请避免重复）
+## 已有故事ID信息
 
-{chr(10).join([f"- {theme}" for theme in existing_stories_summary['story_themes'][:10]])}
+现有故事ID: {', '.join(existing_story_ids[:20])}{'...' if len(existing_story_ids) > 20 else ''}
+最大故事编号: {max_story_number}
 
-**重要要求**：请避免与已有剧情主题重复，创作新的剧情内容。
+**重要要求**：
+1. 请避免与已有剧情内容重复，创作新的剧情
+2. 新生成的故事ID必须从 STORY_{max_story_number + 1:03d} 开始递增，避免与现有ID重复
 """
         else:
-            existing_stories_info = "# 首次创作（无已有剧情参考）"
+            existing_stories_info = f"# 首次创作（无已有剧情参考）\n\n当前最大故事编号: {max_story_number}\n新故事ID将从 STORY_{max_story_number + 1:03d} 开始"
 
         # 构建通用的剧情规划提示词
         planning_prompt = f"""
@@ -520,7 +542,7 @@ class StoryPlanningNode(BaseNode):
 - 关系深度：{relationship_depth}
 
 **重要要求**：
-1. 每个小节都是独立的一幕演绎，不能有时间或空间的连续性
+1. 每个小节都是独立的一幕演绎，不能有时间或空间的连续性，应该是不同天数的故事，但是注意内容禁止出现日级别的时间比如周六，星期几这种描述
 2. 这些小节会被分布到任意时间地点使用，必须完全独立
 3. 每个小节必须包含完整的四幕式结构（开端→发展→高潮→结局）
 4. 每个小节都必须出现主角方知衡和指定的参与角色
@@ -554,7 +576,7 @@ class StoryPlanningNode(BaseNode):
     }},
     "剧情规划列表": [
       {{
-        "剧情ID": "STORY_001",
+        "剧情ID": "STORY_{max_story_number + 1:03d}",
         "剧情名称": "第1个大剧情的名称",
         "剧情概述": "整段大剧情的四幕式描述：开端（背景设定） → 发展（矛盾升级） → 高潮（冲突顶点） → 结局（问题解决），完整讲述这个大剧情的故事脉络",
         "故事主题与核心冲突": {{
@@ -769,6 +791,29 @@ class PlotGenerationNode(BaseNode):
         story_length = input_data.get('story_length', 'medium')
         relationship_depth = input_data.get('relationship_depth', 'casual')
         
+        # 获取现有故事ID信息，确保生成的ID不重复
+        existing_story_ids = []
+        max_story_number = 0
+        try:
+            from database import story_manager
+            all_stories = story_manager.get_stories_by_filter({}, limit=1000)
+            existing_story_ids = [story['story_id'] for story in all_stories]
+            
+            # 分析现有ID模式，找出最大编号
+            import re
+            story_numbers = []
+            for story_id in existing_story_ids:
+                match = re.match(r'STORY_(\d+)', story_id)
+                if match:
+                    story_numbers.append(int(match.group(1)))
+            
+            max_story_number = max(story_numbers) if story_numbers else 0
+            
+        except Exception as e:
+            logger.warning(f"获取现有故事ID失败: {e}")
+            existing_story_ids = []
+            max_story_number = 0
+        
         # 构建通用的剧情生成提示词
         plot_prompt = f"""
 你是一名专业的剧情编剧，需要基于剧情规划生成具体的剧情内容。
@@ -788,11 +833,18 @@ class PlotGenerationNode(BaseNode):
 - 剧情细分程度：{story_length}（每个剧情包含的独立小节数量）
 - 关系深度：{relationship_depth}
 
+# 现有故事ID信息（避免重复）
+
+- 现有故事ID: {', '.join(existing_story_ids[:10])}{'...' if len(existing_story_ids) > 10 else ''}
+- 最大故事编号: {max_story_number}
+- 新故事ID必须从 STORY_{max_story_number + 1:03d} 开始递增
+
 **核心要求**：
 1. 每个小节都是独立的一幕演绎，包含完整的四幕式结构
 2. 每个小节必须同时出现主角方知衡和指定的参与角色
 3. 小节之间没有时间空间联系，可以在任意时间地点使用
 4. 每个小节都有开端→发展→高潮→结局的完整戏剧弧线
+5. **故事ID必须按照现有编号递增，避免重复**
 
 # 输出要求
 
@@ -808,14 +860,14 @@ class PlotGenerationNode(BaseNode):
     }},
     "剧情列表": [
       {{
-        "剧情ID": "STORY_001",
+        "剧情ID": "STORY_{max_story_number + 1:03d}",
         "剧情名称": "第1个大剧情的名称",
         "剧情概述": "整段大剧情的四幕式概述，清晰描述从开端到结局的完整故事弧线",
         "剧情小节": [
           {{
-            "小节ID": "S001_SCENE_001",
+            "小节ID": "S{max_story_number + 1:03d}_SCENE_001",
             "小节标题": "独立小节的标题",
-            "小节内容": "完整的故事内容，自然融入四幕式结构（开端→发展→高潮→结局），包含角色对话和情感变化，体现独立完整的一幕演绎，禁止包含时间",
+            "小节内容": "完整的故事内容，自然融入四幕式结构（开端→发展→高潮→结局），包含角色对话和情感变化，体现独立完整的一幕演绎，禁止包含时间，主角说话要正常合理的人设语气，禁止装逼",
             "地点": "发生地点",
             "参与角色": ["方知衡", "指定角色名"]
           }}
@@ -833,16 +885,18 @@ class PlotGenerationNode(BaseNode):
 
 请确保：
 1. 准确生成 **{story_count} 个完整的大剧情**
-2. 每个大剧情根据story_length设置生成相应数量的独立小节：
+2. **故事ID必须按顺序递增**：第1个剧情使用 STORY_{max_story_number + 1:03d}，第2个使用 STORY_{max_story_number + 2:03d}，以此类推
+3. **小节ID格式**：第1个剧情的小节使用 S{max_story_number + 1:03d}_SCENE_001、S{max_story_number + 1:03d}_SCENE_002 等
+4. 每个大剧情根据story_length设置生成相应数量的独立小节：
    - short: 1-2个独立小节
    - medium: 3-5个独立小节  
    - long: 5-8个独立小节
-3. **小节内容必须是完整的故事段落**，自然融入四幕式结构
-4. **每个小节都必须同时出现主角方知衡和指定的参与角色**
-5. **小节完全独立**，不依赖前后小节的时间空间联系
-6. **对话和情感变化自然融入故事内容**，不单独分离
-7. 每个小节都是独立完整的一幕演绎，可以单独使用
-8. 内容生动详细，包含场景描述、角色互动、冲突解决
+5. **小节内容必须是完整的故事段落**，自然融入四幕式结构
+6. **每个小节都必须同时出现主角方知衡和指定的参与角色**
+7. **小节完全独立**，不依赖前后小节的时间空间联系
+8. **对话和情感变化自然融入故事内容**，不单独分离
+9. 每个小节都是独立完整的一幕演绎，可以单独使用
+10. 内容生动详细，包含场景描述、角色互动、冲突解决
 """
         
         # 流式调用LLM
@@ -1156,4 +1210,4 @@ class DatabaseSaveNode(BaseNode):
             return matches2[0].strip()
         
         # 如果都没找到，返回原内容
-        return content.strip() 
+        return content.strip()
