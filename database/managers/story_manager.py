@@ -463,6 +463,10 @@ class StoryManager(DatabaseManager):
             params = []
             
             # 构建WHERE条件
+            if filters.get('story_id'):
+                where_clauses.append("s.story_id = ?")
+                params.append(filters['story_id'])
+            
             if filters.get('story_type'):
                 where_clauses.append("s.story_type = ?")
                 params.append(filters['story_type'])

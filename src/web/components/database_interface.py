@@ -7,6 +7,7 @@ import json
 import pandas as pd
 from typing import Dict, List, Any, Optional, Tuple
 import logging
+from datetime import datetime
 
 # 确保数据库模块路径正确
 import sys
@@ -101,7 +102,7 @@ class DatabaseInterface:
                     
                     # 小节列表
                     scenes_table = gr.Dataframe(
-                        headers=["小节ID", "标题", "内容预览", "地点", "角色"],
+                        headers=["小节ID", "标题", "完整内容", "地点", "角色"],
                         datatype=["str", "str", "str", "str", "str"],
                         interactive=False,
                         wrap=True
@@ -131,7 +132,6 @@ class DatabaseInterface:
         
         story_table.select(
             fn=self._on_story_selected,
-            inputs=[story_table],
             outputs=[selected_story_id, selected_story_info, scenes_table]
         )
         
@@ -213,7 +213,6 @@ class DatabaseInterface:
         
         character_table.select(
             fn=self._on_character_selected,
-            inputs=[character_table],
             outputs=[selected_character_name, selected_character_info]
         )
         
@@ -330,11 +329,11 @@ class DatabaseInterface:
                 data.append([
                     story['story_id'],
                     story['story_name'],
-                    story.get('story_overview', '')[:50] + "..." if len(story.get('story_overview', '')) > 50 else story.get('story_overview', ''),
+                    story.get('story_overview', ''),  # 显示完整剧情概述
                     story['story_type'],
                     story['protagonist'],
                     story['scene_count'],
-                    ', '.join(story['characters'][:3]) + ('...' if len(story['characters']) > 3 else ''),
+                    ', '.join(story['characters']),  # 显示所有角色
                     story['created_at'][:19]  # 只显示到秒
                 ])
             
@@ -365,12 +364,12 @@ class DatabaseInterface:
                 data.append([
                     story['story_id'],
                     story['story_name'],
-                    story.get('story_overview', '')[:50] + "..." if len(story.get('story_overview', '')) > 50 else story.get('story_overview', ''),
+                    story.get('story_overview', ''),  # 显示完整剧情概述
                     story['story_type'],
                     story['protagonist'],
                     story['scene_count'],
-                    ', '.join(story['characters'][:3]) + ('...' if len(story['characters']) > 3 else ''),
-                    story['created_at'][:19]
+                    ', '.join(story['characters']),  # 显示所有角色
+                    story['created_at'][:19]  # 只显示到秒
                 ])
             
             return pd.DataFrame(data, columns=["剧情ID", "剧情名称", "剧情概述", "类型", "主角", "小节数", "角色", "创建时间"])
@@ -379,36 +378,55 @@ class DatabaseInterface:
             logger.error(f"搜索剧情失败: {e}")
             return pd.DataFrame(columns=["剧情ID", "剧情名称", "剧情概述", "类型", "主角", "小节数", "角色", "创建时间"])
     
-    def _on_story_selected(self, table_data) -> Tuple[str, str, pd.DataFrame]:
+    def _on_story_selected(self, evt: gr.SelectData) -> Tuple[str, str, pd.DataFrame]:
         """处理剧情选择事件"""
         try:
-            if table_data is None or len(table_data) == 0:
+            if evt is None or evt.index is None:
                 return "", "请先选择一个剧情", pd.DataFrame()
             
-            # 获取选中行的剧情ID（第一列）
-            story_id = table_data.iloc[0, 0] if len(table_data.iloc[0]) > 0 else ""
+            # 获取选中行的索引
+            row_index = evt.index[0] if isinstance(evt.index, (list, tuple)) else evt.index
             
-            if not story_id:
-                return "", "无效的剧情ID", pd.DataFrame()
+            # 重新获取数据以确保索引对应正确
+            stories = self.story_manager.get_stories_by_filter({})
             
-            # 获取剧情详细信息
-            story_info = f"### 剧情详情\n\n**剧情ID**: {story_id}\n\n正在加载详细信息..."
+            if row_index >= len(stories):
+                return "", "选择的行索引超出范围", pd.DataFrame()
+                
+            story = stories[row_index]
+            story_id = story['story_id']
             
-            # 获取小节信息
+            # 构建详细信息显示
+            story_info = f"""### 📖 剧情详情
+
+**剧情ID**: {story['story_id']}
+**剧情名称**: {story['story_name']}
+**剧情类型**: {story['story_type']}
+**主角**: {story['protagonist']}
+**小节数量**: {story['scene_count']}
+**参与角色**: {', '.join(story['characters'])}
+**创建时间**: {story['created_at']}
+
+**剧情概述**:
+{story.get('story_overview', '暂无概述')}
+
+**主要冲突**: {story.get('main_conflict', '暂无')}
+"""
+            
+            # 获取小节信息 - 显示完整内容
             scenes = self.story_manager.get_story_scenes(story_id)
             scenes_data = []
             
             for scene in scenes:
-                content_preview = scene['scene_content'][:50] + "..." if len(scene['scene_content']) > 50 else scene['scene_content']
                 scenes_data.append([
                     scene['scene_id'],
                     scene['scene_title'],
-                    content_preview,
+                    scene['scene_content'],  # 显示完整小节内容
                     scene['location'],
                     ', '.join(scene['participants'])
                 ])
             
-            scenes_df = pd.DataFrame(scenes_data, columns=["小节ID", "标题", "内容预览", "地点", "角色"])
+            scenes_df = pd.DataFrame(scenes_data, columns=["小节ID", "标题", "完整内容", "地点", "角色"])
             
             return story_id, story_info, scenes_df
             
@@ -420,26 +438,25 @@ class DatabaseInterface:
         """加载剧情小节"""
         try:
             if not story_id:
-                return pd.DataFrame(columns=["小节ID", "标题", "内容预览", "地点", "角色"])
+                return pd.DataFrame(columns=["小节ID", "标题", "完整内容", "地点", "角色"])
             
             scenes = self.story_manager.get_story_scenes(story_id)
             data = []
             
             for scene in scenes:
-                content_preview = scene['scene_content'][:100] + "..." if len(scene['scene_content']) > 100 else scene['scene_content']
                 data.append([
                     scene['scene_id'],
                     scene['scene_title'],
-                    content_preview,
+                    scene['scene_content'],  # 显示完整小节内容
                     scene['location'],
                     ', '.join(scene['participants'])
                 ])
             
-            return pd.DataFrame(data, columns=["小节ID", "标题", "内容预览", "地点", "角色"])
+            return pd.DataFrame(data, columns=["小节ID", "标题", "完整内容", "地点", "角色"])
             
         except Exception as e:
             logger.error(f"加载小节失败: {e}")
-            return pd.DataFrame(columns=["小节ID", "标题", "内容预览", "地点", "角色"])
+            return pd.DataFrame(columns=["小节ID", "标题", "完整内容", "地点", "角色"])
     
     def _delete_story(self, story_id: str) -> Tuple[pd.DataFrame, str, pd.DataFrame]:
         """删除剧情"""
@@ -453,7 +470,7 @@ class DatabaseInterface:
                 return (
                     self._load_all_stories(), 
                     f"✅ 成功删除剧情: {story_id}", 
-                    pd.DataFrame(columns=["小节ID", "标题", "内容预览", "地点", "角色"])
+                    pd.DataFrame(columns=["小节ID", "标题", "完整内容", "地点", "角色"])
                 )
             else:
                 return (
@@ -539,18 +556,35 @@ class DatabaseInterface:
             logger.error(f"搜索角色失败: {e}")
             return pd.DataFrame(columns=["角色名称", "剧情数量", "总互动次数", "平均重要度", "角色定位"])
     
-    def _on_character_selected(self, table_data) -> Tuple[str, str]:
+    def _on_character_selected(self, evt: gr.SelectData) -> Tuple[str, str]:
         """处理角色选择事件"""
         try:
-            if table_data is None or len(table_data) == 0:
+            if evt is None or evt.index is None:
                 return "", "请先选择一个角色"
             
-            character_name = table_data.iloc[0, 0] if len(table_data.iloc[0]) > 0 else ""
+            # 获取选中行的索引
+            row_index = evt.index[0] if isinstance(evt.index, (list, tuple)) else evt.index
             
-            if not character_name:
-                return "", "无效的角色名称"
+            # 重新获取数据以确保索引对应正确
+            characters = self.story_manager.get_all_characters()
             
-            character_info = f"### 角色详情\n\n**角色名称**: {character_name}\n\n正在加载详细信息..."
+            if row_index >= len(characters):
+                return "", "选择的行索引超出范围"
+                
+            character = characters[row_index]
+            character_name = character['character_name']
+            
+            # 构建角色详细信息
+            character_info = f"""### 👤 角色详情
+
+**角色名称**: {character['character_name']}
+**参与剧情数**: {character['story_count']} 个
+**总互动次数**: {character['total_interactions']} 次
+**平均重要度**: {character['avg_importance']} 级
+**角色定位**: {', '.join(character['roles'])}
+
+该角色在剧情中的活跃度较高，是重要的故事角色。
+"""
             
             return character_name, character_info
             

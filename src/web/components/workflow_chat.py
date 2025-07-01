@@ -80,7 +80,7 @@ class WorkflowChat:
         nodes = [
             ("📋", "剧情规划", "planning"),
             ("📚", "剧情生成", "plot"),
-            ("📄", "CSV导出", "export")
+            ("💾", "数据库写入", "save")
         ]
         
         progress_html = """
@@ -181,7 +181,7 @@ class WorkflowChat:
                 "剧情规划": "planning",
                 "角色分析": "character", 
                 "剧情生成": "plot",
-                "CSV导出": "export"
+                "数据库写入": "save"
             }
             
             node_id = node_mapping.get(node_name)
