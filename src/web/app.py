@@ -21,8 +21,10 @@ from tools.mcp_tools import MCPToolManager
 from web.components.config_panel import ConfigPanel
 from web.components.chat_interface import ChatInterface
 from web.components.story_interface import StoryInterface
+from web.components.task_queue_interface import TaskQueueInterface
 from web.handlers.event_handlers import EventHandlers
 from web.handlers.workflow_handlers import WorkflowHandlers
+from web.handlers.queue_handlers import queue_handlers
 from web.utils.text_processing import TextProcessor
 from web.utils.file_utils import FileUtils
 from web.utils.styles import get_custom_css
@@ -83,6 +85,7 @@ class AgentApp:
         self.config_panel = ConfigPanel()
         self.chat_interface = ChatInterface()
         self.story_interface = StoryInterface()
+        self.task_queue_interface = TaskQueueInterface()
         self.event_handlers = EventHandlers(self)
         self.workflow_handlers = WorkflowHandlers(self)
         self.text_processor = TextProcessor()
@@ -180,20 +183,24 @@ class AgentApp:
                 with gr.TabItem("🎭 剧情生成工作流", id="story_tab"):
                     story_components = self.story_interface.create_story_interface()
                 
-                # Tab 3: 数据库管理
+                # Tab 3: 任务队列
+                with gr.TabItem("🔄 任务队列", id="queue_tab"):
+                    queue_components = self.task_queue_interface.create_interface()
+                
+                # Tab 4: 数据库管理
                 with gr.TabItem("📊 数据库管理", id="database_tab"):
                     from web.components.database_interface import database_interface
                     database_components = database_interface.create_interface()
             
             # === 事件绑定 ===
-            self._bind_events(config_components, chat_components, story_components, app)
+            self._bind_events(config_components, chat_components, story_components, queue_components, app)
             
             # 添加自定义CSS
             app.css = get_custom_css()
             
         return app
     
-    def _bind_events(self, config_components: Dict[str, Any], chat_components: Dict[str, Any], story_components: Dict[str, Any], app):
+    def _bind_events(self, config_components: Dict[str, Any], chat_components: Dict[str, Any], story_components: Dict[str, Any], queue_components: gr.Blocks, app):
         """绑定所有事件处理器"""
         # 配置变化事件
         for component in [
@@ -390,6 +397,52 @@ class AgentApp:
                     story_components.get('quick_replies'),
                     story_components.get('user_input'),
                     story_components.get('send_btn')
+                ]
+            )
+        
+        # 添加到队列按钮事件绑定
+        if story_components.get('add_to_queue_btn'):
+            # 为队列功能包装一个函数，使用应用当前的LLM配置
+            async def add_to_queue_wrapper(
+                selected_characters,
+                selected_locations,
+                story_count,
+                story_type,
+                story_length,
+                relationship_depth
+            ):
+                # 使用应用当前的LLM配置
+                current_config = self.current_config
+                
+                return await self.workflow_handlers.on_add_to_queue(
+                    selected_characters=selected_characters,
+                    selected_locations=selected_locations,
+                    story_count=story_count,
+                    story_type=story_type,
+                    story_length=story_length,
+                    relationship_depth=relationship_depth,
+                    time_setting="current",      # 默认值
+                    mood_tone="neutral",         # 默认值
+                    interaction_level="normal",  # 默认值
+                    llm_provider=current_config.get('llm_provider', 'doubao'),
+                    llm_model=current_config.get('model_name', 'ep-20250221154410-vh78x'), 
+                    llm_api_key="dummy_key",     # 临时使用占位符，队列执行时会使用实际配置
+                    llm_base_url=""              # 默认空
+                )
+            
+            # 只使用剧情配置组件，不依赖LLM配置组件
+            story_components['add_to_queue_btn'].click(
+                fn=add_to_queue_wrapper,
+                inputs=[
+                    story_components.get('character_selector'),
+                    story_components.get('location_selector'),
+                    story_components.get('story_count'),
+                    story_components.get('story_type'),
+                    story_components.get('story_length'),
+                    story_components.get('relationship_depth')
+                ],
+                outputs=[
+                    story_components.get('workflow_progress')  # 在进度区域显示结果
                 ]
             )
         

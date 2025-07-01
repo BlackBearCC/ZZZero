@@ -43,9 +43,25 @@ class StoryManager(DatabaseManager):
         
         # 为现有表添加新字段（如果不存在）
         try:
-            self.execute_query("ALTER TABLE stories ADD COLUMN story_overview TEXT")
-        except Exception:
-            # 字段已存在或其他错误，忽略
+            # 直接使用SQL检查列是否存在
+            check_column_sql = """
+            SELECT COUNT(*) as column_exists 
+            FROM pragma_table_info('stories') 
+            WHERE name = 'story_overview'
+            """
+            
+            result = self.execute_query(check_column_sql, fetch_all=False)
+            column_exists = result and result.get('column_exists', 0) > 0
+            
+            if not column_exists:
+                self.execute_query("ALTER TABLE stories ADD COLUMN story_overview TEXT")
+                logger.info("为stories表添加story_overview列")
+            else:
+                logger.info("stories表已有story_overview列，跳过添加")
+                
+        except Exception as e:
+            # 字段已存在或其他错误，记录详细信息
+            logger.warning(f"添加story_overview列失败: {e}")
             pass
         
         # 创建小节详情表

@@ -922,21 +922,32 @@ class PlotGenerationNode(BaseNode):
             parser = JSONParser()
             
             json_content = self._extract_json_from_content(final_content)
+            logger.info(f"提取的JSON内容长度: {len(json_content)} 字符")
+            
             parsed_result = parser.parse(json_content)
             
             if parsed_result and 'story' in parsed_result:
                 story_data = parsed_result['story']
-                logger.info("成功解析剧情生成JSON结果")
+                logger.info("成功解析剧情生成JSON结果，找到story字段")
+            elif parsed_result and ('总体信息' in parsed_result or '剧情列表' in parsed_result):
+                # 直接是story内容格式
+                story_data = parsed_result
+                logger.info("成功解析剧情生成JSON结果，直接是story内容格式")
             else:
+                logger.warning(f"剧情生成JSON解析失败，解析结果键: {list(parsed_result.keys()) if parsed_result else 'None'}，使用原始内容")
                 story_data = final_content
-                logger.warning("剧情生成JSON解析失败，使用原始内容")
                 
         except Exception as parse_error:
-            logger.warning(f"剧情生成JSON解析异常: {parse_error}，使用原始内容")
+            logger.warning(f"剧情生成JSON解析异常: {parse_error}，final_content前100字符: {final_content[:100]}，使用原始内容")
             story_data = final_content
         
         output_data = input_data.copy()
         output_data['plot_content'] = story_data
+        
+        # 添加调试信息
+        logger.info(f"剧情生成完成，plot_content类型: {type(story_data)}, 是否为dict: {isinstance(story_data, dict)}")
+        if isinstance(story_data, dict):
+            logger.info(f"plot_content字典键: {list(story_data.keys())}")
         
         print("✅ 剧情生成完成")
         yield output_data
@@ -977,6 +988,13 @@ class DatabaseSaveNode(BaseNode):
         plot_content = input_data.get('plot_content', '')
         config = input_data.get('config', {})
         
+        # 添加调试信息
+        logger.info(f"数据库保存节点接收到plot_content类型: {type(plot_content)}")
+        if isinstance(plot_content, dict):
+            logger.info(f"plot_content字典键: {list(plot_content.keys())}")
+        elif isinstance(plot_content, str):
+            logger.info(f"plot_content字符串长度: {len(plot_content)}，前100字符: {plot_content[:100]}")
+        
         # 更新UI - 开始状态
         if workflow_chat:
             await workflow_chat.add_node_message(
@@ -993,7 +1011,18 @@ class DatabaseSaveNode(BaseNode):
             # 解析剧情数据
             story_data = None
             if isinstance(plot_content, dict):
-                story_data = plot_content
+                # 如果plot_content是dict，说明前面节点已经解析成功
+                # 检查是否是完整的story数据结构还是已经提取的story内容
+                if 'story' in plot_content:
+                    # 包含story字段的完整JSON
+                    story_data = plot_content['story']
+                elif '总体信息' in plot_content or '剧情列表' in plot_content:
+                    # 已经是story字段的内容
+                    story_data = plot_content
+                else:
+                    # 尝试作为完整story数据使用
+                    story_data = plot_content
+                    
             elif isinstance(plot_content, str):
                 # 从字符串中解析JSON
                 try:
@@ -1005,8 +1034,12 @@ class DatabaseSaveNode(BaseNode):
                     
                     if parsed_data and 'story' in parsed_data:
                         story_data = parsed_data['story']
+                    elif parsed_data and ('总体信息' in parsed_data or '剧情列表' in parsed_data):
+                        # 直接是story内容
+                        story_data = parsed_data
                     else:
-                        raise ValueError("未找到story字段")
+                        logger.error(f"JSON解析结果格式不正确: {list(parsed_data.keys()) if parsed_data else 'None'}")
+                        raise ValueError(f"未找到有效的剧情数据结构")
                         
                 except Exception as parse_error:
                     logger.error(f"JSON解析失败: {parse_error}")
@@ -1014,6 +1047,19 @@ class DatabaseSaveNode(BaseNode):
             else:
                 logger.error(f"无法处理的剧情数据类型: {type(plot_content)}")
                 raise ValueError(f"无法处理的剧情数据类型: {type(plot_content)}")
+            
+            # 验证story_data结构
+            if not story_data:
+                raise ValueError("解析后的剧情数据为空")
+                
+            # 确保story_data有必要的字段
+            if not isinstance(story_data, dict):
+                raise ValueError(f"剧情数据不是字典格式: {type(story_data)}")
+                
+            if '剧情列表' not in story_data:
+                raise ValueError("剧情数据缺少'剧情列表'字段")
+                
+            logger.info(f"成功解析剧情数据: {len(story_data.get('剧情列表', []))} 个剧情")
             
             # 保存到数据库
             success = story_manager.save_story_data(story_data, config)

@@ -61,6 +61,11 @@ class WorkflowChat:
                     variant="primary",
                     scale=2
                 )
+                components['add_to_queue_btn'] = gr.Button(
+                    "➕ 添加到队列",
+                    variant="secondary",
+                    scale=2
+                )
                 components['pause_workflow_btn'] = gr.Button(
                     "⏸️ 暂停",
                     variant="secondary",

@@ -286,4 +286,56 @@ class WorkflowHandlers:
             
         except Exception as e:
             logger.error(f"页面加载失败: {e}")
-            return gr.update(choices=[], value=[]), gr.update(choices=[], value=[]) 
+            return gr.update(choices=[], value=[]), gr.update(choices=[], value=[])
+    
+    async def on_add_to_queue(self,
+                              selected_characters: List[str],
+                              selected_locations: List[str],
+                              story_count: int,
+                              story_type: str,
+                              story_length: str,
+                              relationship_depth: str,
+                              time_setting: str,
+                              mood_tone: str,
+                              interaction_level: str,
+                              llm_provider: str,
+                              llm_model: str,
+                              llm_api_key: str,
+                              llm_base_url: str = "") -> str:
+        """添加任务到队列"""
+        try:
+            # 验证必要参数
+            if not selected_characters:
+                return "❌ 请至少选择一个角色"
+            
+            if not llm_api_key.strip():
+                return "❌ 请配置LLM API Key"
+            
+            # 生成任务名称
+            from web.handlers.queue_handlers import queue_handlers
+            task_name = queue_handlers.generate_task_name(selected_characters, story_type, story_count)
+            
+            # 添加到队列
+            result = queue_handlers.add_task_to_queue(
+                task_name=task_name,
+                selected_characters=selected_characters,
+                selected_locations=selected_locations,
+                story_count=story_count,
+                story_type=story_type,
+                story_length=story_length,
+                relationship_depth=relationship_depth,
+                time_setting=time_setting,
+                mood_tone=mood_tone,
+                interaction_level=interaction_level,
+                llm_provider=llm_provider,
+                llm_model=llm_model,
+                llm_api_key=llm_api_key,
+                llm_base_url=llm_base_url,
+                priority=0
+            )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"添加任务到队列失败: {e}")
+            return f"❌ 添加任务失败: {str(e)}" 
