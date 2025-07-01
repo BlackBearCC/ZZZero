@@ -377,6 +377,14 @@ class StoryPlanningNode(BaseNode):
     def __init__(self):
         super().__init__(name="story_planning", stream=True)
     
+    async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """执行剧情规划节点 - 非流式版本"""
+        # 使用流式执行并返回最终结果
+        final_result = None
+        async for result in self.execute_stream(input_data):
+            final_result = result
+        return final_result or input_data
+    
     async def execute_stream(self, input_data: Dict[str, Any]):
         """流式执行剧情规划节点"""
         print("🎯 开始剧情规划...")
@@ -665,6 +673,14 @@ class PlotGenerationNode(BaseNode):
     
     def __init__(self):
         super().__init__(name="plot_generation", stream=True)
+    
+    async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """执行剧情生成节点 - 非流式版本"""
+        # 使用流式执行并返回最终结果
+        final_result = None
+        async for result in self.execute_stream(input_data):
+            final_result = result
+        return final_result or input_data
     
     async def execute_stream(self, input_data: Dict[str, Any]):
         """流式执行剧情生成节点"""
