@@ -179,6 +179,11 @@ class AgentApp:
                 # Tab 2: 剧情生成工作流
                 with gr.TabItem("🎭 剧情生成工作流", id="story_tab"):
                     story_components = self.story_interface.create_story_interface()
+                
+                # Tab 3: 数据库管理
+                with gr.TabItem("📊 数据库管理", id="database_tab"):
+                    from web.components.database_interface import database_interface
+                    database_components = database_interface.create_interface()
             
             # === 事件绑定 ===
             self._bind_events(config_components, chat_components, story_components, app)

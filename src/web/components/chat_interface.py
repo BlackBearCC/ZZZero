@@ -15,7 +15,6 @@ class ChatInterface:
         """创建聊天窗口"""
         # 聊天历史
         chatbot = gr.Chatbot(
-            height=800,
             show_label=False,
             elem_classes=["chat-window"],
             type="messages",

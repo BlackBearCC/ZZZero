@@ -169,19 +169,19 @@ class StoryWorkflow:
         """创建剧情生成图工作流"""
         self.graph = StateGraph(name="story_generation_workflow")
         
-        # 创建节点（移除角色分析节点）
+        # 创建节点
         story_plan_node = StoryPlanningNode()
         plot_generation_node = PlotGenerationNode()
-        csv_export_node = CSVExportNode()
+        database_save_node = DatabaseSaveNode()
         
         # 添加节点到图
         self.graph.add_node("story_planning", story_plan_node)
         self.graph.add_node("plot_generation", plot_generation_node)
-        self.graph.add_node("csv_export", csv_export_node)
+        self.graph.add_node("database_save", database_save_node)
         
-        # 定义节点连接关系（直接从规划到生成）
+        # 定义节点连接关系
         self.graph.add_edge("story_planning", "plot_generation")
-        self.graph.add_edge("plot_generation", "csv_export")
+        self.graph.add_edge("plot_generation", "database_save")
         
         # 设置入口点
         self.graph.set_entry_point("story_planning")
@@ -357,7 +357,7 @@ class StoryWorkflow:
         name_mapping = {
             'story_planning': '剧情规划',
             'plot_generation': '剧情生成',
-            'csv_export': 'CSV导出'
+            'database_save': '数据库保存'
         }
         return name_mapping.get(node_name, node_name)
     
@@ -366,7 +366,7 @@ class StoryWorkflow:
         id_mapping = {
             'story_planning': 'planning',
             'plot_generation': 'plot', 
-            'csv_export': 'export'
+            'database_save': 'save'
         }
         return id_mapping.get(node_name, node_name)
 
@@ -378,7 +378,7 @@ class StoryPlanningNode(BaseNode):
         super().__init__(name="story_planning", stream=True)
     
     async def execute_stream(self, input_data: Dict[str, Any]):
-        """流式执行剧情规划节点 - 每个LLM chunk都yield"""
+        """流式执行剧情规划节点"""
         print("🎯 开始剧情规划...")
         
         workflow_chat = input_data.get('workflow_chat')
@@ -540,8 +540,7 @@ class StoryPlanningNode(BaseNode):
 7. 每个剧情都有独特的冲突点，但要能分解为独立的小节情境
 """
         
-        # 流式调用LLM并在每个chunk时yield
-        full_content = ""
+        # 流式调用LLM
         if llm:
             try:
                 # 构建消息列表
@@ -554,68 +553,50 @@ class StoryPlanningNode(BaseNode):
                 chunk_count = 0
                 think_content = ""
                 final_content = ""
-                full_content = ""  # 初始化full_content变量，用于兼容模式
                 
                 async for chunk_data in llm.stream_generate(
                     messages, 
                     mode="think",
-                    return_dict=True  # 工作流需要字典格式来区分think和content
+                    return_dict=True
                 ):
                     chunk_count += 1
                     
-                    # think模式返回的是字典格式：{"think": "思考内容", "content": "正式回答"}
-                    if isinstance(chunk_data, dict):
-                        think_part = chunk_data.get("think", "")
-                        content_part = chunk_data.get("content", "")
-                        
-                        think_content += think_part
-                        final_content += content_part
-                        
-                        # 实时更新UI - 显示思考过程和正式内容
-                        if workflow_chat:
-                            try:
-                                # 构建带样式区分的显示内容
-                                display_content = ""
-                                if think_content.strip():
-                                    display_content += f"""
+                    think_part = chunk_data.get("think", "")
+                    content_part = chunk_data.get("content", "")
+                    
+                    think_content += think_part
+                    final_content += content_part
+                    
+                    # 实时更新UI
+                    if workflow_chat:
+                        try:
+                            display_content = ""
+                            if think_content.strip():
+                                display_content += f"""
 <div style="background: #f8f9fa; border-left: 4px solid #6c757d; padding: 10px; margin: 10px 0; border-radius: 4px;">
 🤔 思考过程：<br>
 {think_content}
 </div>"""
-                                
-                                if final_content.strip():
-                                    display_content += f"""
+                            
+                            if final_content.strip():
+                                display_content += f"""
 <div style="background: #e8f5e9; border-left: 4px solid #28a745; padding: 10px; margin: 10px 0; border-radius: 4px;">
 📋 规划结果：<br>
 {final_content}
 </div>"""
-                                
-                                await workflow_chat.add_node_message(
-                                    "剧情规划",
-                                    display_content,
-                                    "streaming"
-                                )
-                            except Exception as ui_error:
-                                logger.warning(f"剧情规划UI更新失败: {ui_error}")
-                    else:
-                        # 兼容字符串格式
-                        full_content += str(chunk_data)
-                        final_content = full_content
-                        
-                        if workflow_chat:
-                            try:
-                                await workflow_chat.add_node_message(
-                                    "剧情规划",
-                                    full_content,
-                                    "streaming"
-                                )
-                            except Exception as ui_error:
-                                logger.warning(f"剧情规划UI更新失败: {ui_error}")
+                            
+                            await workflow_chat.add_node_message(
+                                "剧情规划",
+                                display_content,
+                                "streaming"
+                            )
+                        except Exception as ui_error:
+                            logger.warning(f"剧情规划UI更新失败: {ui_error}")
                     
-                    # 每个chunk都yield，让StateGraphExecutor能实时感知进度
+                    # 每个chunk都yield
                     yield {
-                        'planning_result': final_content,  # 只传递正式内容给下一个节点
-                        'planning_think': think_content,   # 保存思考过程用于调试
+                        'planning_result': final_content,
+                        'planning_think': think_content,
                         'chunk_progress': f"{chunk_count} chunks processed"
                     }
                 
@@ -630,25 +611,21 @@ class StoryPlanningNode(BaseNode):
             logger.error(error_msg)
             raise Exception(error_msg)
         
-        # 流式显示已经包含完整结果，无需额外的完成状态显示
-        
-        # 尝试解析JSON格式的结果
+        # 解析JSON格式的结果
         try:
-            # 使用BaseNode的parse功能解析JSON
             from parsers.json_parser import JSONParser
             parser = JSONParser()
             
-            # 从生成的内容中提取JSON部分
             json_content = self._extract_json_from_content(final_content)
             parsed_result = parser.parse(json_content)
             
             if parsed_result and 'planning' in parsed_result:
                 planning_data = parsed_result['planning']
-                logger.info(f"成功解析剧情规划JSON结果:{planning_data}")
+                logger.info(f"成功解析剧情规划JSON结果")
             else:
                 # 如果解析失败，使用原始内容作为备选
                 planning_data = final_content
-                logger.warning(f"剧情规划JSON解析失败，使用原始内容:{planning_data}")
+                logger.warning(f"剧情规划JSON解析失败，使用原始内容")
                 
         except Exception as parse_error:
             logger.warning(f"剧情规划JSON解析异常: {parse_error}，使用原始内容")
@@ -656,11 +633,9 @@ class StoryPlanningNode(BaseNode):
         
         # 最终完整结果
         output_data = input_data.copy()
-        output_data['planning_result'] = planning_data  # 传递解析后的结果给下一个节点
+        output_data['planning_result'] = planning_data
         
-        print(f"✅ 剧情规划完成，planning_data类型: {type(planning_data)}")
-        logger.info(f"剧情规划节点输出数据: planning_result类型={type(planning_data)}")
-        logger.info(f"剧情规划节点输出数据键: {list(output_data.keys())}")
+        print(f"✅ 剧情规划完成")
         yield output_data
     
     def _extract_json_from_content(self, content: str) -> str:
@@ -683,14 +658,6 @@ class StoryPlanningNode(BaseNode):
         
         # 如果都没找到，返回原内容
         return content.strip()
-    
-    async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """兼容性方法，实际使用 execute_stream"""
-        last_result = None
-        async for result in self.execute_stream(input_data):
-            last_result = result
-        return last_result
-
 
 
 class PlotGenerationNode(BaseNode):
@@ -700,19 +667,12 @@ class PlotGenerationNode(BaseNode):
         super().__init__(name="plot_generation", stream=True)
     
     async def execute_stream(self, input_data: Dict[str, Any]):
-        """流式执行剧情生成节点 - 每个LLM chunk都yield"""
+        """流式执行剧情生成节点"""
         print("📚 开始生成剧情...")
         
         workflow_chat = input_data.get('workflow_chat')
         llm = input_data.get('llm')
         planning_result = input_data.get('planning_result', '')
-        
-        # 调试：输出input_data的键和值
-        logger.info(f"剧情生成节点接收到的input_data键: {list(input_data.keys())}")
-        logger.info(f"planning_result类型: {type(planning_result)}")
-        logger.info(f"planning_result值: {repr(planning_result[:100]) if planning_result else 'None或空'}")
-        logger.info(f"planning_result是否为空字符串: {planning_result == ''}")
-        logger.info(f"planning_result长度: {len(planning_result) if planning_result else 0}")
         
         # 验证规划结果
         if not planning_result or not planning_result.strip():
@@ -739,7 +699,7 @@ class PlotGenerationNode(BaseNode):
         characters_data = input_data.get('characters_data', {})
         selected_characters = input_data.get('selected_characters', [])
         selected_locations = input_data.get('selected_locations', [])
-        story_count = input_data.get('story_count', 5)  # 剧情数量
+        story_count = input_data.get('story_count', 5)
         story_type = input_data.get('story_type', 'daily_life')
         story_length = input_data.get('story_length', 'medium')
         relationship_depth = input_data.get('relationship_depth', 'casual')
@@ -820,7 +780,6 @@ class PlotGenerationNode(BaseNode):
 """
         
         # 流式调用LLM
-        full_content = ""
         if llm:
             try:
                 # 构建消息列表
@@ -833,68 +792,50 @@ class PlotGenerationNode(BaseNode):
                 chunk_count = 0
                 think_content = ""
                 final_content = ""
-                full_content = ""  # 兼容模式
                 
                 async for chunk_data in llm.stream_generate(
                     messages, 
                     mode="think",
-                    return_dict=True  # 工作流需要字典格式来区分think和content
+                    return_dict=True
                 ):
                     chunk_count += 1
                     
-                    # think模式返回的是字典格式：{"think": "思考内容", "content": "正式回答"}
-                    if isinstance(chunk_data, dict):
-                        think_part = chunk_data.get("think", "")
-                        content_part = chunk_data.get("content", "")
-                        
-                        think_content += think_part
-                        final_content += content_part
-                        
-                        # 实时更新UI - 显示思考过程和正式内容
-                        if workflow_chat:
-                            try:
-                                # 构建带样式区分的显示内容
-                                display_content = ""
-                                if think_content.strip():
-                                    display_content += f"""
+                    think_part = chunk_data.get("think", "")
+                    content_part = chunk_data.get("content", "")
+                    
+                    think_content += think_part
+                    final_content += content_part
+                    
+                    # 实时更新UI
+                    if workflow_chat:
+                        try:
+                            display_content = ""
+                            if think_content.strip():
+                                display_content += f"""
 <div style="background: #f8f9fa; border-left: 4px solid #6c757d; padding: 10px; margin: 10px 0; border-radius: 4px;">
 🤔 思考过程：<br>
 {think_content}
 </div>"""
-                                
-                                if final_content.strip():
-                                    display_content += f"""
+                            
+                            if final_content.strip():
+                                display_content += f"""
 <div style="background: #e8f5e9; border-left: 4px solid #28a745; padding: 10px; margin: 10px 0; border-radius: 4px;">
 📖 剧情内容：<br>
 {final_content}
 </div>"""
-                                
-                                await workflow_chat.add_node_message(
-                                    "剧情生成",
-                                    display_content,
-                                    "streaming"
-                                )
-                            except Exception as ui_error:
-                                logger.warning(f"剧情生成UI更新失败: {ui_error}")
-                    else:
-                        # 兼容字符串格式
-                        full_content += str(chunk_data)
-                        final_content = full_content
-                        
-                        if workflow_chat:
-                            try:
-                                await workflow_chat.add_node_message(
-                                    "剧情生成",
-                                    full_content,
-                                    "streaming"
-                                )
-                            except Exception as ui_error:
-                                logger.warning(f"剧情生成UI更新失败: {ui_error}")
+                            
+                            await workflow_chat.add_node_message(
+                                "剧情生成",
+                                display_content,
+                                "streaming"
+                            )
+                        except Exception as ui_error:
+                            logger.warning(f"剧情生成UI更新失败: {ui_error}")
                     
-                    # 每个chunk都yield，只传递正式内容给下一个节点
+                    # 每个chunk都yield
                     yield {
-                        'plot_content': final_content,  # 只传递正式内容
-                        'plot_think': think_content,    # 保存思考过程用于调试
+                        'plot_content': final_content,
+                        'plot_think': think_content,
                         'chunk_progress': f"{chunk_count} chunks processed"
                     }
                 
@@ -909,15 +850,11 @@ class PlotGenerationNode(BaseNode):
             logger.error(error_msg)
             raise Exception(error_msg)
         
-        # 流式显示已经包含完整结果，无需额外的完成状态显示
-        
-        # 尝试解析JSON格式的结果
+        # 解析JSON格式的结果
         try:
-            # 使用BaseNode的parse功能解析JSON
             from parsers.json_parser import JSONParser
             parser = JSONParser()
             
-            # 从生成的内容中提取JSON部分
             json_content = self._extract_json_from_content(final_content)
             parsed_result = parser.parse(json_content)
             
@@ -925,7 +862,6 @@ class PlotGenerationNode(BaseNode):
                 story_data = parsed_result['story']
                 logger.info("成功解析剧情生成JSON结果")
             else:
-                # 如果解析失败，使用原始内容作为备选
                 story_data = final_content
                 logger.warning("剧情生成JSON解析失败，使用原始内容")
                 
@@ -959,243 +895,130 @@ class PlotGenerationNode(BaseNode):
         
         # 如果都没找到，返回原内容
         return content.strip()
-    
-    async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """兼容性方法，实际使用 execute_stream"""
-        last_result = None
-        async for result in self.execute_stream(input_data):
-            last_result = result
-        return last_result
 
 
-class CSVExportNode(BaseNode):
-    """CSV导出节点 - 将剧情数据导出为CSV格式"""
+class DatabaseSaveNode(BaseNode):
+    """数据库保存节点 - 将剧情数据保存到SQLite数据库"""
     
     def __init__(self):
-        super().__init__(name="csv_export")
+        super().__init__(name="database_save")
     
     async def execute(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """执行CSV导出 - 支持JSON数据解析"""
-        print("📄 开始导出CSV...")
+        """执行数据库保存"""
+        print("💾 开始保存到数据库...")
         
         workflow_chat = input_data.get('workflow_chat')
         plot_content = input_data.get('plot_content', '')
+        config = input_data.get('config', {})
         
         # 更新UI - 开始状态
         if workflow_chat:
             await workflow_chat.add_node_message(
-                "CSV导出",
-                "正在解析剧情数据并导出为CSV格式...",
+                "数据库保存",
+                "正在解析剧情数据并保存到SQLite数据库...",
                 "progress"
             )
         
         try:
-            # 生成文件名
+            from database import story_manager
             from datetime import datetime
-            import csv
-            import os
             import json
-            from pathlib import Path
             
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"story_plot_{timestamp}.csv"
-            
-            # 确保输出目录存在
-            output_dir = Path("workspace/output")
-            output_dir.mkdir(parents=True, exist_ok=True)
-            
-            filepath = output_dir / filename
-            
-            # CSV标题行 - 简化结构
-            csv_headers = [
-                "剧情名称", "小节ID", "小节标题", "小节内容", "地点", "参与角色"
-            ]
-            
-            csv_data = []
-            story_name = ""
-            
-            # 解析JSON格式的剧情数据
+            # 解析剧情数据
+            story_data = None
             if isinstance(plot_content, dict):
-                # 检查是否是新的多剧情格式
-                if '剧情列表' in plot_content:
-                    # 新的多剧情格式
-                    story_list = plot_content.get('剧情列表', [])
-                    total_scenes = 0
-                    logger.info(f"成功解析多剧情JSON格式数据，包含 {len(story_list)} 个大剧情")
-                    
-                    for story in story_list:
-                        story_name = story.get('剧情名称', '未命名剧情')
-                        story_id = story.get('剧情ID', '')
-                        scenes = story.get('剧情小节', [])
-                        total_scenes += len(scenes)
-                        
-                        for scene in scenes:
-                            csv_data.append([
-                                f"{story_name} ({story_id})",
-                                scene.get('小节ID', ''),
-                                scene.get('小节标题', ''),
-                                scene.get('小节内容', ''),
-                                scene.get('地点', ''),
-                                ', '.join(scene.get('参与角色', []))
-                            ])
-                    
-                    story_name = f"多剧情集合({len(story_list)}个剧情)"
-                    
-                elif '剧情小节' in plot_content:
-                    # 旧的单剧情格式
-                    story_name = plot_content.get('剧情名称', '未命名剧情')
-                    scenes = plot_content.get('剧情小节', [])
-                    logger.info(f"成功解析单剧情JSON格式数据，剧情名称: {story_name}，包含 {len(scenes)} 个小节")
-                    
-                    for scene in scenes:
-                        csv_data.append([
-                            story_name,
-                            scene.get('小节ID', ''),
-                            scene.get('小节标题', ''),
-                            scene.get('小节内容', ''),
-                            scene.get('地点', ''),
-                            ', '.join(scene.get('参与角色', []))
-                        ])
-                else:
-                    raise ValueError("无法识别的剧情数据格式")
-                    
+                story_data = plot_content
             elif isinstance(plot_content, str):
-                # 尝试从字符串中解析JSON
+                # 从字符串中解析JSON
                 try:
-                    # 使用JSONParser解析
                     from parsers.json_parser import JSONParser
                     parser = JSONParser()
                     
-                    # 提取JSON内容
                     json_content = self._extract_json_from_content(plot_content)
                     parsed_data = parser.parse(json_content)
                     
                     if parsed_data and 'story' in parsed_data:
                         story_data = parsed_data['story']
-                        
-                        # 检查是否是新的多剧情格式
-                        if '剧情列表' in story_data:
-                            # 新的多剧情格式
-                            story_list = story_data.get('剧情列表', [])
-                            total_scenes = 0
-                            logger.info(f"从字符串解析多剧情JSON成功，包含 {len(story_list)} 个大剧情")
-                            
-                            for story in story_list:
-                                story_name_item = story.get('剧情名称', '未命名剧情')
-                                story_id = story.get('剧情ID', '')
-                                scenes = story.get('剧情小节', [])
-                                total_scenes += len(scenes)
-                                
-                                for scene in scenes:
-                                    csv_data.append([
-                                        f"{story_name_item} ({story_id})",
-                                        scene.get('小节ID', ''),
-                                        scene.get('小节标题', ''),
-                                        scene.get('小节内容', ''),
-                                        scene.get('地点', ''),
-                                        ', '.join(scene.get('参与角色', []))
-                                    ])
-                            
-                            story_name = f"多剧情集合({len(story_list)}个剧情)"
-                            
-                        elif '剧情小节' in story_data:
-                            # 旧的单剧情格式
-                            story_name = story_data.get('剧情名称', '未命名剧情')
-                            scenes = story_data.get('剧情小节', [])
-                            logger.info(f"从字符串解析单剧情JSON成功，剧情名称: {story_name}，包含 {len(scenes)} 个小节")
-                            
-                            for scene in scenes:
-                                csv_data.append([
-                                    story_name,
-                                    scene.get('小节ID', ''),
-                                    scene.get('小节标题', ''),
-                                    scene.get('小节内容', ''),
-                                    scene.get('地点', ''),
-                                    ', '.join(scene.get('参与角色', []))
-                                ])
-                        else:
-                            raise ValueError("未找到story.剧情列表或story.剧情小节字段")
                     else:
                         raise ValueError("未找到story字段")
                         
                 except Exception as parse_error:
-                    logger.warning(f"JSON解析失败: {parse_error}，使用文本分段方式")
-                    # 回退到简单文本分段方式
-                    story_name = "文本解析剧情"
-                    lines = plot_content.split('\n')
-                    for i, line in enumerate(lines[:10]):
-                        if line.strip():
-                            csv_data.append([
-                                story_name,
-                                f"SCENE_{i+1:03d}",
-                                f"第{i+1}节",
-                                line,
-                                "默认地点",
-                                "主角"
-                            ])
+                    logger.error(f"JSON解析失败: {parse_error}")
+                    raise ValueError(f"无法解析剧情数据: {parse_error}")
             else:
                 logger.error(f"无法处理的剧情数据类型: {type(plot_content)}")
                 raise ValueError(f"无法处理的剧情数据类型: {type(plot_content)}")
             
-            # 写入CSV文件
-            with open(filepath, 'w', encoding='utf-8-sig', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow(csv_headers)
-                writer.writerows(csv_data)
+            # 保存到数据库
+            success = story_manager.save_story_data(story_data, config)
             
-            # 获取绝对路径
-            abs_filepath = str(filepath.absolute())
+            if not success:
+                raise Exception("数据库保存失败")
+            
+            # 获取统计信息
+            stats = story_manager.get_story_statistics()
+            
+            # 生成CSV导出（可选）
+            csv_path = story_manager.export_story_data(format='csv')
             
             # 生成结果信息
-            result = f"""✅ CSV导出成功！
+            story_count = len(story_data.get('剧情列表', []))
+            total_scenes = sum(len(story.get('剧情小节', [])) for story in story_data.get('剧情列表', []))
+            
+            result = f"""✅ 数据库保存成功！
 
-# 文件信息
+# 保存信息
 
-- 文件名：{filename}
-- 保存路径：{filepath}
-- 绝对路径：{abs_filepath}
+- 保存剧情数：{story_count} 个
+- 保存小节数：{total_scenes} 个
+- 保存时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
-# 统计信息
+# 数据库统计
 
-- 剧情名称：{story_name}
-- 导出小节数：{len(csv_data)} 个
-- CSV字段数：{len(csv_headers)} 个
-- 数据解析方式：{'JSON结构化解析' if isinstance(plot_content, dict) else 'JSON字符串解析'}
+- 总剧情数：{stats.get('total_stories', 0)} 个
+- 总小节数：{stats.get('total_scenes', 0)} 个
+- 总角色数：{stats.get('total_characters', 0)} 个
+- 最新创建：{stats.get('latest_creation', '未知')}
 
-# 访问文件
+# 导出文件
 
-🔗 点击打开文件：file:///{abs_filepath.replace(os.sep, '/')}
-📂 在文件夹中查看：{filepath.parent}
+- CSV导出路径：{csv_path}
+- 可在前端数据库管理界面查看和编辑数据
 
-# 下载说明
+# 后续操作
 
-文件已保存到项目的 workspace/output 目录中。
+- 在前端"数据库管理"页面查看剧情
+- 按角色筛选查看相关剧情
+- 直接编辑数据库表内容
+- 导出指定数据为CSV文件
 """
             
             # 更新UI - 完成状态
             if workflow_chat:
                 await workflow_chat.add_node_message(
-                    "CSV导出",
+                    "数据库保存",
                     result,
                     "completed"
                 )
             
             output_data = input_data.copy()
-            output_data['export_file'] = str(filepath)
-            output_data['csv_data'] = csv_data
-            output_data['csv_headers'] = csv_headers
+            output_data['database_saved'] = True
+            output_data['csv_export_path'] = csv_path
+            output_data['saved_story_count'] = story_count
+            output_data['saved_scene_count'] = total_scenes
+            output_data['database_stats'] = stats
             
-            print(f"✅ CSV导出完成: {filepath}")
+            print(f"✅ 数据库保存完成，导出CSV: {csv_path}")
             return output_data
             
         except Exception as e:
-            error_msg = f"CSV导出失败: {str(e)}"
+            error_msg = f"数据库保存失败: {str(e)}"
             print(error_msg)
             logger.error(error_msg, exc_info=True)
             
             if workflow_chat:
                 await workflow_chat.add_node_message(
-                    "CSV导出",
+                    "数据库保存",
                     error_msg,
                     "error"
                 )
