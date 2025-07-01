@@ -63,18 +63,17 @@ class WorkflowHandlers:
         """启动工作流 - 直接执行模式"""
         try:
             # 重置工作流状态
-            messages, node_indicator, quick_replies, user_placeholder, send_interactive = self.workflow_chat.reset_workflow()
+            progress_html, quick_replies, user_placeholder, send_interactive = self.workflow_chat.reset_workflow()
             
             # 发送启动消息
-            messages = await self.workflow_chat.add_node_message(
+            await self.workflow_chat.add_node_message(
                 "系统", 
-                f"🚀 工作流启动！\n配置参数：\n角色：{len(selected_characters)}个\n地点：{len(selected_locations)}个\n类型：{story_type}", 
+                f"🚀 工作流启动！配置参数：角色{len(selected_characters)}个，地点{len(selected_locations)}个，类型{story_type}", 
                 "start"
             )
             
             quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
             yield (
-                messages,
                 self.workflow_chat.update_node_state("planning", "active"),
                 quick_replies,
                 placeholder,
@@ -83,14 +82,13 @@ class WorkflowHandlers:
             
             # 验证输入
             if not selected_characters:
-                messages = await self.workflow_chat.add_node_message(
+                await self.workflow_chat.add_node_message(
                     "系统", 
                     "❌ 错误：请至少选择一个角色", 
                     "error"
                 )
                 quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
                 yield (
-                    messages,
                     self.workflow_chat.update_node_state("planning", "error"),
                     quick_replies,
                     placeholder,
@@ -99,14 +97,13 @@ class WorkflowHandlers:
                 return
             
             if not selected_locations:
-                messages = await self.workflow_chat.add_node_message(
+                await self.workflow_chat.add_node_message(
                     "系统",
                     "❌ 错误：请至少选择一个地点", 
                     "error"
                 )
                 quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
                 yield (
-                    messages,
                     self.workflow_chat.update_node_state("planning", "error"),
                     quick_replies,
                     placeholder,
@@ -119,14 +116,13 @@ class WorkflowHandlers:
                 self._initialize_workflow()
                 
             if not self.story_workflow:
-                messages = await self.workflow_chat.add_node_message(
+                await self.workflow_chat.add_node_message(
                     "系统",
                     "❌ 错误：工作流初始化失败",
                     "error"
                 )
                 quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
                 yield (
-                    messages,
                     self.workflow_chat.update_node_state("planning", "error"),
                     quick_replies,
                     placeholder,
@@ -144,14 +140,13 @@ class WorkflowHandlers:
             }
             
             # 节点1：剧情规划
-            messages = await self.workflow_chat.add_node_message(
+            await self.workflow_chat.add_node_message(
                 "剧情规划",
                 f"正在分析角色关系和地点配置...\n角色：{', '.join(selected_characters[:3])}{'...' if len(selected_characters) > 3 else ''}\n地点：{', '.join(selected_locations[:3])}{'...' if len(selected_locations) > 3 else ''}",
                 "progress"
             )
             quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
             yield (
-                messages,
                 self.workflow_chat.update_node_state("planning", "active"),
                 quick_replies,
                 placeholder,
@@ -161,14 +156,13 @@ class WorkflowHandlers:
             await asyncio.sleep(2)  # 模拟处理时间
             
             # 完成剧情规划
-            messages = await self.workflow_chat.add_node_message(
+            await self.workflow_chat.add_node_message(
                 "剧情规划",
                 "✅ 剧情大纲规划完成！\n- 确定了主要角色关系网络\n- 分析了地点间的联系\n- 生成了故事主线框架",
                 "complete"
             )
             quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
             yield (
-                messages,
                 self.workflow_chat.update_node_state("planning", "completed"),
                 quick_replies,
                 placeholder,
@@ -176,14 +170,13 @@ class WorkflowHandlers:
             )
             
             # 节点2：角色分析
-            messages = await self.workflow_chat.add_node_message(
+            await self.workflow_chat.add_node_message(
                 "角色分析",
                 "正在深入分析每个角色的性格特征和行为模式...",
                 "start"
             )
             quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
             yield (
-                messages,
                 self.workflow_chat.update_node_state("character", "active"),
                 quick_replies,
                 placeholder,
@@ -193,14 +186,13 @@ class WorkflowHandlers:
             await asyncio.sleep(2)
             
             # 完成角色分析
-            messages = await self.workflow_chat.add_node_message(
+            await self.workflow_chat.add_node_message(
                 "角色分析",
                 f"✅ 角色分析完成！\n- 分析了{len(selected_characters)}个角色的详细属性\n- 建立了角色间的关系网络\n- 确定了角色的行为动机",
                 "complete"
             )
             quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
             yield (
-                messages,
                 self.workflow_chat.update_node_state("character", "completed"),
                 quick_replies,
                 placeholder,
@@ -208,14 +200,13 @@ class WorkflowHandlers:
             )
             
             # 节点3：剧情生成
-            messages = await self.workflow_chat.add_node_message(
+            await self.workflow_chat.add_node_message(
                 "剧情生成",
                 "正在生成具体的剧情事件和对话...",
                 "start"
             )
             quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
             yield (
-                messages,
                 self.workflow_chat.update_node_state("plot", "active"),
                 quick_replies,
                 placeholder,
@@ -225,14 +216,13 @@ class WorkflowHandlers:
             await asyncio.sleep(3)  # 剧情生成需要更多时间
             
             # 完成剧情生成
-            messages = await self.workflow_chat.add_node_message(
+            await self.workflow_chat.add_node_message(
                 "剧情生成",
                 "✅ 剧情生成完成！\n- 生成了详细的剧情事件链\n- 创建了角色对话和行为\n- 设置了触发条件和完成条件",
                 "complete"
             )
             quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
             yield (
-                messages,
                 self.workflow_chat.update_node_state("plot", "completed"),
                 quick_replies,
                 placeholder,
@@ -240,14 +230,13 @@ class WorkflowHandlers:
             )
             
             # 节点4：CSV导出
-            messages = await self.workflow_chat.add_node_message(
+            await self.workflow_chat.add_node_message(
                 "CSV导出",
                 "正在将生成的剧情数据导出为CSV格式...",
                 "start"
             )
             quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
             yield (
-                messages,
                 self.workflow_chat.update_node_state("export", "active"),
                 quick_replies,
                 placeholder,
@@ -256,14 +245,13 @@ class WorkflowHandlers:
             
             await asyncio.sleep(1)
             
-            messages = await self.workflow_chat.add_node_message(
+            await self.workflow_chat.add_node_message(
                 "CSV导出",
                 "✅ CSV导出完成！\n- 生成了标准格式的剧情CSV文件\n- 包含了所有必要的游戏数据字段\n- 文件已准备好下载",
                 "complete"
             )
             quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
             yield (
-                messages,
                 self.workflow_chat.update_node_state("export", "completed"),
                 quick_replies,
                 placeholder,
@@ -271,15 +259,14 @@ class WorkflowHandlers:
             )
             
             # 工作流完成
-            messages = await self.workflow_chat.add_node_message(
+            await self.workflow_chat.add_node_message(
                 "系统",
                 "🎉 剧情生成工作流完成！\n所有节点执行成功，结果已生成并可供下载",
                 "complete"
             )
             quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
             yield (
-                messages,
-                self.workflow_chat._create_node_indicator(),
+                self.workflow_chat._create_workflow_progress(),
                 quick_replies,
                 placeholder,
                 send_btn_interactive
@@ -289,28 +276,27 @@ class WorkflowHandlers:
             error_msg = f"工作流执行失败: {str(e)}"
             logger.error(error_msg)
             
-            messages = await self.workflow_chat.add_node_message(
+            await self.workflow_chat.add_node_message(
                 "系统",
                 error_msg,
                 "error"
             )
             quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
             yield (
-                messages,
                 self.workflow_chat.update_node_state("planning", "error"),
                 quick_replies,
                 placeholder,
                 send_btn_interactive
             )
     
-    async def on_user_input(self, user_input: str, chatbot_messages: List):
+    async def on_user_input(self, user_input: str, workflow_progress: str):
         """处理用户输入 - 简化版，不支持交互"""
         try:
             # 添加用户消息
-            messages = await self.workflow_chat.add_user_input(user_input)
+            await self.workflow_chat.add_user_input(user_input)
             
             # 简单回复，不处理复杂交互
-            messages = await self.workflow_chat.add_node_message(
+            await self.workflow_chat.add_node_message(
                 "系统",
                 "工作流采用自动执行模式，无需用户交互。请使用'启动工作流'按钮开始执行。",
                 "info"
@@ -318,8 +304,7 @@ class WorkflowHandlers:
             
             quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
             yield (
-                messages,
-                self.workflow_chat._create_node_indicator(),
+                self.workflow_chat._create_workflow_progress(),
                 quick_replies,
                 placeholder,
                 send_btn_interactive
@@ -327,15 +312,14 @@ class WorkflowHandlers:
                 
         except Exception as e:
             logger.error(f"用户输入处理失败: {e}")
-            messages = await self.workflow_chat.add_node_message(
+            await self.workflow_chat.add_node_message(
                 "系统",
                 f"输入处理失败: {str(e)}",
                 "error"
             )
             quick_replies, placeholder, send_btn_interactive = self.workflow_chat.disable_user_input()
             yield (
-                messages,
-                self.workflow_chat._create_node_indicator(),
+                self.workflow_chat._create_workflow_progress(),
                 quick_replies,
                 placeholder,
                 send_btn_interactive
@@ -344,7 +328,13 @@ class WorkflowHandlers:
     
     async def on_reset_workflow(self):
         """重置工作流"""
-        return self.workflow_chat.reset_workflow()
+        progress_html, quick_replies, user_placeholder, send_interactive = self.workflow_chat.reset_workflow()
+        return (
+            progress_html,
+            quick_replies,
+            user_placeholder,
+            send_interactive
+        )
     
     async def on_refresh_characters(self) -> Tuple[gr.CheckboxGroup, List[List[str]]]:
         """刷新角色列表"""

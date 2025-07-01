@@ -25,7 +25,14 @@ from web.handlers.event_handlers import EventHandlers
 from web.handlers.workflow_handlers import WorkflowHandlers
 from web.utils.text_processing import TextProcessor
 from web.utils.file_utils import FileUtils
-from web.utils.styles import CUSTOM_CSS, HTML_HEAD
+from web.utils.styles import get_custom_css
+
+# HTML_HEAD 常量
+HTML_HEAD = """
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZZZero AI Agent</title>
+"""
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -177,7 +184,7 @@ class AgentApp:
             self._bind_events(config_components, chat_components, story_components, app)
             
             # 添加自定义CSS
-            app.css = CUSTOM_CSS
+            app.css = get_custom_css()
             
         return app
     
@@ -373,8 +380,7 @@ class AgentApp:
                     story_components.get('relationship_depth')
                 ],
                 outputs=[
-                    story_components.get('workflow_chatbot'),
-                    story_components.get('node_indicator'),
+                    story_components.get('workflow_progress'),
                     story_components.get('quick_replies'),
                     story_components.get('user_input'),
                     story_components.get('send_btn')
@@ -386,11 +392,10 @@ class AgentApp:
                 fn=self.workflow_handlers.on_user_input,
                 inputs=[
                     story_components.get('user_input'),
-                    story_components.get('workflow_chatbot')
+                    story_components.get('workflow_progress')
                 ],
                 outputs=[
-                    story_components.get('workflow_chatbot'),
-                    story_components.get('node_indicator'),
+                    story_components.get('workflow_progress'),
                     story_components.get('quick_replies'),
                     story_components.get('user_input'),
                     story_components.get('send_btn')
@@ -404,8 +409,7 @@ class AgentApp:
             story_components['reset_workflow_btn'].click(
                 fn=self.workflow_handlers.on_reset_workflow,
                 outputs=[
-                    story_components.get('workflow_chatbot'),
-                    story_components.get('node_indicator'),
+                    story_components.get('workflow_progress'),
                     story_components.get('quick_replies'),
                     story_components.get('user_input'),
                     story_components.get('send_btn')

@@ -16,6 +16,7 @@ class WorkflowChat:
         self.messages = []
         self.current_node = None
         self.node_states = {}
+        self.node_results = {}  # 存储每个节点的结果
         self.user_inputs = {}
         
     def create_workflow_chat_interface(self) -> Dict[str, Any]:
@@ -23,25 +24,14 @@ class WorkflowChat:
         components = {}
         
         with gr.Column():
-            # 工作流聊天显示区域 - 调整高度与Agent窗口一致
-            components['workflow_chatbot'] = gr.Chatbot(
-                label="🔄 剧情生成工作流",
-                height=500,  # 减少高度为快捷回复留出空间
-                show_copy_button=True,
-                show_share_button=False,
-                bubble_full_width=False,
-                type="messages",
-                value=[],
-                elem_id="workflow_chatbot"
-            )
-            
-            # 节点状态指示器
-            components['node_indicator'] = gr.HTML(
-                value=self._create_node_indicator(),
+            # 工作流进度区域 - 竖向布局
+            components['workflow_progress'] = gr.HTML(
+                value=self._create_workflow_progress(),
+                label="🔄 工作流执行进度",
                 visible=True
             )
             
-            # 快捷回复区域（在输入框上方）
+            # 快捷回复区域（保留，但初始为空）
             components['quick_replies'] = gr.HTML(
                 value="",
                 visible=False,
@@ -52,7 +42,7 @@ class WorkflowChat:
             with gr.Row():
                 components['user_input'] = gr.Textbox(
                     label="💬 与工作流交互",
-                    placeholder="等待工作流启动...",
+                    placeholder="工作流采用自动执行模式...",
                     interactive=False,
                     scale=4
                 )
@@ -84,8 +74,8 @@ class WorkflowChat:
         
         return components
     
-    def _create_node_indicator(self, current_node: str = None) -> str:
-        """创建节点状态指示器"""
+    def _create_workflow_progress(self) -> str:
+        """创建竖向工作流进度显示"""
         nodes = [
             ("📋", "剧情规划", "planning"),
             ("👥", "角色分析", "character"), 
@@ -93,126 +83,168 @@ class WorkflowChat:
             ("📄", "CSV导出", "export")
         ]
         
-        # 使用白色背景与大背景色一致
-        indicator_html = """
-        <div style='padding: 15px; border-radius: 10px; background: #ffffff; margin: 10px 0; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);'>
-            <h4 style='color: #374151; margin: 0 0 10px 0; text-align: center; font-weight: 600;'>🔄 工作流进度</h4>
-            <div style='display: flex; justify-content: space-between; align-items: center;'>
+        progress_html = """
+        <div style='background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);'>
+            <h3 style='color: #374151; margin: 0 0 20px 0; text-align: center; font-weight: 700; font-size: 18px;'>🔄 工作流执行进度</h3>
         """
         
         for i, (icon, name, node_id) in enumerate(nodes):
             # 判断节点状态
-            if current_node == node_id:
+            state = self.node_states.get(node_id, "pending")
+            if self.current_node == node_id and state != "completed":
                 status_class = "active"
-                color = "#f59e0b"  # 橙色
-                bg_color = "rgba(245, 158, 11, 0.1)"
-                border_color = "#f59e0b"
-            elif self.node_states.get(node_id, "pending") == "completed":
+                status_color = "#f59e0b"
+                status_bg = "rgba(245, 158, 11, 0.1)"
+                status_text = "执行中..."
+            elif state == "completed":
                 status_class = "completed"
-                color = "#10b981"  # 绿色
-                bg_color = "rgba(16, 185, 129, 0.1)"
-                border_color = "#10b981"
-            elif self.node_states.get(node_id, "pending") == "error":
+                status_color = "#10b981"
+                status_bg = "rgba(16, 185, 129, 0.1)"
+                status_text = "已完成"
+            elif state == "error":
                 status_class = "error"
-                color = "#ef4444"  # 红色
-                bg_color = "rgba(239, 68, 68, 0.1)"
-                border_color = "#ef4444"
+                status_color = "#ef4444"
+                status_bg = "rgba(239, 68, 68, 0.1)"
+                status_text = "执行失败"
             else:
                 status_class = "pending"
-                color = "#9ca3af"  # 灰色
-                bg_color = "rgba(156, 163, 175, 0.1)"
-                border_color = "#d1d5db"
+                status_color = "#9ca3af"
+                status_bg = "rgba(156, 163, 175, 0.1)"
+                status_text = "等待中..."
             
-            indicator_html += f"""
-                <div style='text-align: center; padding: 12px; border-radius: 8px; background: {bg_color}; margin: 0 5px; flex: 1; border: 2px solid {border_color}; transition: all 0.3s ease;'>
-                    <div style='font-size: 28px; color: {color}; margin-bottom: 5px;'>{icon}</div>
-                    <div style='font-size: 12px; color: {color}; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;'>{name}</div>
+            # 获取节点结果
+            result_content = self.node_results.get(node_id, "")
+            
+            progress_html += f"""
+            <div style='display: flex; align-items: flex-start; margin: 15px 0; padding: 15px; border-radius: 10px; background: {status_bg}; border-left: 4px solid {status_color};'>
+                <!-- 左侧节点信息 -->
+                <div style='flex: 0 0 200px; margin-right: 20px;'>
+                    <div style='display: flex; align-items: center; margin-bottom: 8px;'>
+                        <span style='font-size: 24px; margin-right: 8px;'>{icon}</span>
+                        <div>
+                            <div style='font-weight: 600; color: {status_color}; font-size: 16px;'>{name}</div>
+                            <div style='font-size: 12px; color: {status_color}; font-weight: 500;'>{status_text}</div>
+                        </div>
+                    </div>
                 </div>
+                
+                <!-- 右侧结果展示 -->
+                <div style='flex: 1; min-height: 60px;'>
+                    <div style='background: #ffffff; border: 1px solid {status_color}; border-radius: 8px; padding: 12px; min-height: 50px;'>
+                        {result_content if result_content else '<span style="color: #9ca3af; font-style: italic;">等待执行结果...</span>'}
+                    </div>
+                </div>
+            </div>
             """
             
-            # 添加箭头（除了最后一个节点）
+            # 添加连接线（除了最后一个节点）
             if i < len(nodes) - 1:
-                indicator_html += """
-                    <div style='color: #9ca3af; font-size: 20px; margin: 0 8px; font-weight: bold;'>→</div>
+                progress_html += """
+                <div style='text-align: center; margin: 5px 0;'>
+                    <div style='width: 2px; height: 15px; background: #e5e7eb; margin: 0 auto;'></div>
+                    <div style='color: #9ca3af; font-size: 14px; margin: 2px 0;'>↓</div>
+                </div>
                 """
         
-        indicator_html += """
-            </div>
-        </div>
-        """
-        
-        return indicator_html
+        progress_html += "</div>"
+        return progress_html
     
     async def add_node_message(self, node_name: str, message: str, message_type: str = "info") -> List:
-        """添加节点消息到聊天记录"""
-        # 根据消息类型设置不同的样式
-        if message_type == "start":
-            icon = "🚀"
-            prefix = f"**[{node_name}] 开始执行**"
-        elif message_type == "progress":
-            icon = "⏳"
-            prefix = f"**[{node_name}] 进行中**"
-        elif message_type == "complete":
-            icon = "✅"
-            prefix = f"**[{node_name}] 完成**"
-        elif message_type == "error":
-            icon = "❌"
-            prefix = f"**[{node_name}] 错误**"
-        elif message_type == "input_request":
-            icon = "💭"
-            prefix = f"**[{node_name}] 需要输入**"
-        else:
-            icon = "ℹ️"
-            prefix = f"**[{node_name}] 信息**"
-        
-        formatted_message = f"{icon} {prefix}\n{message}"
-        
-        # 添加时间戳
-        timestamp = time.strftime("%H:%M:%S")
-        
-        # 构造消息对象
-        bot_message = {
-            "role": "assistant",
-            "content": formatted_message,
-            "metadata": {
-                "title": f"{node_name} - {timestamp}",
-                "node": node_name.lower().replace(" ", "_"),
-                "type": message_type
-            }
+        """添加节点消息到聊天记录 - 简化版"""
+        # 直接更新节点结果而不是聊天记录
+        node_mapping = {
+            "剧情规划": "planning",
+            "角色分析": "character", 
+            "剧情生成": "plot",
+            "CSV导出": "export"
         }
         
-        self.messages.append(bot_message)
-        return self.messages.copy()
+        node_id = node_mapping.get(node_name)
+        if node_id:
+            # 根据消息类型更新节点结果
+            if message_type in ["complete", "progress"]:
+                self.node_results[node_id] = self._format_result_content(message, message_type)
+        
+        return []  # 不再使用聊天记录
+    
+    def _format_result_content(self, message: str, message_type: str) -> str:
+        """格式化结果内容"""
+        if message_type == "complete":
+            # 提取有用信息，去掉无意义的描述
+            if "剧情大纲规划完成" in message:
+                return """
+                <div style='color: #10b981;'>
+                    <div style='font-weight: 600; margin-bottom: 8px;'>✅ 规划完成</div>
+                    <ul style='margin: 0; padding-left: 20px; font-size: 14px;'>
+                        <li>角色关系网络已建立</li>
+                        <li>地点连接分析完成</li>
+                        <li>故事主线框架已生成</li>
+                    </ul>
+                </div>
+                """
+            elif "角色分析完成" in message:
+                return """
+                <div style='color: #10b981;'>
+                    <div style='font-weight: 600; margin-bottom: 8px;'>✅ 分析完成</div>
+                    <ul style='margin: 0; padding-left: 20px; font-size: 14px;'>
+                        <li>角色详细属性已分析</li>
+                        <li>角色关系网络已构建</li>
+                        <li>行为动机已确定</li>
+                    </ul>
+                </div>
+                """
+            elif "剧情生成完成" in message:
+                return """
+                <div style='color: #10b981;'>
+                    <div style='font-weight: 600; margin-bottom: 8px;'>✅ 生成完成</div>
+                    <ul style='margin: 0; padding-left: 20px; font-size: 14px;'>
+                        <li>剧情事件链已生成</li>
+                        <li>角色对话已创建</li>
+                        <li>触发条件已设置</li>
+                    </ul>
+                </div>
+                """
+            elif "CSV导出完成" in message:
+                return """
+                <div style='color: #10b981;'>
+                    <div style='font-weight: 600; margin-bottom: 8px;'>✅ 导出完成</div>
+                    <ul style='margin: 0; padding-left: 20px; font-size: 14px;'>
+                        <li>CSV文件已生成</li>
+                        <li>游戏数据字段已包含</li>
+                        <li>文件已准备下载</li>
+                    </ul>
+                </div>
+                """
+        elif message_type == "progress":
+            return f"""
+            <div style='color: #f59e0b;'>
+                <div style='font-weight: 600; margin-bottom: 5px;'>⏳ 执行中...</div>
+                <div style='font-size: 14px;'>{message}</div>
+            </div>
+            """
+        
+        return f"<div style='font-size: 14px;'>{message}</div>"
     
     async def add_user_input(self, user_input: str) -> List:
-        """添加用户输入到聊天记录"""
-        if user_input.strip():
-            user_message = {
-                "role": "user", 
-                "content": user_input,
-                "metadata": {
-                    "title": f"用户 - {time.strftime('%H:%M:%S')}"
-                }
-            }
-            self.messages.append(user_message)
-        return self.messages.copy()
+        """添加用户输入到聊天记录 - 简化版"""
+        return []  # 不再使用聊天记录
     
     def update_node_state(self, node_id: str, state: str) -> str:
         """更新节点状态"""
         self.node_states[node_id] = state
         self.current_node = node_id if state == "active" else None
-        return self._create_node_indicator(self.current_node)
+        return self._create_workflow_progress()
     
-    def reset_workflow(self) -> Tuple[List, str, str, str, bool]:
+    def reset_workflow(self) -> Tuple[str, str, str, bool]:
         """重置工作流状态"""
         self.messages = []
         self.node_states = {}
+        self.node_results = {}
         self.current_node = None
         self.user_inputs = {}
         
         return (
-            [],  # 清空聊天记录
-            self._create_node_indicator(),  # 重置节点指示器
+            self._create_workflow_progress(),  # 重置进度显示
             "",  # 隐藏快捷回复
             "",  # 清空输入框
             False   # 禁用发送按钮
@@ -267,4 +299,8 @@ class WorkflowChat:
 
     def _create_quick_replies(self, replies: List[str]) -> str:
         """创建快捷回复HTML - 简化版，不再使用"""
-        return ""  # 直接返回空字符串，不再生成快捷回复 
+        return ""  # 直接返回空字符串，不再生成快捷回复
+
+    def _create_node_indicator(self, current_node: str = None) -> str:
+        """创建节点状态指示器 - 废弃，使用新的进度显示"""
+        return self._create_workflow_progress() 
