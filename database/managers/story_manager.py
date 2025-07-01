@@ -27,6 +27,7 @@ class StoryManager(DatabaseManager):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             story_id TEXT UNIQUE NOT NULL,
             story_name TEXT NOT NULL,
+            story_overview TEXT,       -- 剧情概述（四幕式描述）
             story_type TEXT DEFAULT 'daily_life',
             story_length TEXT DEFAULT 'medium',
             relationship_depth TEXT DEFAULT 'casual',
@@ -39,6 +40,13 @@ class StoryManager(DatabaseManager):
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
+        
+        # 为现有表添加新字段（如果不存在）
+        try:
+            self.execute_query("ALTER TABLE stories ADD COLUMN story_overview TEXT")
+        except Exception:
+            # 字段已存在或其他错误，忽略
+            pass
         
         # 创建小节详情表
         self.create_table_if_not_exists("scenes", """(
@@ -120,6 +128,7 @@ class StoryManager(DatabaseManager):
             for story in story_list:
                 story_id = story.get('剧情ID', '')
                 story_name = story.get('剧情名称', '未命名剧情')
+                story_overview = story.get('剧情概述', '')  # 新增剧情概述字段
                 scenes = story.get('剧情小节', [])
                 story_summary_data = story.get('剧情总结', {})
                 
@@ -127,6 +136,7 @@ class StoryManager(DatabaseManager):
                 story_record = {
                     'story_id': story_id,
                     'story_name': story_name,
+                    'story_overview': story_overview,  # 保存剧情概述
                     'story_type': config.get('story_type', 'daily_life'),
                     'story_length': config.get('story_length', 'medium'),
                     'relationship_depth': config.get('relationship_depth', 'casual'),
@@ -283,7 +293,7 @@ class StoryManager(DatabaseManager):
         try:
             sql = """
                 SELECT 
-                    s.story_id, s.story_name, s.story_type, s.story_length,
+                    s.story_id, s.story_name, s.story_overview, s.story_type, s.story_length,
                     s.relationship_depth, s.protagonist, s.selected_characters,
                     s.selected_locations, s.main_conflict, s.emotional_development,
                     s.created_at, cs.importance_level, cs.character_role, cs.interaction_count
@@ -360,6 +370,92 @@ class StoryManager(DatabaseManager):
             logger.error(f"获取角色列表失败: {e}")
             return []
     
+    def get_character_existing_stories_summary(self, character_names: List[str], limit: int = 20) -> Dict[str, Any]:
+        """获取指定角色的已有剧情摘要，用于新剧情生成时的参考"""
+        try:
+            if not character_names:
+                return {
+                    'existing_stories': [],
+                    'story_themes': [],
+                    'character_relationships': {},
+                    'common_locations': [],
+                    'story_styles': []
+                }
+            
+            placeholders = ','.join(['?' for _ in character_names])
+            
+            # 获取相关剧情
+            sql = f"""
+                SELECT DISTINCT
+                    s.story_id, s.story_name, s.story_overview, s.story_type, s.main_conflict,
+                    s.emotional_development, s.selected_characters, s.selected_locations,
+                    s.created_at
+                FROM stories s
+                JOIN character_stories cs ON s.story_id = cs.story_id
+                WHERE cs.character_name IN ({placeholders})
+                ORDER BY s.created_at DESC
+                LIMIT ?
+            """
+            
+            params = character_names + [limit]
+            stories = self.execute_query(sql, params)
+            
+            # 解析JSON字段
+            for story in stories:
+                story['selected_characters'] = json.loads(story['selected_characters'] or '[]')
+                story['selected_locations'] = json.loads(story['selected_locations'] or '[]')
+            
+            # 分析剧情主题和风格
+            story_themes = []
+            character_relationships = {}
+            common_locations = []
+            story_styles = []
+            
+            for story in stories:
+                # 收集主题
+                if story['main_conflict']:
+                    story_themes.append(story['main_conflict'])
+                
+                # 收集角色关系
+                chars = story['selected_characters']
+                for i, char1 in enumerate(chars):
+                    for char2 in chars[i+1:]:
+                        pair = tuple(sorted([char1, char2]))
+                        if pair not in character_relationships:
+                            character_relationships[pair] = 0
+                        character_relationships[pair] += 1
+                
+                # 收集常用地点
+                common_locations.extend(story['selected_locations'])
+                
+                # 收集风格信息
+                if story['emotional_development']:
+                    story_styles.append(story['emotional_development'])
+            
+            # 统计最常见的元素
+            from collections import Counter
+            location_counter = Counter(common_locations)
+            most_common_locations = [loc for loc, count in location_counter.most_common(5)]
+            
+            return {
+                'existing_stories': stories,
+                'story_themes': list(set(story_themes)),
+                'character_relationships': dict(character_relationships),
+                'common_locations': most_common_locations,
+                'story_styles': list(set(story_styles)),
+                'total_stories': len(stories)
+            }
+            
+        except Exception as e:
+            logger.error(f"获取角色已有剧情摘要失败: {e}")
+            return {
+                'existing_stories': [],
+                'story_themes': [],
+                'character_relationships': {},
+                'common_locations': [],
+                'story_styles': []
+            }
+    
     def get_stories_by_filter(self, filters: Dict[str, Any], limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
         """按条件筛选剧情"""
         try:
@@ -391,7 +487,7 @@ class StoryManager(DatabaseManager):
             
             sql = f"""
                 SELECT 
-                    s.story_id, s.story_name, s.story_type, s.story_length,
+                    s.story_id, s.story_name, s.story_overview, s.story_type, s.story_length,
                     s.protagonist, s.main_conflict, s.created_at,
                     (SELECT COUNT(*) FROM scenes sc WHERE sc.story_id = s.story_id) as scene_count,
                     (SELECT GROUP_CONCAT(character_name) FROM character_stories cs WHERE cs.story_id = s.story_id) as characters

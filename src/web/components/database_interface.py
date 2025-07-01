@@ -89,8 +89,8 @@ class DatabaseInterface:
                 
                 # 剧情列表表格
                 story_table = gr.Dataframe(
-                    headers=["剧情ID", "剧情名称", "类型", "主角", "小节数", "角色", "创建时间"],
-                    datatype=["str", "str", "str", "str", "number", "str", "str"],
+                    headers=["剧情ID", "剧情名称", "剧情概述", "类型", "主角", "小节数", "角色", "创建时间"],
+                    datatype=["str", "str", "str", "str", "str", "number", "str", "str"],
                     interactive=False,
                     wrap=True
                 )
@@ -330,6 +330,7 @@ class DatabaseInterface:
                 data.append([
                     story['story_id'],
                     story['story_name'],
+                    story.get('story_overview', '')[:50] + "..." if len(story.get('story_overview', '')) > 50 else story.get('story_overview', ''),
                     story['story_type'],
                     story['protagonist'],
                     story['scene_count'],
@@ -337,11 +338,11 @@ class DatabaseInterface:
                     story['created_at'][:19]  # 只显示到秒
                 ])
             
-            return pd.DataFrame(data, columns=["剧情ID", "剧情名称", "类型", "主角", "小节数", "角色", "创建时间"])
+            return pd.DataFrame(data, columns=["剧情ID", "剧情名称", "剧情概述", "类型", "主角", "小节数", "角色", "创建时间"])
             
         except Exception as e:
             logger.error(f"加载剧情列表失败: {e}")
-            return pd.DataFrame(columns=["剧情ID", "剧情名称", "类型", "主角", "小节数", "角色", "创建时间"])
+            return pd.DataFrame(columns=["剧情ID", "剧情名称", "剧情概述", "类型", "主角", "小节数", "角色", "创建时间"])
     
     def _search_stories(self, character_filter: str, story_type_filter: str, protagonist_filter: str) -> pd.DataFrame:
         """搜索剧情"""
@@ -364,6 +365,7 @@ class DatabaseInterface:
                 data.append([
                     story['story_id'],
                     story['story_name'],
+                    story.get('story_overview', '')[:50] + "..." if len(story.get('story_overview', '')) > 50 else story.get('story_overview', ''),
                     story['story_type'],
                     story['protagonist'],
                     story['scene_count'],
@@ -371,11 +373,11 @@ class DatabaseInterface:
                     story['created_at'][:19]
                 ])
             
-            return pd.DataFrame(data, columns=["剧情ID", "剧情名称", "类型", "主角", "小节数", "角色", "创建时间"])
+            return pd.DataFrame(data, columns=["剧情ID", "剧情名称", "剧情概述", "类型", "主角", "小节数", "角色", "创建时间"])
             
         except Exception as e:
             logger.error(f"搜索剧情失败: {e}")
-            return pd.DataFrame(columns=["剧情ID", "剧情名称", "类型", "主角", "小节数", "角色", "创建时间"])
+            return pd.DataFrame(columns=["剧情ID", "剧情名称", "剧情概述", "类型", "主角", "小节数", "角色", "创建时间"])
     
     def _on_story_selected(self, table_data) -> Tuple[str, str, pd.DataFrame]:
         """处理剧情选择事件"""

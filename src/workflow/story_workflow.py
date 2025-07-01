@@ -407,9 +407,36 @@ class StoryPlanningNode(BaseNode):
         if workflow_chat:
             await workflow_chat.add_node_message(
                 "剧情规划",
-                "正在分析主角方知衡与选定角色的关系，生成剧情框架...",
+                "正在查询现有剧情，分析主角方知衡与选定角色的关系，生成剧情框架...",
                 "progress"
             )
+        
+        # 获取已有剧情作为参考
+        existing_stories_summary = {}
+        try:
+            from database import story_manager
+            
+            # 查询所有选中角色的已有剧情
+            all_characters = ['方知衡'] + selected_characters
+            existing_stories_summary = story_manager.get_character_existing_stories_summary(all_characters)
+            
+            existing_count = existing_stories_summary.get('total_stories', 0)
+            if workflow_chat and existing_count > 0:
+                await workflow_chat.add_node_message(
+                    "剧情规划",
+                    f"已找到 {existing_count} 个相关剧情作为参考，正在分析剧情风格和主题...",
+                    "progress"
+                )
+                
+        except Exception as e:
+            logger.warning(f"获取已有剧情失败，将不使用历史参考: {e}")
+            existing_stories_summary = {
+                'existing_stories': [],
+                'story_themes': [],
+                'character_relationships': {},
+                'common_locations': [],
+                'story_styles': []
+            }
         
         # 构建详细的角色信息
         character_details = []
@@ -448,6 +475,25 @@ class StoryPlanningNode(BaseNode):
 """
                         location_details.append(detail)
         
+        # 构建已有剧情参考信息
+        existing_stories_info = ""
+        if existing_stories_summary.get('existing_stories'):
+            existing_stories_info = f"""
+# 已有剧情参考（避免重复）
+
+## 已有剧情列表（共 {existing_stories_summary.get('total_stories', 0)} 个）
+
+{chr(10).join([f"- {story['story_name']}: {story['main_conflict']}" for story in existing_stories_summary['existing_stories'][:10]])}
+
+## 已使用的剧情主题（请避免重复）
+
+{chr(10).join([f"- {theme}" for theme in existing_stories_summary['story_themes'][:10]])}
+
+**重要要求**：请避免与已有剧情主题重复，创作新的剧情内容。
+"""
+        else:
+            existing_stories_info = "# 首次创作（无已有剧情参考）"
+
         # 构建通用的剧情规划提示词
         planning_prompt = f"""
 你是一名专业的剧情策划师，需要基于以下信息制定剧情规划框架：
@@ -463,6 +509,8 @@ class StoryPlanningNode(BaseNode):
 # 地点信息
 
 {''.join(location_details) if location_details else '无特定地点限制'}
+
+{existing_stories_info}
 
 # 剧情配置
 
@@ -508,9 +556,10 @@ class StoryPlanningNode(BaseNode):
       {{
         "剧情ID": "STORY_001",
         "剧情名称": "第1个大剧情的名称",
+        "剧情概述": "整段大剧情的四幕式描述：开端（背景设定） → 发展（矛盾升级） → 高潮（冲突顶点） → 结局（问题解决），完整讲述这个大剧情的故事脉络",
         "故事主题与核心冲突": {{
-          "故事主题": "基于主角性格特征和生活背景确定的主题",
-          "核心冲突": "结合参与角色设计的合理冲突点"
+          "故事主题": "基于主角性格特征和生活背景确定的主题，避免与已有剧情重复",
+          "核心冲突": "结合参与角色设计的合理冲突点，确保新颖性"
         }},
         "主要剧情线": {{
           "开端": "设定背景和初始情况的具体描述",
@@ -706,9 +755,28 @@ class PlotGenerationNode(BaseNode):
         if workflow_chat:
             await workflow_chat.add_node_message(
                 "剧情生成", 
-                f"正在基于规划结果生成具体剧情（规划长度：{len(planning_result)} 字符）...",
+                f"正在基于规划结果和已有剧情参考生成具体剧情（规划长度：{len(planning_result)} 字符）...",
                 "progress"
             )
+        
+        # 获取已有剧情作为参考（与规划节点保持一致）
+        existing_stories_summary = {}
+        try:
+            from database import story_manager
+            
+            # 查询所有选中角色的已有剧情
+            all_characters = ['方知衡'] + selected_characters
+            existing_stories_summary = story_manager.get_character_existing_stories_summary(all_characters)
+                
+        except Exception as e:
+            logger.warning(f"获取已有剧情失败，将不使用历史参考: {e}")
+            existing_stories_summary = {
+                'existing_stories': [],
+                'story_themes': [],
+                'character_relationships': {},
+                'common_locations': [],
+                'story_styles': []
+            }
         
         # 获取完整的配置和规划结果
         protagonist_data = input_data.get('protagonist_data', '')
@@ -720,6 +788,25 @@ class PlotGenerationNode(BaseNode):
         story_length = input_data.get('story_length', 'medium')
         relationship_depth = input_data.get('relationship_depth', 'casual')
         
+        # 构建已有剧情参考信息（与规划节点保持一致）
+        existing_stories_info = ""
+        if existing_stories_summary.get('existing_stories'):
+            existing_stories_info = f"""
+# 已有剧情参考（保持一致性，避免重复）
+
+## 已有剧情风格样本（共 {existing_stories_summary.get('total_stories', 0)} 个）
+
+{chr(10).join([f"- {story['story_name']}: {story['main_conflict']}" for story in existing_stories_summary['existing_stories'][:5]])}
+
+## 已有故事风格特点
+
+{chr(10).join([f"- {style}" for style in existing_stories_summary['story_styles'][:5]])}
+
+**生成约束**：请保持与已有剧情的叙述风格一致，但避免主题重复。
+"""
+        else:
+            existing_stories_info = "# 无已有剧情参考（请建立独特的叙述风格）"
+
         # 构建通用的剧情生成提示词
         plot_prompt = f"""
 你是一名专业的剧情编剧，需要基于剧情规划生成具体的剧情内容。
@@ -731,6 +818,8 @@ class PlotGenerationNode(BaseNode):
 # 角色设定
 
 {protagonist_data}
+
+{existing_stories_info}
 
 # 剧情配置
 
@@ -761,6 +850,7 @@ class PlotGenerationNode(BaseNode):
       {{
         "剧情ID": "STORY_001",
         "剧情名称": "第1个大剧情的名称",
+        "剧情概述": "整段大剧情的四幕式概述，清晰描述从开端到结局的完整故事弧线",
         "剧情小节": [
           {{
             "小节ID": "S001_SCENE_001",
