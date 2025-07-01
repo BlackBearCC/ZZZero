@@ -131,7 +131,7 @@ class WorkflowChat:
                 
                 <!-- 右侧结果展示 -->
                 <div style='flex: 1; min-height: 60px;'>
-                    <div style='background: #ffffff; border: 1px solid {status_color}; border-radius: 8px; padding: 12px; min-height: 50px;'>
+                    <div id='node_result_{node_id}' style='background: #ffffff; border: 1px solid {status_color}; border-radius: 8px; padding: 8px; min-height: 50px; max-height: 300px; overflow-y: auto;'>
                         {result_content if result_content else '<span style="color: #9ca3af; font-style: italic;">等待执行结果...</span>'}
                     </div>
                 </div>
@@ -147,7 +147,61 @@ class WorkflowChat:
                 </div>
                 """
         
-        progress_html += "</div>"
+        progress_html += """
+        </div>
+        <script>
+            // 改进的自动滚动 - 滚动所有内容区域到底部
+            function autoScrollNodeContent() {
+                // 查找所有节点内容区域并自动滚动
+                var contentAreas = document.querySelectorAll('.node-content-area');
+                contentAreas.forEach(function(contentDiv, index) {
+                    if (contentDiv && contentDiv.scrollHeight > contentDiv.clientHeight) {
+                        contentDiv.scrollTop = contentDiv.scrollHeight;
+                        console.log('节点内容自动滚动:', index, '高度:', contentDiv.scrollHeight);
+                    }
+                });
+                
+                // 同时滚动节点结果容器
+                var nodeResults = ['planning', 'character', 'plot', 'export'];
+                nodeResults.forEach(function(nodeId) {
+                    var containerDiv = document.getElementById('node_result_' + nodeId);
+                    if (containerDiv && containerDiv.scrollHeight > containerDiv.clientHeight) {
+                        containerDiv.scrollTop = containerDiv.scrollHeight;
+                        console.log('节点容器自动滚动:', nodeId, containerDiv.scrollHeight);
+                    }
+                });
+            }
+            
+            // 立即执行一次
+            setTimeout(autoScrollNodeContent, 100);
+            
+            // 定期检查并滚动（适用于流式更新）
+            setInterval(autoScrollNodeContent, 1000);
+            
+            // 监听DOM变化，当内容更新时自动滚动
+            var observer = new MutationObserver(function(mutations) {
+                var shouldScroll = false;
+                mutations.forEach(function(mutation) {
+                    if (mutation.type === 'childList' || mutation.type === 'characterData') {
+                        shouldScroll = true;
+                    }
+                });
+                if (shouldScroll) {
+                    setTimeout(autoScrollNodeContent, 50);
+                }
+            });
+            
+            // 观察整个工作流进度区域的变化
+            var progressArea = document.querySelector('[id*="workflow_progress"]');
+            if (progressArea) {
+                observer.observe(progressArea, {
+                    childList: true,
+                    subtree: true,
+                    characterData: true
+                });
+            }
+        </script>
+        """
         return progress_html
     
     async def add_node_message(self, node_name: str, content: str, status: str = "completed"):
@@ -168,7 +222,7 @@ class WorkflowChat:
                 formatted_content = self._format_result_content(content, "streaming")
             elif status == "completed":
                 # 完成状态：设置最终内容
-                formatted_content = self._format_result_content(content, "complete")
+                formatted_content = self._format_result_content(content, "completed")
             else:
                 # 其他状态
                 formatted_content = self._format_result_content(content, status)
@@ -205,45 +259,38 @@ class WorkflowChat:
             return self._create_workflow_progress()
     
     def _format_result_content(self, message: str, message_type: str) -> str:
-        """格式化结果内容"""
+        """格式化结果内容 - 使用一致的样式和可靠的自动滚动"""
         if message_type == "completed":
-            # 已完成状态 - 保持和流式生成一致的版式，只是颜色换成绿色
+            # 已完成状态 - 和流式状态保持完全一致的样式，只改颜色和状态文字
             return f"""
             <div style='color: #10b981;'>
                 <div style='font-weight: 600; margin-bottom: 8px; display: flex; align-items: center;'>
                     <span>✅ 执行完成</span>
                     <div style='margin-left: 10px; width: 12px; height: 12px; background-color: #10b981; border-radius: 50%;'></div>
                 </div>
-                <div id='content_display_{id(message)}' style='background: #f0f9ff; border: 1px solid #10b981; border-radius: 6px; padding: 12px; font-size: 13px; max-height: 400px; overflow-y: auto; border-left: 4px solid #10b981;'>
-                    <pre style='white-space: pre-wrap; margin: 0; font-family: inherit; line-height: 1.5; color: #065f46;'>{message}</pre>
+                <div class='node-content-area' style='background: #f0fdf4; border: 1px solid #10b981; border-radius: 6px; padding: 12px; font-size: 13px; max-height: 280px; overflow-y: auto; border-left: 4px solid #10b981;'>
+                    <pre style='white-space: pre-wrap; margin: 0; font-family: inherit; line-height: 1.5; color: #166534;'>{message}</pre>
                 </div>
-                <div style='margin-top: 5px; font-size: 12px; color: #065f46; display: flex; justify-content: between; align-items: center;'>
+                <div style='margin-top: 5px; font-size: 12px; color: #10b981; display: flex; justify-content: space-between; align-items: center;'>
                     <span>最终长度: {len(message)} 字符</span>
-                    <span style='margin-left: auto; font-style: italic;'>生成已完成</span>
+                    <span style='font-style: italic;'>生成已完成</span>
                 </div>
-                <script>
-                    // 自动滚动到底部
-                    var contentDiv = document.getElementById('content_display_{id(message)}');
-                    if (contentDiv) {{
-                        contentDiv.scrollTop = contentDiv.scrollHeight;
-                    }}
-                </script>
             </div>
             """
         elif message_type == "streaming":
-            # 流式内容实时显示 - 优化显示效果
+            # 流式内容实时显示 - 保持原有样式
             return f"""
             <div style='color: #f59e0b;'>
                 <div style='font-weight: 600; margin-bottom: 8px; display: flex; align-items: center;'>
                     <span>⚡ 实时生成中...</span>
                     <div style='margin-left: 10px; width: 12px; height: 12px; background-color: #f59e0b; border-radius: 50%; animation: pulse 1.5s infinite;'></div>
                 </div>
-                <div style='background: #fffbeb; border: 1px solid #fbbf24; border-radius: 6px; padding: 12px; font-size: 13px; max-height: 400px; overflow-y: auto; border-left: 4px solid #f59e0b;'>
+                <div class='node-content-area' style='background: #fffbeb; border: 1px solid #fbbf24; border-radius: 6px; padding: 12px; font-size: 13px; max-height: 280px; overflow-y: auto; border-left: 4px solid #f59e0b;'>
                     <pre style='white-space: pre-wrap; margin: 0; font-family: inherit; line-height: 1.5; color: #92400e;'>{message}</pre>
                 </div>
-                <div style='margin-top: 5px; font-size: 12px; color: #92400e; display: flex; justify-content: between; align-items: center;'>
+                <div style='margin-top: 5px; font-size: 12px; color: #92400e; display: flex; justify-content: space-between; align-items: center;'>
                     <span>当前长度: {len(message)} 字符</span>
-                    <span style='margin-left: auto; font-style: italic;'>内容持续更新中...</span>
+                    <span style='font-style: italic;'>内容持续更新中...</span>
                 </div>
             </div>
             <style>
@@ -275,7 +322,9 @@ class WorkflowChat:
             return f"""
             <div style='color: #ef4444;'>
                 <div style='font-weight: 600; margin-bottom: 5px;'>❌ 执行失败</div>
-                <div style='font-size: 14px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 10px; border-left: 4px solid #ef4444;'>{message}</div>
+                <div class='node-content-area' style='background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 12px; font-size: 13px; max-height: 280px; overflow-y: auto; border-left: 4px solid #ef4444;'>
+                    <pre style='white-space: pre-wrap; margin: 0; font-family: inherit; line-height: 1.5; color: #dc2626;'>{message}</pre>
+                </div>
             </div>
             """
         
