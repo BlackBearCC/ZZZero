@@ -173,10 +173,11 @@ class ScheduleWorkflow:
     
     def get_protagonist_info(self) -> Dict[str, Any]:
         """获取主角信息"""
+        protagonist_name = self.current_config.get('protagonist', '方知衡')
         return {
-            'name': '方知衡',
+            'name': protagonist_name,
             'type': 'protagonist',
-            'description': '大学天文系教授、研究员，28岁，理性严谨、内敛温和、平等包容、责任感强',
+            'description': self.protagonist_data.split('\n')[0] if self.protagonist_data else '主角信息',
             'full_profile': self.protagonist_data
         }
     
@@ -332,8 +333,15 @@ class ScheduleWorkflow:
                     node_display_name = self._get_node_display_name(node_name)
                     workflow_chat.current_node = self._get_node_id(node_name)
                     
+                    # 更新UI - 节点开始状态
+                    await workflow_chat.add_node_message(
+                        node_display_name,
+                        "开始执行...",
+                        "progress"
+                    )
+                    
                     yield (
-                        workflow_chat.update_node_state(self._get_node_id(node_name), "active"),
+                        workflow_chat._create_workflow_progress(),
                         "",
                         f"{node_display_name}开始执行...",
                         False
@@ -353,8 +361,15 @@ class ScheduleWorkflow:
                                     content_length = len(str(intermediate_result.state_update[key]))
                                 break
                         
-                        # 实时更新进度信息
+                        # 实时更新进度信息 - 获取最新的进度HTML，与story_workflow保持一致
                         if content_length > 0:
+                            node_display_name = self._get_node_display_name(node_name)
+                            await workflow_chat.add_node_message(
+                                node_display_name,
+                                f"正在生成日程内容... 当前生成{content_length}字符",
+                                "streaming"
+                            )
+                            
                             yield (
                                 workflow_chat._create_workflow_progress(),
                                 "",
@@ -365,9 +380,27 @@ class ScheduleWorkflow:
                 elif event_type == 'node_complete':
                     # 节点执行完成
                     node_display_name = self._get_node_display_name(node_name)
+                    node_id = self._get_node_id(node_name)
+                    
+                    # 为节点添加完成消息，确保UI正确更新
+                    if node_name == 'schedule_generate':
+                        result_content = "✅ 日程生成完成"
+                        if 'schedule_result' in stream_event.get('output', {}):
+                            schedule_data = stream_event['output']['schedule_result']
+                            if isinstance(schedule_data, (dict, list)):
+                                result_content = f"✅ 已成功生成{config['total_days']}天的日程安排"
+                    else:
+                        result_content = "✅ 执行完成"
+                        
+                    # 更新节点消息
+                    await workflow_chat.add_node_message(
+                        node_display_name,
+                        result_content,
+                        "completed"
+                    )
                     
                     yield (
-                        workflow_chat.update_node_state(self._get_node_id(node_name), "completed"),
+                        workflow_chat._create_workflow_progress(),
                         "",
                         f"{node_display_name}执行完成",
                         False
@@ -376,15 +409,16 @@ class ScheduleWorkflow:
                 elif event_type == 'node_error':
                     # 节点执行错误
                     error_msg = stream_event.get('error', '未知错误')
+                    node_display_name = self._get_node_display_name(node_name)
                     
                     await workflow_chat.add_node_message(
-                        "系统",
-                        f"节点执行失败: {error_msg}",
+                        node_display_name,
+                        f"执行失败: {error_msg}",
                         "error"
                     )
                     
                     yield (
-                        workflow_chat.update_node_state(self._get_node_id(node_name), "error"),
+                        workflow_chat._create_workflow_progress(),
                         "",
                         "",
                         False
@@ -417,7 +451,7 @@ class ScheduleWorkflow:
                 "error"
             )
             yield (
-                workflow_chat.update_node_state("generate", "error"),
+                workflow_chat._create_workflow_progress(),
                 "",
                 "",
                 False
@@ -527,20 +561,40 @@ class ScheduleGenerateNode(BaseNode):
                 )
             raise Exception(f"日期处理失败: {str(e)}")
         
+        # 构建角色信息字符串
+        characters_info = []
+        for char_name in selected_characters:
+            # 从角色数据中获取详细信息
+            char_list = input_data.get('characters_data', {}).get("角色列表", {})
+            if char_name in char_list:
+                char_info = char_list[char_name]
+                char_desc = f"{char_name}：{char_info.get('简介', '')}"
+                if char_info.get('性格'):
+                    char_desc += f"，性格{char_info.get('性格')}"
+                if char_info.get('年龄'):
+                    char_desc += f"，{char_info.get('年龄')}岁"
+                characters_info.append(char_desc)
+            else:
+                characters_info.append(char_name)
+        
+        # 获取主角信息
+        protagonist = input_data.get('protagonist', '方知衡')
+        protagonist_data = input_data.get('protagonist_data', '')
+        
         # 构建日程生成提示词
         generation_prompt = f"""
-你是一名专业的日程规划师，需要为主角方知衡生成从{start_date}到{end_date}的详细日程安排。
+你是一名专业的日程规划师和故事编剧，需要为主角{protagonist}生成从{start_date}到{end_date}的详细日程安排。这不仅是简单的时间安排，更是一个完整的生活故事。
 
 # 主角信息
-方知衡：大学天文系教授、研究员，28岁，理性严谨、内敛温和、平等包容、责任感强
+{protagonist_data}
 
 # 日程需求
 - 日程类型：{schedule_type}（周期规划）
 - 日期范围：{start_date} 至 {end_date}，共{total_days}天
 - 每天划分为5个时间段：夜间(23:00-06:00)、上午(06:00-11:00)、中午(11:00-14:00)、下午(14:00-18:00)、晚上(18:00-23:00)
 
-# 参与角色
-{', '.join(selected_characters)}
+# 参与角色详情
+{chr(10).join(characters_info)}
 
 # 活动地点
 {', '.join(selected_locations)}
@@ -548,13 +602,29 @@ class ScheduleGenerateNode(BaseNode):
 # 日期信息
 {json.dumps(dates_info, ensure_ascii=False, indent=2)}
 
-# 生成要求
-1. 为每天生成合理的日程安排，每个时间段都要有具体安排
-2. 考虑工作日和休息日的区别，工作日以工作为主，休息日以休闲娱乐为主
-3. 合理分配不同角色的出现频率，确保主要角色互动更频繁
-4. 考虑天气、季节、节假日等因素对日程的影响
-5. 为每天生成一个主题和总结
-6. 确保日程安排的连贯性和合理性
+# 核心生成要求
+
+## 故事性要求
+1. **情感发展线**：每个角色的出现都应该有情感推进，不是简单的功能性互动
+2. **细节丰富度**：每个时间段的描述应该包含具体的对话片段、内心活动、环境描写
+3. **连贯性**：前一天的事件应该对后续产生影响，形成完整的故事链
+4. **角色深度**：充分利用每个角色的性格特点，创造有趣的互动情节
+
+## 计划与总结的区别
+- **每日计划(daily_plan)**：{protagonist}早晨醒来时对这一天的预期和安排，基于他现有的信息和经验
+- **每日总结(daily_summary)**：一天结束后对实际发生事件的回顾，可能与计划有出入，包含意外和惊喜
+
+## 时间段内容要求
+1. **夜间(23:00-06:00)**：休息、梦境、深夜思考，偶尔有特殊情况
+2. **上午(06:00-11:00)**：工作、研究、重要会议，精神状态最佳的时段
+3. **中午(11:00-14:00)**：用餐、轻松社交、短暂休息
+4. **下午(14:00-18:00)**：继续工作、实地考察、学术活动
+5. **晚上(18:00-23:00)**：社交活动、娱乐、个人时间、深度交流
+
+## 角色互动原则
+1. **频率分配**：重要角色每2-3天出现一次，次要角色每4-5天出现一次
+2. **互动深度**：每次互动都要有具体的对话内容和情感变化
+3. **关系发展**：角色间的关系应该随时间推进而发展变化
 
 # 输出格式
 请按以下JSON格式输出日程安排：
@@ -566,11 +636,13 @@ class ScheduleGenerateNode(BaseNode):
     "周期类型": "{schedule_type}",
     "开始日期": "{start_date}",
     "结束日期": "{end_date}",
-    "日程特点": "简要描述整体日程特点",
-    "常规活动": ["活动1", "活动2", ...],
-    "主要互动角色": ["角色1", "角色2", ...],
-    "常去地点": ["地点1", "地点2", ...]
+    "日程特点": "描述这段时间的整体特点和主要故事线",
+    "情感主线": "这段时间的主要情感发展线",
+    "常规活动": ["教学工作", "天文研究", "学术交流", "..."],
+    "主要互动角色": ["角色1", "角色2", "..."],
+    "常去地点": ["地点1", "地点2", "..."]
   }},
+  "weekly_plan": "{protagonist}对这{total_days}天的整体规划和期望，包括工作目标、想要完成的事情、期待的发展等",
   "daily_schedules": [
     {{
       "date": "YYYY-MM-DD",
@@ -578,28 +650,46 @@ class ScheduleGenerateNode(BaseNode):
       "weekday_name": "周几",
       "is_holiday": true/false,
       "holiday_name": "节日名称（如果是节假日）",
-      "weather": "天气情况",
-      "daily_theme": "当日主题",
+      "weather": "天气情况和对心情的影响",
+      "daily_theme": "当日的核心主题或故事重点",
+      "daily_plan": "{protagonist}早晨对这一天的计划和期望，基于他现有的认知",
       "time_slots": [
         {{
           "slot_name": "夜间",
           "start_time": "23:00",
           "end_time": "06:00",
-          "assigned_character": "角色名称",
-          "activity_type": "活动类型",
-          "location": "地点",
-          "story_content": "详细内容描述"
+          "assigned_character": "{protagonist}",
+          "activity_type": "休息/特殊事件",
+          "location": "具体地点",
+          "story_content": "详细的故事描述，包含环境、心理活动、具体事件、对话内容（如果有其他角色）等，至少150字"
         }},
-        // ... 其他时间段
+        {{
+          "slot_name": "上午",
+          "start_time": "06:00",
+          "end_time": "11:00",
+          "assigned_character": "主要互动角色",
+          "activity_type": "工作/学术/社交",
+          "location": "具体地点",
+          "story_content": "详细的故事描述，重点描述与角色的互动，包含具体对话、情感变化、环境细节等，至少200字"
+        }},
+        // ... 其他时间段，每个都要有丰富的故事内容
       ],
-      "daily_summary": "当日总结"
+      "daily_summary": "一天结束时对实际发生事件的总结"
     }},
     // ... 其他日期
   ]
 }}
 ```
 
-请确保输出结果是完整有效的JSON格式。生成的内容需要丰富详实，考虑主角的身份特点和日常习惯，以及与不同角色的互动方式。
+# 重要提醒
+1. 每个时间段的story_content必须丰富详实，像小说片段一样生动
+2. 角色对话要符合各自的性格特点，有真实感
+3. 情节要有起伏，不能每天都平淡无奇
+4. 要体现{protagonist}的职业特色和个人特点
+5. daily_plan是计划，daily_summary是实际发生的总结，两者可以不同
+6. 确保JSON格式完全正确，可以被程序解析
+
+请开始生成这个充满故事性的详细日程安排。
 """
         
         # 流式调用LLM
@@ -688,7 +778,7 @@ class ScheduleGenerateNode(BaseNode):
                 schedule_data = parsed_result
                 daily_schedules = schedule_data.get('daily_schedules', [])
                 logger.info(f"成功解析日程JSON结果，包含 {len(daily_schedules)} 天")
-                
+                logger.info(f"日程数据: {schedule_data}")
                 if workflow_chat:
                     await workflow_chat.add_node_message(
                         "日程生成",
@@ -791,16 +881,35 @@ class ScheduleDatabaseSaveNode(BaseNode):
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             schedule_id = f"SCHEDULE_{timestamp}"
             
-            # 构建保存数据
-            schedule_data = {
-                'schedule_id': schedule_id,
-                'schedule_name': f"{protagonist}的{schedule_type}日程_{start_date}",
-                'start_date': start_date,
-                'end_date': end_date,
-                'total_days': total_days,
-                'description': f"为{protagonist}生成的{total_days}天详细日程安排",
-                'daily_schedules': daily_schedules
-            }
+            # 构建保存数据 - 需要从schedule_result中提取正确的数据
+            if isinstance(schedule_result, dict) and 'daily_schedules' in schedule_result:
+                # 从解析好的JSON数据中获取
+                daily_schedules = schedule_result.get('daily_schedules', [])
+                schedule_summary = schedule_result.get('schedule_summary', {})
+                weekly_plan = schedule_result.get('weekly_plan', '')
+                
+                schedule_data = {
+                    'schedule_id': schedule_id,
+                    'schedule_name': f"{protagonist}的{schedule_type}日程_{start_date}",
+                    'start_date': start_date,
+                    'end_date': end_date,
+                    'total_days': total_days,
+                    'description': schedule_summary.get('日程特点', f"为{protagonist}生成的{total_days}天详细日程安排"),
+                    'weekly_plan': weekly_plan,
+                    'daily_schedules': daily_schedules
+                }
+            else:
+                # 后备方案：使用基础数据
+                schedule_data = {
+                    'schedule_id': schedule_id,
+                    'schedule_name': f"{protagonist}的{schedule_type}日程_{start_date}",
+                    'start_date': start_date,
+                    'end_date': end_date,
+                    'total_days': total_days,
+                    'description': f"为{protagonist}生成的{total_days}天详细日程安排",
+                    'weekly_plan': '',
+                    'daily_schedules': daily_schedules
+                }
             
             # 保存到数据库
             success = schedule_manager.save_schedule_data(schedule_data, config)

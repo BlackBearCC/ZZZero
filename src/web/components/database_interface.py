@@ -18,7 +18,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from database import story_manager, character_manager, database_manager
+from database import story_manager, character_manager, schedule_manager, database_manager
 
 logger = logging.getLogger(__name__)
 
@@ -28,13 +28,14 @@ class DatabaseInterface:
     def __init__(self):
         self.story_manager = story_manager
         self.character_manager = character_manager
+        self.schedule_manager = schedule_manager
         self.database_manager = database_manager
     
     def create_interface(self) -> gr.Blocks:
         """创建数据库管理界面"""
         with gr.Blocks(title="数据库管理", theme=gr.themes.Soft()) as interface:
             gr.Markdown("# 📊 数据库管理中心")
-            gr.Markdown("管理剧情数据、角色信息、查看统计信息和执行数据库操作")
+            gr.Markdown("管理剧情数据、角色信息、日程安排、查看统计信息和执行数据库操作")
             
             with gr.Tabs():
                 # 剧情管理标签页
@@ -44,6 +45,10 @@ class DatabaseInterface:
                 # 角色管理标签页
                 with gr.Tab("👥 角色管理"):
                     self._create_character_management_tab()
+                
+                # 日程管理标签页
+                with gr.Tab("📅 日程管理"):
+                    self._create_schedule_management_tab()
                 
                 # 数据库操作标签页
                 with gr.Tab("🛠️ 数据库操作"):
@@ -220,6 +225,104 @@ class DatabaseInterface:
             fn=self._load_character_stories,
             inputs=[selected_character_name],
             outputs=[character_stories_table]
+        )
+    
+    def _create_schedule_management_tab(self):
+        """创建日程管理标签页"""
+        with gr.Row():
+            with gr.Column(scale=1):
+                gr.Markdown("## 筛选条件")
+                
+                # 筛选条件
+                date_filter = gr.Textbox(
+                    label="按日期筛选",
+                    placeholder="YYYY-MM-DD",
+                    info="按日期过滤日程"
+                )
+                
+                character_filter = gr.Textbox(
+                    label="按角色筛选",
+                    placeholder="输入角色名称",
+                    info="显示包含该角色的所有日程"
+                )
+                
+                date_range_filter = gr.Radio(
+                    label="日期范围",
+                    choices=["全部", "今天", "本周", "本月", "未来7天"],
+                    value="全部"
+                )
+                
+                # 操作按钮
+                search_btn = gr.Button("🔍 搜索日程", variant="primary")
+                refresh_btn = gr.Button("🔄 刷新列表")
+                export_btn = gr.Button("📤 导出CSV")
+                
+            with gr.Column(scale=3):
+                gr.Markdown("## 日程列表")
+                
+                # 日程列表表格
+                schedule_table = gr.Dataframe(
+                    headers=["日程ID", "日程名称", "日期范围", "主角", "类型", "涉及角色", "总天数", "实际天数", "创建时间"],
+                    datatype=["str", "str", "str", "str", "str", "str", "number", "number", "str"],
+                    interactive=False,
+                    wrap=True
+                )
+                
+                # 选中日程的详细信息
+                with gr.Accordion("📖 日程详情", open=False):
+                    selected_schedule_info = gr.Markdown("请先选择一个日程")
+                    
+                    # 日程详细活动表
+                    activities_table = gr.Dataframe(
+                        headers=["日期时间", "时间段", "活动内容", "地点", "参与角色", "活动类型", "重要度"],
+                        datatype=["str", "str", "str", "str", "str", "str", "number"],
+                        interactive=False,
+                        wrap=True
+                    )
+                
+                # 操作区域
+                with gr.Row():
+                    selected_schedule_id = gr.Textbox(
+                        label="选中的日程ID",
+                        placeholder="点击表格行选择日程",
+                        interactive=False
+                    )
+                    delete_schedule_btn = gr.Button("🗑️ 删除日程", variant="stop")
+                    view_activities_btn = gr.Button("👁️ 查看详细活动", variant="secondary")
+        
+        # 事件绑定
+        search_btn.click(
+            fn=self._search_schedules,
+            inputs=[date_filter, character_filter, date_range_filter],
+            outputs=[schedule_table]
+        )
+        
+        refresh_btn.click(
+            fn=self._load_all_schedules,
+            outputs=[schedule_table]
+        )
+        
+        schedule_table.select(
+            fn=self._on_schedule_selected,
+            outputs=[selected_schedule_id, selected_schedule_info, activities_table]
+        )
+        
+        view_activities_btn.click(
+            fn=self._load_schedule_activities,
+            inputs=[selected_schedule_id],
+            outputs=[activities_table]
+        )
+        
+        delete_schedule_btn.click(
+            fn=self._delete_schedule,
+            inputs=[selected_schedule_id],
+            outputs=[schedule_table, selected_schedule_info, activities_table]
+        )
+        
+        export_btn.click(
+            fn=self._export_schedules,
+            inputs=[date_filter, character_filter, date_range_filter],
+            outputs=[gr.File()]
         )
     
     def _create_database_operations_tab(self):
@@ -718,6 +821,229 @@ class DatabaseInterface:
             logger.error(f"获取统计信息失败: {e}")
             error_msg = f"❌ 获取统计信息失败: {str(e)}"
             return error_msg, error_msg, pd.DataFrame(), error_msg
+
+    def _load_all_schedules(self) -> pd.DataFrame:
+        """加载所有日程"""
+        try:
+            schedules = self.schedule_manager.get_all_schedules()
+            
+            data = []
+            for schedule in schedules:
+                data.append([
+                    schedule['schedule_id'],
+                    schedule.get('schedule_name', ''),
+                    f"{schedule['start_date']} - {schedule['end_date']}",
+                    schedule.get('protagonist', ''),
+                    schedule.get('schedule_type', ''),
+                    ', '.join(schedule.get('characters', [])),
+                    schedule['total_days'],
+                    schedule['actual_days'],
+                    schedule['created_at'][:19] if schedule.get('created_at') else ''
+                ])
+            
+            return pd.DataFrame(data, columns=["日程ID", "日程名称", "日期范围", "主角", "类型", "涉及角色", "总天数", "实际天数", "创建时间"])
+            
+        except Exception as e:
+            logger.error(f"加载日程列表失败: {e}")
+            return pd.DataFrame(columns=["日程ID", "日程名称", "日期范围", "主角", "类型", "涉及角色", "总天数", "实际天数", "创建时间"])
+
+    def _search_schedules(self, date_filter: str, character_filter: str, date_range_filter: str) -> pd.DataFrame:
+        """搜索日程"""
+        try:
+            filters = {}
+            
+            # 处理日期筛选
+            if date_filter.strip():
+                filters['date'] = date_filter.strip()
+            
+            # 处理角色筛选
+            if character_filter.strip():
+                filters['character'] = character_filter.strip()
+            
+            # 处理日期范围
+            if date_range_filter != "全部":
+                from datetime import datetime, timedelta
+                today = datetime.now().date()
+                
+                if date_range_filter == "今天":
+                    filters['date_range'] = {
+                        'start': today.strftime('%Y-%m-%d'),
+                        'end': today.strftime('%Y-%m-%d')
+                    }
+                elif date_range_filter == "本周":
+                    start_of_week = today - timedelta(days=today.weekday())
+                    end_of_week = start_of_week + timedelta(days=6)
+                    filters['date_range'] = {
+                        'start': start_of_week.strftime('%Y-%m-%d'),
+                        'end': end_of_week.strftime('%Y-%m-%d')
+                    }
+                elif date_range_filter == "本月":
+                    start_of_month = today.replace(day=1)
+                    if today.month == 12:
+                        end_of_month = today.replace(year=today.year+1, month=1, day=1) - timedelta(days=1)
+                    else:
+                        end_of_month = today.replace(month=today.month+1, day=1) - timedelta(days=1)
+                    filters['date_range'] = {
+                        'start': start_of_month.strftime('%Y-%m-%d'),
+                        'end': end_of_month.strftime('%Y-%m-%d')
+                    }
+                elif date_range_filter == "未来7天":
+                    filters['date_range'] = {
+                        'start': today.strftime('%Y-%m-%d'),
+                        'end': (today + timedelta(days=6)).strftime('%Y-%m-%d')
+                    }
+            
+            schedules = self.schedule_manager.get_schedules_by_filter(filters)
+            
+            data = []
+            for schedule in schedules:
+                # 使用与_load_all_schedules相同的格式
+                data.append([
+                    schedule['schedule_id'],
+                    schedule.get('schedule_name', ''),
+                    f"{schedule['start_date']} - {schedule['end_date']}",
+                    schedule.get('protagonist', ''),
+                    schedule.get('schedule_type', ''),
+                    ', '.join(schedule.get('characters', [])),
+                    schedule['total_days'],
+                    schedule.get('actual_days', schedule['total_days']),
+                    schedule['created_at'][:19] if schedule.get('created_at') else ''
+                ])
+            
+            return pd.DataFrame(data, columns=["日程ID", "日程名称", "日期范围", "主角", "类型", "涉及角色", "总天数", "实际天数", "创建时间"])
+            
+        except Exception as e:
+            logger.error(f"搜索日程失败: {e}")
+            return pd.DataFrame(columns=["日程ID", "日程名称", "日期范围", "主角", "类型", "涉及角色", "总天数", "实际天数", "创建时间"])
+
+    def _on_schedule_selected(self, evt: gr.SelectData) -> Tuple[str, str, pd.DataFrame]:
+        """处理日程选择事件"""
+        try:
+            if evt is None or evt.index is None:
+                return "", "请先选择一个日程", pd.DataFrame()
+            
+            # 获取选中行的索引
+            row_index = evt.index[0] if isinstance(evt.index, (list, tuple)) else evt.index
+            
+            # 重新获取数据以确保索引对应正确
+            schedules = self.schedule_manager.get_all_schedules()
+            
+            if row_index >= len(schedules):
+                return "", "选择的行索引超出范围", pd.DataFrame()
+                
+            schedule = schedules[row_index]
+            schedule_id = schedule['schedule_id']
+            
+            # 构建详细信息显示
+            schedule_info = f"""### 📅 日程详情
+
+**日程ID**: {schedule['schedule_id']}
+**日程名称**: {schedule['schedule_name']}
+**日期范围**: {schedule['start_date']} - {schedule['end_date']}
+**总天数**: {schedule['total_days']}天
+**实际天数**: {schedule['actual_days']}天
+**主角**: {schedule['protagonist']}
+**涉及角色**: {', '.join(schedule.get('characters', []))}
+**日程类型**: {schedule.get('schedule_type', '未指定')}
+
+**描述**:
+{schedule.get('description', '暂无描述')}
+
+**创建时间**: {schedule.get('created_at', '未知')}
+"""
+            
+            # 获取活动信息
+            activities = self.schedule_manager.get_schedule_activities(schedule_id)
+            activities_data = []
+            
+            for activity in activities:
+                activities_data.append([
+                    activity.get('time', ''),
+                    activity.get('slot_name', ''),
+                    activity.get('description', '')[:100] + ('...' if len(activity.get('description', '')) > 100 else ''),
+                    activity.get('location', ''),
+                    ', '.join(activity.get('participants', [])),
+                    activity.get('activity_type', ''),
+                    activity.get('importance_level', 3)
+                ])
+            
+            activities_df = pd.DataFrame(activities_data, columns=["日期时间", "时间段", "活动内容", "地点", "参与角色", "活动类型", "重要度"])
+            
+            return schedule_id, schedule_info, activities_df
+            
+        except Exception as e:
+            logger.error(f"选择日程失败: {e}")
+            return "", f"处理日程选择失败: {str(e)}", pd.DataFrame()
+
+    def _load_schedule_activities(self, schedule_id: str) -> pd.DataFrame:
+        """加载日程活动"""
+        try:
+            if not schedule_id:
+                return pd.DataFrame(columns=["日期时间", "时间段", "活动内容", "地点", "参与角色", "活动类型", "重要度"])
+            
+            activities = self.schedule_manager.get_schedule_activities(schedule_id)
+            data = []
+            
+            for activity in activities:
+                data.append([
+                    activity.get('time', ''),
+                    activity.get('slot_name', ''),
+                    activity.get('description', '')[:100] + ('...' if len(activity.get('description', '')) > 100 else ''),
+                    activity.get('location', ''),
+                    ', '.join(activity.get('participants', [])),
+                    activity.get('activity_type', ''),
+                    activity.get('importance_level', 3)
+                ])
+            
+            return pd.DataFrame(data, columns=["日期时间", "时间段", "活动内容", "地点", "参与角色", "活动类型", "重要度"])
+            
+        except Exception as e:
+            logger.error(f"加载日程活动失败: {e}")
+            return pd.DataFrame(columns=["日期时间", "时间段", "活动内容", "地点", "参与角色", "活动类型", "重要度"])
+
+    def _delete_schedule(self, schedule_id: str) -> Tuple[pd.DataFrame, str, pd.DataFrame]:
+        """删除日程"""
+        try:
+            if not schedule_id:
+                return self._load_all_schedules(), "请先选择一个日程", pd.DataFrame()
+            
+            success = self.schedule_manager.delete_schedule(schedule_id)
+            
+            if success:
+                return self._load_all_schedules(), f"已成功删除日程 {schedule_id}", pd.DataFrame()
+            else:
+                return self._load_all_schedules(), f"删除日程 {schedule_id} 失败", pd.DataFrame()
+            
+        except Exception as e:
+            logger.error(f"删除日程失败: {e}")
+            return self._load_all_schedules(), f"删除日程失败: {str(e)}", pd.DataFrame()
+
+    def _export_schedules(self, date_filter: str, character_filter: str, date_range_filter: str) -> str:
+        """导出日程为CSV"""
+        try:
+            # 先获取过滤后的日程数据
+            df = self._search_schedules(date_filter, character_filter, date_range_filter)
+            
+            # 确保数据存在
+            if df.empty:
+                return None
+            
+            # 创建输出目录
+            export_dir = os.path.join(project_root, "workspace", "exports")
+            os.makedirs(export_dir, exist_ok=True)
+            
+            # 创建导出文件名
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            export_path = os.path.join(export_dir, f"schedules_export_{timestamp}.csv")
+            
+            # 导出为CSV
+            df.to_csv(export_path, index=False, encoding='utf-8-sig')
+            
+            return export_path
+            
+        except Exception as e:
+            logger.error(f"导出日程失败: {e}")
+            return None
 
 
 # 全局数据库界面实例

@@ -33,6 +33,7 @@ class ScheduleManager(DatabaseManager):
             end_date TEXT NOT NULL,    -- YYYY-MM-DD格式
             total_days INTEGER NOT NULL,
             description TEXT,
+            weekly_plan TEXT,  -- 周期计划
             config_data TEXT,  -- JSON格式存储配置信息
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -50,7 +51,8 @@ class ScheduleManager(DatabaseManager):
             lunar_date TEXT,             -- 农历日期
             weather_info TEXT,           -- 天气信息（可选）
             daily_theme TEXT,            -- 当日主题
-            daily_summary TEXT,          -- 当日总结
+            daily_plan TEXT,             -- 每日计划（角色预计要做什么）
+            daily_summary TEXT,          -- 当日总结（实际发生的事情）
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (schedule_id) REFERENCES schedules(schedule_id)
         )""")
@@ -111,7 +113,32 @@ class ScheduleManager(DatabaseManager):
         self.execute_query("CREATE INDEX IF NOT EXISTS idx_time_slots_character ON time_slots(assigned_character)")
         self.execute_query("CREATE INDEX IF NOT EXISTS idx_holidays_date ON holidays(holiday_date)")
         
+        # 添加新字段（如果不存在）
+        self._add_missing_columns()
+        
         logger.info("日程数据库表结构初始化完成")
+    
+    def _add_missing_columns(self):
+        """添加缺失的列（用于数据库升级）"""
+        try:
+            # 添加weekly_plan字段到schedules表
+            try:
+                self.execute_query("ALTER TABLE schedules ADD COLUMN weekly_plan TEXT")
+                logger.info("已添加weekly_plan字段到schedules表")
+            except Exception:
+                # 字段可能已存在，忽略错误
+                pass
+            
+            # 添加daily_plan字段到schedule_days表
+            try:
+                self.execute_query("ALTER TABLE schedule_days ADD COLUMN daily_plan TEXT")
+                logger.info("已添加daily_plan字段到schedule_days表")
+            except Exception:
+                # 字段可能已存在，忽略错误
+                pass
+                
+        except Exception as e:
+            logger.warning(f"添加新字段时出现问题（可能字段已存在）: {e}")
     
     def save_schedule_data(self, schedule_data: Dict[str, Any], config: Dict[str, Any]) -> bool:
         """保存完整的日程数据到数据库"""
@@ -132,6 +159,7 @@ class ScheduleManager(DatabaseManager):
                 'end_date': end_date,
                 'total_days': total_days,
                 'description': schedule_data.get('description', ''),
+                'weekly_plan': schedule_data.get('weekly_plan', ''),
                 'config_data': json.dumps(config, ensure_ascii=False),
                 'created_at': datetime.now().isoformat(),
                 'updated_at': datetime.now().isoformat()
@@ -158,17 +186,27 @@ class ScheduleManager(DatabaseManager):
     def _save_daily_schedule(self, schedule_id: str, day_data: Dict[str, Any]):
         """保存单日安排数据"""
         try:
+            # 计算weekday（如果没有提供）
+            weekday = day_data.get('weekday', 0)
+            if weekday == 0 and day_data.get('date'):
+                try:
+                    date_obj = datetime.strptime(day_data['date'], '%Y-%m-%d')
+                    weekday = date_obj.weekday()  # 0=周一，6=周日
+                except:
+                    weekday = 0
+            
             # 保存日程详情
             day_record = {
                 'schedule_id': schedule_id,
                 'day_date': day_data.get('date', ''),
                 'day_number': day_data.get('day_number', 0),
-                'weekday': day_data.get('weekday', 0),
+                'weekday': weekday,
                 'is_holiday': 1 if day_data.get('is_holiday', False) else 0,
                 'holiday_name': day_data.get('holiday_name', ''),
                 'lunar_date': day_data.get('lunar_date', ''),
-                'weather_info': day_data.get('weather_info', ''),
+                'weather_info': day_data.get('weather', ''),  # 注意：可能是'weather'而不是'weather_info'
                 'daily_theme': day_data.get('daily_theme', ''),
+                'daily_plan': day_data.get('daily_plan', ''),
                 'daily_summary': day_data.get('daily_summary', ''),
                 'created_at': datetime.now().isoformat()
             }
@@ -177,11 +215,14 @@ class ScheduleManager(DatabaseManager):
             
             # 保存时间段安排
             time_slots = day_data.get('time_slots', [])
-            for slot_data in time_slots:
+            for i, slot_data in enumerate(time_slots):
+                # 自动计算slot_number（如果没有提供）
+                slot_number = slot_data.get('slot_number', i + 1)
+                
                 slot_record = {
                     'schedule_id': schedule_id,
                     'day_date': day_data.get('date', ''),
-                    'slot_number': slot_data.get('slot_number', 0),
+                    'slot_number': slot_number,
                     'slot_name': slot_data.get('slot_name', ''),
                     'start_time': slot_data.get('start_time', ''),
                     'end_time': slot_data.get('end_time', ''),
@@ -200,6 +241,8 @@ class ScheduleManager(DatabaseManager):
                 
         except Exception as e:
             logger.error(f"保存单日安排失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     def _update_character_assignments(self, schedule_id: str):
         """更新角色安排统计"""
@@ -331,6 +374,7 @@ class ScheduleManager(DatabaseManager):
             where_conditions = []
             params = []
             
+            # 基础条件筛选
             if filters.get('protagonist'):
                 where_conditions.append('protagonist = ?')
                 params.append(filters['protagonist'])
@@ -347,17 +391,70 @@ class ScheduleManager(DatabaseManager):
                 where_conditions.append('end_date <= ?')
                 params.append(filters['end_date'])
             
+            # 处理单个日期筛选
+            if filters.get('date'):
+                where_conditions.append('(start_date <= ? AND end_date >= ?)')
+                params.extend([filters['date'], filters['date']])
+            
+            # 处理日期范围筛选
+            if filters.get('date_range'):
+                date_range = filters['date_range']
+                where_conditions.append('(start_date <= ? AND end_date >= ?)')
+                params.extend([date_range['end'], date_range['start']])
+            
             where_clause = ' AND '.join(where_conditions) if where_conditions else '1=1'
             
+            # 主查询，获取基本信息和统计
             sql = f"""
-                SELECT * FROM schedules 
+                SELECT s.*, 
+                    (SELECT COUNT(DISTINCT day_date) FROM schedule_days WHERE schedule_id = s.schedule_id) as actual_days,
+                    (SELECT COUNT(*) FROM time_slots WHERE schedule_id = s.schedule_id) as slot_count,
+                    (SELECT GROUP_CONCAT(DISTINCT assigned_character) FROM time_slots 
+                     WHERE schedule_id = s.schedule_id AND assigned_character != '') as characters,
+                    (SELECT COUNT(DISTINCT assigned_character) FROM time_slots 
+                     WHERE schedule_id = s.schedule_id AND assigned_character != '') as character_count
+                FROM schedules s
                 WHERE {where_clause}
                 ORDER BY created_at DESC 
                 LIMIT ?
             """
             
             params.append(limit)
-            return self.execute_query(sql, params)
+            schedules = self.execute_query(sql, params)
+            result = []
+            
+            for schedule in schedules:
+                # 解析角色列表
+                characters = []
+                if schedule.get('characters'):
+                    characters = schedule['characters'].split(',')
+                
+                # 处理按角色筛选（如果有）
+                if filters.get('character'):
+                    character_filter = filters['character'].strip()
+                    # 检查是否包含指定角色
+                    if not any(character_filter.lower() in char.lower() for char in characters):
+                        continue
+                
+                # 构建返回记录
+                result.append({
+                    'schedule_id': schedule['schedule_id'],
+                    'schedule_name': schedule['schedule_name'],
+                    'start_date': schedule['start_date'],
+                    'end_date': schedule['end_date'],
+                    'protagonist': schedule['protagonist'],
+                    'schedule_type': schedule['schedule_type'],
+                    'total_days': schedule['total_days'],
+                    'actual_days': schedule['actual_days'],
+                    'time_slots': schedule['slot_count'],
+                    'characters': characters,
+                    'character_count': schedule['character_count'],
+                    'description': schedule.get('description', ''),
+                    'weekly_plan': schedule.get('weekly_plan', ''),
+                    'created_at': schedule['created_at']
+                })
+            
+            return result
             
         except Exception as e:
             logger.error(f"筛选日程失败: {e}")
@@ -569,3 +666,109 @@ class ScheduleManager(DatabaseManager):
             ])
         
         return output.getvalue()
+
+    def get_all_schedules(self) -> List[Dict[str, Any]]:
+        """获取所有日程的基本信息"""
+        try:
+            sql = """
+                SELECT s.*, 
+                    (SELECT COUNT(DISTINCT day_date) FROM schedule_days WHERE schedule_id = s.schedule_id) as actual_days,
+                    (SELECT COUNT(*) FROM time_slots WHERE schedule_id = s.schedule_id) as slot_count,
+                    (SELECT GROUP_CONCAT(DISTINCT assigned_character) FROM time_slots 
+                     WHERE schedule_id = s.schedule_id AND assigned_character != '') as characters,
+                    (SELECT COUNT(DISTINCT assigned_character) FROM time_slots 
+                     WHERE schedule_id = s.schedule_id AND assigned_character != '') as character_count
+                FROM schedules s
+                ORDER BY created_at DESC
+                LIMIT 100
+            """
+            
+            schedules = self.execute_query(sql)
+            result = []
+            
+            for schedule in schedules:
+                # 解析角色列表
+                characters = []
+                if schedule.get('characters'):
+                    characters = schedule['characters'].split(',')
+                
+                # 构建简化的返回记录
+                result.append({
+                    'schedule_id': schedule['schedule_id'],
+                    'schedule_name': schedule['schedule_name'],
+                    'start_date': schedule['start_date'],
+                    'end_date': schedule['end_date'],
+                    'protagonist': schedule['protagonist'],
+                    'schedule_type': schedule['schedule_type'],
+                    'total_days': schedule['total_days'],
+                    'actual_days': schedule['actual_days'],
+                    'time_slots': schedule['slot_count'],
+                    'characters': characters,
+                    'character_count': schedule['character_count'],
+                    'description': schedule.get('description', ''),
+                    'created_at': schedule['created_at']
+                })
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"获取所有日程失败: {e}")
+            return []
+
+    def get_schedule_activities(self, schedule_id: str) -> List[Dict[str, Any]]:
+        """获取指定日程的所有活动"""
+        try:
+            sql = """
+                SELECT 
+                    ts.id,
+                    sd.day_date,
+                    ts.slot_name,
+                    sd.day_date || ' ' || ts.slot_name as time,
+                    ts.story_content as description,
+                    ts.location,
+                    ts.assigned_character as main_participant,
+                    ts.activity_type,
+                    ts.importance_level,
+                    ts.mood_tone,
+                    ts.story_id,
+                    ts.start_time,
+                    ts.end_time
+                FROM time_slots ts
+                JOIN schedule_days sd ON ts.day_date = sd.day_date AND ts.schedule_id = sd.schedule_id
+                WHERE ts.schedule_id = ?
+                ORDER BY sd.day_date, ts.slot_number
+            """
+            
+            activities = self.execute_query(sql, (schedule_id,))
+            result = []
+            
+            for activity in activities:
+                # 获取可能的其他参与者（如果有的话）
+                participants = []
+                if activity['main_participant']:
+                    participants = [activity['main_participant']]
+                
+                # 获取可能的故事引用（如果有的话）
+                story_reference = ""
+                if activity['story_id']:
+                    story_reference = f"关联故事ID: {activity['story_id']}"
+                
+                result.append({
+                    'time': activity['time'],  # 日期+时间段
+                    'slot_name': activity['slot_name'],  # 时间段名称
+                    'description': activity['description'],  # 活动描述
+                    'location': activity['location'],  # 地点
+                    'participants': participants,  # 参与者
+                    'activity_type': activity['activity_type'],  # 活动类型
+                    'importance_level': activity['importance_level'],  # 重要度
+                    'mood': activity['mood_tone'],  # 情感基调
+                    'story_reference': story_reference,  # 故事引用
+                    'start_time': activity['start_time'],  # 开始时间
+                    'end_time': activity['end_time']  # 结束时间
+                })
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"获取日程活动失败: {e}")
+            return []

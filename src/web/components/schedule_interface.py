@@ -189,12 +189,19 @@ class ScheduleInterface:
             config_components.get('mood_variety', gr.Checkbox(value=True)),
             config_components.get('time_slots_config', {}),
             config_components.get('date_picker_start'),
-            config_components.get('date_picker_end'),
-            config_components['generate_btn']
+            config_components.get('date_picker_end')
         ]
         
         # 绑定事件
         self._bind_config_events(*components_list)
+        
+        # 绑定启动工作流按钮 - 确保工作流聊天界面的按钮能正确启动日程生成
+        workflow_components['start_workflow_btn'].click(
+            fn=self._start_schedule_generation,
+            inputs=components_list[:15],  # 传递配置组件，不包含日期选择器
+            outputs=[],
+            api_name="start_schedule_generation"
+        )
         
         return all_components
     
@@ -248,140 +255,115 @@ class ScheduleInterface:
                     components['date_picker_start'] = Calendar(
                         label="选择开始日期",
                         value=datetime.now().strftime('%Y-%m-%d'),  # 转换为字符串格式
-                        info="点击选择开始日期",
-                        type="string"  # 使用字符串类型
+                        info="单击选择开始日期"
                     )
                     components['date_picker_end'] = Calendar(
-                        label="选择结束日期",
-                        value=(datetime.now() + timedelta(days=6)).strftime('%Y-%m-%d'),  # 转换为字符串格式
-                        info="点击选择结束日期",
-                        type="string"  # 使用字符串类型
+                        label="选择结束日期", 
+                        value=(datetime.now() + timedelta(days=6)).strftime('%Y-%m-%d'),
+                        info="单击选择结束日期"
                     )
-                
-                # 总天数（自动计算）
+                    
+                # 天数显示
                 components['total_days'] = gr.Number(
                     label="总天数",
-                    value=7,
-                    minimum=1,
-                    maximum=366,  # 支持最多一年的日程规划
-                    info="根据日期范围自动计算，最多支持366天"
-                )
-            
-            # 日历配置
-            with gr.Group():
-                gr.Markdown("### 📅 日历设置")
-                
-                components['include_holidays'] = gr.Checkbox(
-                    label="包含节假日",
-                    value=True,
-                    info="在日程中标记和考虑节假日"
+                    value=self.current_config['total_days'],
+                    precision=0,
+                    interactive=False
                 )
                 
-                components['include_lunar'] = gr.Checkbox(
-                    label="包含农历",
-                    value=True,
-                    info="显示农历日期信息"
-                )
-                
-                # 简化的日历显示
+                # 日历可视化
                 components['calendar_display'] = gr.HTML(
                     value=self._generate_calendar_html(),
-                    label="日历预览"
+                    label="日历视图"
                 )
             
-            # 角色选择
-            with gr.Group():
-                gr.Markdown("### 👥 角色配置")
-                
-                # 获取角色列表
-                characters_list = self._get_characters_options()
+            # 角色设置
+            with gr.Accordion("👥 角色设定", open=True):
+                # 角色选择
                 components['selected_characters'] = gr.CheckboxGroup(
-                    label="选择参与角色",
-                    choices=characters_list,
-                    value=[characters_list[0]] if characters_list else [],  # 默认选中第一个角色
-                    info="选择将在日程中出现的角色"
+                    label="选择互动角色",
+                    choices=self._get_characters_options(),
+                    value=[],
+                    info="选择参与日程的其他角色(主角方知衡已自动包含)"
                 )
                 
+                # 角色分布策略
                 components['character_distribution'] = gr.Radio(
-                    label="角色分配策略",
-                    choices=[
-                        ("平衡分配", "balanced"),
-                        ("随机分配", "random"),
-                        ("加权分配", "weighted")
-                    ],
+                    label="角色出现频率",
+                    choices=["balanced", "random", "weighted"],
                     value="balanced",
-                    info="决定角色在时间段中的分配方式"
+                    info="角色如何分布在日程中"
                 )
             
-            # 地点选择
-            with gr.Group():
-                gr.Markdown("### 🏢 地点配置")
-                
-                # 获取地点列表
-                locations_list = self._get_locations_options()
+            # 地点设置
+            with gr.Accordion("🏢 地点设定", open=True):
+                # 地点选择
                 components['selected_locations'] = gr.CheckboxGroup(
                     label="选择活动地点",
-                    choices=locations_list,
-                    value=[locations_list[0]] if locations_list else [],  # 默认选中第一个地点
-                    info="选择日程中的活动场所"
+                    choices=self._get_locations_options(),
+                    value=[],
+                    info="选择可能出现在日程中的地点"
                 )
                 
+                # 地点多样性
                 components['location_variety'] = gr.Checkbox(
                     label="地点多样性",
                     value=True,
-                    info="确保不同时间段使用不同地点"
+                    info="启用后，会确保日程中使用多种不同地点"
                 )
             
-            # 剧情配置
-            with gr.Group():
-                gr.Markdown("### 📚 剧情设置")
-                
-                # 获取剧情列表
-                stories_list = self._get_stories_options()
+            # 剧情设置
+            with gr.Accordion("📚 剧情集成", open=True):
+                # 剧情选择
                 components['selected_stories'] = gr.CheckboxGroup(
-                    label="选择剧情内容",
-                    choices=stories_list,
+                    label="选择要集成的剧情",
+                    choices=self._get_stories_options(),
                     value=[],
-                    info="选择要整合到日程中的剧情"
+                    info="选择要在日程中引用的剧情(可选)"
                 )
                 
+                # 剧情集成程度
                 components['story_integration'] = gr.Radio(
-                    label="剧情整合程度",
-                    choices=[
-                        ("最少整合", "minimal"),
-                        ("适度整合", "moderate"),
-                        ("深度整合", "intensive")
-                    ],
+                    label="剧情集成程度",
+                    choices=["minimal", "moderate", "intensive"],
                     value="moderate",
-                    info="决定剧情在日程中的分布密度"
+                    info="剧情如何融入日程安排"
                 )
             
             # 高级设置
-            with gr.Group():
-                gr.Markdown("### 🔧 高级设置")
-                
-                components['mood_variety'] = gr.Checkbox(
-                    label="情感多样性",
+            with gr.Accordion("⚙️ 高级设置", open=False):
+                # 节假日设置
+                components['include_holidays'] = gr.Checkbox(
+                    label="包含节假日信息",
                     value=True,
-                    info="确保不同时间段有不同的情感基调"
+                    info="为节假日生成特殊活动"
                 )
                 
-                # 时间段配置
-                with gr.Accordion("时间段设置", open=False):
+                # 农历设置
+                components['include_lunar'] = gr.Checkbox(
+                    label="包含农历信息",
+                    value=True,
+                    info="考虑农历节日(如春节、中秋)"
+                )
+                
+                # 心情多样性
+                components['mood_variety'] = gr.Checkbox(
+                    label="心情多样性",
+                    value=True,
+                    info="生成不同心情的活动"
+                )
+                
+                # 时间段配置 - 高级功能，默认隐藏
+                with gr.Row(visible=False) as time_slots_row:
                     components['time_slots_config'] = gr.JSON(
+                        value=self.current_config['time_slots_config'],
                         label="时间段配置",
-                        value=self.current_config['time_slots_config']
+                        visible=False
                     )
             
-            # 生成按钮 - 设置为明显的主要动作按钮
-            with gr.Row():
-                components['generate_btn'] = gr.Button(
-                    "🚀 启动工作流",
-                    variant="primary",
-                    size="lg",
-                    scale=2,  # 加大按钮
-                    min_width=300  # 最小宽度确保足够明显
-                )
+            # 生成按钮已移除，仅使用工作流聊天区域的启动按钮
+            gr.Markdown("### 📝 操作提示")
+            gr.Markdown("请在配置完成后，使用右侧的「🚀 启动工作流」按钮开始生成")
         
         return components
     
@@ -578,23 +560,25 @@ class ScheduleInterface:
     
     def _bind_config_events(self, *components):
         """绑定配置面板事件"""
-        start_date, end_date, total_days, calendar_display, schedule_type = components[:5]
-        date_picker_start = components[-3] if len(components) > 17 else None
-        date_picker_end = components[-2] if len(components) > 17 else None
-        generate_btn = components[-1]
+        start_date, end_date, total_days, calendar_display, schedule_type, selected_characters, \
+        selected_locations, selected_stories, character_distribution, story_integration, \
+        include_holidays, include_lunar, location_variety, mood_variety, time_slots_config, \
+        date_picker_start, date_picker_end = components[:17]
         
-        # 日期变化时自动计算天数
+        # 计算天数的内部函数
         def calculate_days(start, end):
             try:
                 if start and end:
                     start_dt = datetime.strptime(start, '%Y-%m-%d')
                     end_dt = datetime.strptime(end, '%Y-%m-%d')
-                    days = (end_dt - start_dt).days + 1
-                    return max(1, days)
-                return 7
+                    if start_dt <= end_dt:
+                        delta = (end_dt - start_dt).days + 1
+                        return delta
+                return 7  # 默认一周
             except:
                 return 7
         
+        # 更新日历的内部函数
         def update_calendar(start, end):
             try:
                 if start:
@@ -654,14 +638,6 @@ class ScheduleInterface:
             fn=update_total_days_and_calendar,
             inputs=[start_date, end_date],
             outputs=[total_days, calendar_display]
-        )
-        
-        # 绑定生成按钮 - 确保只传递必要的组件并设置api_name以便更好地追踪
-        generate_btn.click(
-            fn=self._start_schedule_generation,
-            inputs=components[:15],  # 仅传递前15个组件，跳过日期选择器和生成按钮
-            outputs=[],
-            api_name="start_schedule_generation"
         )
     
     async def _start_schedule_generation(self, *args):
