@@ -789,24 +789,9 @@ class PlotGenerationNode(BaseNode):
           {{
             "小节ID": "S001_SCENE_001",
             "小节标题": "独立小节的标题",
-            "四幕结构": {{
-              "开端": "场景设定和角色登场，建立情境",
-              "发展": "冲突或问题逐步展开，角色互动",
-              "高潮": "矛盾达到顶点，关键转折",
-              "结局": "问题解决或情境结束，完整收尾"
-            }},
+            "小节内容": "完整的故事内容，自然融入四幕式结构（开端→发展→高潮→结局），包含角色对话和情感变化，体现独立完整的一幕演绎，禁止包含时间",
             "地点": "发生地点",
-            "参与角色": ["方知衡", "指定角色名"],
-            "核心冲突": "本小节的主要矛盾或张力点",
-            "关键对话": [
-              {{
-                "发言者": "角色名",
-                "对话内容": "具体对话",
-                "对话时机": "在四幕中的位置（开端/发展/高潮/结局）"
-              }}
-            ],
-            "情感弧线": "从开始到结束的情感变化轨迹",
-            "独立性说明": "说明此小节如何独立存在，不依赖其他小节"
+            "参与角色": ["方知衡", "指定角色名"]
           }}
         ],
         "剧情总结": {{
@@ -826,12 +811,12 @@ class PlotGenerationNode(BaseNode):
    - short: 1-2个独立小节
    - medium: 3-5个独立小节  
    - long: 5-8个独立小节
-3. **每个小节都必须包含完整的四幕式结构**
+3. **小节内容必须是完整的故事段落**，自然融入四幕式结构
 4. **每个小节都必须同时出现主角方知衡和指定的参与角色**
-5. **小节完全独立，不依赖前后小节的时间空间联系**
-6. 对话丰富且符合角色特征，并标明在四幕中的位置
-7. 每个小节都有完整的情感弧线和冲突解决
-8. 各剧情间相互独立，各小节也相互独立
+5. **小节完全独立**，不依赖前后小节的时间空间联系
+6. **对话和情感变化自然融入故事内容**，不单独分离
+7. 每个小节都是独立完整的一幕演绎，可以单独使用
+8. 内容生动详细，包含场景描述、角色互动、冲突解决
 """
         
         # 流式调用LLM
@@ -1021,10 +1006,9 @@ class CSVExportNode(BaseNode):
             
             filepath = output_dir / filename
             
-            # CSV标题行 - 适配四幕式结构
+            # CSV标题行 - 简化结构
             csv_headers = [
-                "剧情名称", "小节ID", "小节标题", "开端", "发展", "高潮", "结局", 
-                "地点", "参与角色", "核心冲突", "关键对话", "情感弧线", "独立性说明"
+                "剧情名称", "小节ID", "小节标题", "小节内容", "地点", "参与角色"
             ]
             
             csv_data = []
@@ -1046,31 +1030,13 @@ class CSVExportNode(BaseNode):
                         total_scenes += len(scenes)
                         
                         for scene in scenes:
-                            # 处理四幕结构
-                            four_acts = scene.get('四幕结构', {})
-                            
-                            # 处理关键对话数组
-                            dialogues = scene.get('关键对话', [])
-                            if isinstance(dialogues, list):
-                                dialogue_text = '; '.join([f"{d.get('发言者', '')}：{d.get('对话内容', '')}({d.get('对话时机', '')})" 
-                                                         for d in dialogues if isinstance(d, dict)])
-                            else:
-                                dialogue_text = str(dialogues)
-                            
                             csv_data.append([
                                 f"{story_name} ({story_id})",
                                 scene.get('小节ID', ''),
                                 scene.get('小节标题', ''),
-                                four_acts.get('开端', ''),
-                                four_acts.get('发展', ''),
-                                four_acts.get('高潮', ''),
-                                four_acts.get('结局', ''),
+                                scene.get('小节内容', ''),
                                 scene.get('地点', ''),
-                                ', '.join(scene.get('参与角色', [])),
-                                scene.get('核心冲突', ''),
-                                dialogue_text,
-                                scene.get('情感弧线', ''),
-                                scene.get('独立性说明', '')
+                                ', '.join(scene.get('参与角色', []))
                             ])
                     
                     story_name = f"多剧情集合({len(story_list)}个剧情)"
@@ -1082,39 +1048,13 @@ class CSVExportNode(BaseNode):
                     logger.info(f"成功解析单剧情JSON格式数据，剧情名称: {story_name}，包含 {len(scenes)} 个小节")
                     
                     for scene in scenes:
-                        # 处理四幕结构（向后兼容）
-                        four_acts = scene.get('四幕结构', {})
-                        if not four_acts:
-                            # 如果没有四幕结构，使用旧格式的小节内容
-                            four_acts = {
-                                '开端': scene.get('小节内容', '')[:100] + '...' if len(scene.get('小节内容', '')) > 100 else scene.get('小节内容', ''),
-                                '发展': '',
-                                '高潮': '',
-                                '结局': ''
-                            }
-                        
-                        # 处理关键对话数组
-                        dialogues = scene.get('关键对话', [])
-                        if isinstance(dialogues, list):
-                            dialogue_text = '; '.join([f"{d.get('发言者', '')}：{d.get('对话内容', '')}({d.get('对话时机', '')})" 
-                                                     for d in dialogues if isinstance(d, dict)])
-                        else:
-                            dialogue_text = str(dialogues)
-                        
                         csv_data.append([
                             story_name,
                             scene.get('小节ID', ''),
                             scene.get('小节标题', ''),
-                            four_acts.get('开端', ''),
-                            four_acts.get('发展', ''),
-                            four_acts.get('高潮', ''),
-                            four_acts.get('结局', ''),
+                            scene.get('小节内容', ''),
                             scene.get('地点', ''),
-                            ', '.join(scene.get('参与角色', [])),
-                            scene.get('核心冲突', scene.get('关键事件', '')),  # 向后兼容
-                            dialogue_text,
-                            scene.get('情感弧线', scene.get('情感基调', '')),  # 向后兼容
-                            scene.get('独立性说明', scene.get('推进作用', ''))  # 向后兼容
+                            ', '.join(scene.get('参与角色', []))
                         ])
                 else:
                     raise ValueError("无法识别的剧情数据格式")
@@ -1147,31 +1087,13 @@ class CSVExportNode(BaseNode):
                                 total_scenes += len(scenes)
                                 
                                 for scene in scenes:
-                                    # 处理四幕结构
-                                    four_acts = scene.get('四幕结构', {})
-                                    
-                                    # 处理关键对话数组
-                                    dialogues = scene.get('关键对话', [])
-                                    if isinstance(dialogues, list):
-                                        dialogue_text = '; '.join([f"{d.get('发言者', '')}：{d.get('对话内容', '')}({d.get('对话时机', '')})" 
-                                                                 for d in dialogues if isinstance(d, dict)])
-                                    else:
-                                        dialogue_text = str(dialogues)
-                                    
                                     csv_data.append([
                                         f"{story_name_item} ({story_id})",
                                         scene.get('小节ID', ''),
                                         scene.get('小节标题', ''),
-                                        four_acts.get('开端', ''),
-                                        four_acts.get('发展', ''),
-                                        four_acts.get('高潮', ''),
-                                        four_acts.get('结局', ''),
+                                        scene.get('小节内容', ''),
                                         scene.get('地点', ''),
-                                        ', '.join(scene.get('参与角色', [])),
-                                        scene.get('核心冲突', ''),
-                                        dialogue_text,
-                                        scene.get('情感弧线', ''),
-                                        scene.get('独立性说明', '')
+                                        ', '.join(scene.get('参与角色', []))
                                     ])
                             
                             story_name = f"多剧情集合({len(story_list)}个剧情)"
@@ -1183,39 +1105,13 @@ class CSVExportNode(BaseNode):
                             logger.info(f"从字符串解析单剧情JSON成功，剧情名称: {story_name}，包含 {len(scenes)} 个小节")
                             
                             for scene in scenes:
-                                # 处理四幕结构（向后兼容）
-                                four_acts = scene.get('四幕结构', {})
-                                if not four_acts:
-                                    # 如果没有四幕结构，使用旧格式的小节内容
-                                    four_acts = {
-                                        '开端': scene.get('小节内容', '')[:100] + '...' if len(scene.get('小节内容', '')) > 100 else scene.get('小节内容', ''),
-                                        '发展': '',
-                                        '高潮': '',
-                                        '结局': ''
-                                    }
-                                
-                                # 处理关键对话数组
-                                dialogues = scene.get('关键对话', [])
-                                if isinstance(dialogues, list):
-                                    dialogue_text = '; '.join([f"{d.get('发言者', '')}：{d.get('对话内容', '')}({d.get('对话时机', '')})" 
-                                                             for d in dialogues if isinstance(d, dict)])
-                                else:
-                                    dialogue_text = str(dialogues)
-                                
                                 csv_data.append([
                                     story_name,
                                     scene.get('小节ID', ''),
                                     scene.get('小节标题', ''),
-                                    four_acts.get('开端', ''),
-                                    four_acts.get('发展', ''),
-                                    four_acts.get('高潮', ''),
-                                    four_acts.get('结局', ''),
+                                    scene.get('小节内容', ''),
                                     scene.get('地点', ''),
-                                    ', '.join(scene.get('参与角色', [])),
-                                    scene.get('核心冲突', scene.get('关键事件', '')),  # 向后兼容
-                                    dialogue_text,
-                                    scene.get('情感弧线', scene.get('情感基调', '')),  # 向后兼容
-                                    scene.get('独立性说明', scene.get('推进作用', ''))  # 向后兼容
+                                    ', '.join(scene.get('参与角色', []))
                                 ])
                         else:
                             raise ValueError("未找到story.剧情列表或story.剧情小节字段")
@@ -1233,16 +1129,9 @@ class CSVExportNode(BaseNode):
                                 story_name,
                                 f"SCENE_{i+1:03d}",
                                 f"第{i+1}节",
-                                line[:50] + "...",  # 开端
-                                "",  # 发展
-                                "",  # 高潮
-                                "",  # 结局
+                                line,
                                 "默认地点",
-                                "主角",
-                                f"事件{i+1}",
-                                line[:50] + "..." if len(line) > 50 else line,
-                                "中性",
-                                "独立文本片段"
+                                "主角"
                             ])
             else:
                 logger.error(f"无法处理的剧情数据类型: {type(plot_content)}")
@@ -1270,6 +1159,7 @@ class CSVExportNode(BaseNode):
 
 - 剧情名称：{story_name}
 - 导出小节数：{len(csv_data)} 个
+- CSV字段数：{len(csv_headers)} 个
 - 数据解析方式：{'JSON结构化解析' if isinstance(plot_content, dict) else 'JSON字符串解析'}
 
 # 访问文件
