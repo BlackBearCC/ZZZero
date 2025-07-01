@@ -547,7 +547,9 @@ class StateGraphExecutor(BaseExecutor):
             print(f"\n[StreamExecutor] === 迭代 {iteration} ===")
             print(f"[StreamExecutor] 当前节点: {current_nodes}")
             
-            # 逐个执行节点（流式）
+            # 逐个执行节点（流式） - 改为串行执行，确保状态正确传递
+            node_results = {}  # 存储本轮所有节点的执行结果
+            
             for node_name in current_nodes:
                 if node_name in graph.nodes:
                     node = graph.nodes[node_name]
@@ -577,18 +579,15 @@ class StateGraphExecutor(BaseExecutor):
                                     "state": current_state
                                 }
                                 
-                                # 合并中间状态更新
-                                if intermediate_result.is_success and intermediate_result.state_update:
-                                    current_state = state_manager.merge_state(
-                                        current_state, 
-                                        intermediate_result.state_update
-                                    )
+                                # 注意：不在这里合并中间状态，避免状态污染
+                                # 只有最终结果才合并到状态中
                             
                             result = final_result
                         else:
                             # 非流式执行节点
                             result = await node.run(current_state)
                         
+                        node_results[node_name] = result
                         visited_nodes.append(node_name)
                         
                         print(f"[StreamExecutor] 节点 {node_name} 执行完成")
@@ -601,8 +600,9 @@ class StateGraphExecutor(BaseExecutor):
                             "state": current_state
                         }
                         
-                        # 合并最终状态更新
+                        # 立即合并状态更新，确保后续节点能获取到更新
                         if result and result.is_success and result.state_update:
+                            print(f"[StreamExecutor] 合并节点 {node_name} 的状态更新: {list(result.state_update.keys())}")
                             current_state = state_manager.merge_state(
                                 current_state, 
                                 result.state_update
@@ -635,7 +635,7 @@ class StateGraphExecutor(BaseExecutor):
             sends = []
             
             for node_name in current_nodes:
-                # 使用图的路由逻辑
+                # 使用图的路由逻辑，基于最新的状态
                 nodes, command, send_list = graph.get_next_nodes(node_name, current_state)
                 next_nodes.extend(nodes)
                 if command:

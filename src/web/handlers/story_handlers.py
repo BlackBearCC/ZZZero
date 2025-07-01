@@ -170,7 +170,6 @@ class StoryHandlers:
                 <h4>🔄 工作流进度</h4>
                 <div style='margin: 5px 0;'>
                     <span style='color: #007bff;'>📋 剧情规划</span> → 
-                    <span style='color: #6c757d;'>👥 角色分析</span> → 
                     <span style='color: #6c757d;'>📚 剧情生成</span> → 
                     <span style='color: #6c757d;'>📄 CSV导出</span>
                 </div>
@@ -221,21 +220,20 @@ class StoryHandlers:
             # 执行工作流
             logger.info(f"开始执行剧情生成工作流: {config}")
             
-            # 更新进度: 角色分析
+            # 更新进度: 剧情生成
             progress_html = """
             <div style='padding: 10px; border-radius: 5px; background: #f8f9fa;'>
                 <h4>🔄 工作流进度</h4>
                 <div style='margin: 5px 0;'>
                     <span style='color: #28a745;'>✅ 剧情规划</span> → 
-                    <span style='color: #007bff;'>👥 角色分析</span> → 
-                    <span style='color: #6c757d;'>📚 剧情生成</span> → 
+                    <span style='color: #007bff;'>📚 剧情生成</span> → 
                     <span style='color: #6c757d;'>📄 CSV导出</span>
                 </div>
             </div>
             """
             
             yield (
-                "🔄 正在分析角色特征...",
+                "🔄 正在生成具体剧情...",
                 gr.update(value=progress_html, visible=True),
                 gr.update(visible=False),
                 gr.update(visible=False),

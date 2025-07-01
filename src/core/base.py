@@ -215,7 +215,7 @@ class BaseNode(ABC):
                     node_name=self.name,
                     node_type=self.node_type,
                     state_update={},
-                    execution_state=ExecutionState.RUNNING
+                    execution_state=ExecutionState.SUCCESS  # 设置为SUCCESS
                 )
                 
                 if isinstance(output, Command):

@@ -79,7 +79,6 @@ class WorkflowChat:
         """创建竖向工作流进度显示"""
         nodes = [
             ("📋", "剧情规划", "planning"),
-            ("👥", "角色分析", "character"), 
             ("📚", "剧情生成", "plot"),
             ("📄", "CSV导出", "export")
         ]
@@ -196,8 +195,8 @@ class WorkflowChat:
                 else:
                     self.node_states[node_id] = "active"
             
-            # 记录日志
-            logging.getLogger(__name__).info(f"节点 {node_name} 内容已更新，状态: {status}，内容长度: {len(content)}")
+            # # 记录日志
+            # logging.getLogger(__name__).info(f"节点 {node_name} 内容已更新，状态: {status}，内容长度: {len(content)}")
             
             # 返回更新后的进度HTML供UI刷新
             return self._create_workflow_progress()

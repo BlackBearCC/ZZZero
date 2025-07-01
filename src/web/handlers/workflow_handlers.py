@@ -120,11 +120,15 @@ class WorkflowHandlers:
             
             # 配置参数
             config = {
+                'protagonist': '方知衡',
                 'selected_characters': selected_characters,
                 'selected_locations': selected_locations,
                 'story_type': story_type,
                 'story_length': story_length,
-                'relationship_depth': relationship_depth
+                'relationship_depth': relationship_depth,
+                'time_setting': 'current',
+                'mood_tone': 'neutral',
+                'interaction_level': 'normal'
             }
             
             # 设置LLM

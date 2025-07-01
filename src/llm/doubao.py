@@ -307,7 +307,8 @@ class DoubaoLLM(BaseLLMProvider):
                                            mode: str = "normal",
                                            interrupt_checker=None,
                                            timeout: int = None,
-                                           **kwargs) -> AsyncIterator[str]:
+                                           return_dict: bool = False,
+                                           **kwargs):
         """支持中断检查的流式生成
         
         Args:
@@ -315,6 +316,7 @@ class DoubaoLLM(BaseLLMProvider):
             mode: 生成模式，'normal' 或 'think'
             interrupt_checker: 中断检查器（可选）
             timeout: 超时时间（秒），不设置则无超时限制
+            return_dict: 是否返回字典格式（工作流使用）
             **kwargs: 其他参数
         """
         # 移除默认超时限制，允许长时间生成
@@ -329,17 +331,43 @@ class DoubaoLLM(BaseLLMProvider):
                 if result.get("type") == "reasoning_chunk":
                     reasoning_chunk = result.get("content", "")
                     accumulated_reasoning += reasoning_chunk
-                    # 直接输出推理过程，不添加标题
-                    yield reasoning_chunk
+                    
+                    if return_dict:
+                        # 为工作流返回字典格式，区分think和content
+                        yield {
+                            "think": reasoning_chunk,
+                            "content": "",
+                            "type": "reasoning_chunk"
+                        }
+                    else:
+                        # 为普通聊天返回字符串格式
+                        yield reasoning_chunk
                 
                 elif result.get("type") == "content_chunk":
                     content_chunk = result.get("content", "")
-                    # 直接输出内容，不添加"结论："前缀
                     accumulated_content += content_chunk
-                    yield content_chunk
+                    
+                    if return_dict:
+                        # 为工作流返回字典格式
+                        yield {
+                            "think": "",
+                            "content": content_chunk,
+                            "type": "content_chunk"
+                        }
+                    else:
+                        # 为普通聊天返回字符串格式
+                        yield content_chunk
                 
                 elif result.get("type") == "think_complete":
-                    # think完成，不需要额外输出
+                    if return_dict:
+                        # think完成，发送完整结果
+                        yield {
+                            "think": accumulated_reasoning,
+                            "content": accumulated_content,
+                            "type": "think_complete",
+                            "total_reasoning": accumulated_reasoning,
+                            "total_content": accumulated_content
+                        }
                     break
                 
                 # 中断检查
