@@ -228,6 +228,7 @@ class StoryWorkflow:
                 'protagonist': config.get('protagonist', '方知衡'),
                 'selected_characters': config.get('selected_characters', []),
                 'selected_locations': config.get('selected_locations', []),
+                'story_count': config.get('story_count', 5),  # 剧情数量配置
                 'story_type': config.get('story_type', 'daily_life'),
                 'story_length': config.get('story_length', 'medium'),
                 'relationship_depth': config.get('relationship_depth', 'casual'),
@@ -389,12 +390,10 @@ class StoryPlanningNode(BaseNode):
         locations_data = input_data.get('locations_data', {})
         selected_characters = input_data.get('selected_characters', [])
         selected_locations = input_data.get('selected_locations', [])
+        story_count = input_data.get('story_count', 5)  # 剧情数量
         story_type = input_data.get('story_type', 'daily_life')
         story_length = input_data.get('story_length', 'medium')
         relationship_depth = input_data.get('relationship_depth', 'casual')
-        time_setting = input_data.get('time_setting', 'current')
-        mood_tone = input_data.get('mood_tone', 'neutral')
-        interaction_level = input_data.get('interaction_level', 'normal')
         
         # 更新UI - 开始状态
         if workflow_chat:
@@ -459,70 +458,86 @@ class StoryPlanningNode(BaseNode):
 
 # 剧情配置
 
+- 剧情数量：{story_count} 个大剧情
 - 剧情类型：{story_type}
-- 剧情长度：{story_length}
+- 剧情细分程度：{story_length}（每个剧情包含的独立小节数量）
 - 关系深度：{relationship_depth}
-- 时间设定：{time_setting}
-- 情感基调：{mood_tone}
-- 互动程度：{interaction_level}
+
+**重要要求**：
+1. 每个小节都是独立的一幕演绎，不能有时间或空间的连续性
+2. 这些小节会被分布到任意时间地点使用，必须完全独立
+3. 每个小节必须包含完整的四幕式结构（开端→发展→高潮→结局）
+4. 每个小节都必须出现主角方知衡和指定的参与角色
 
 # 输出要求
 
-请以JSON格式输出详细的剧情规划框架，包含以下核心要素：
+请以JSON格式输出 **{story_count} 个完整大剧情** 的规划框架，重点关注独立小节的设计：
 
 ```json
 {{
   "planning": {{
-    "故事主题与核心冲突": {{
-      "故事主题": "基于主角性格特征和生活背景确定的主题",
-      "核心冲突": "结合参与角色设计的合理冲突点"
-    }},
-    "角色关系网络": {{
-      "主角关系定位": {{
-        "与角色A": "具体关系定位和发展路径",
-        "与角色B": "具体关系定位和发展路径"
+    "总体设计": {{
+      "剧情总数": {story_count},
+      "整体主题": "所有剧情的统一主题",
+      "角色关系网络": {{
+        "主角关系定位": {{
+          "与角色A": "具体关系定位和发展路径",
+          "与角色B": "具体关系定位和发展路径"
+        }},
+        "角色间关系": "相互关系和互动模式",
+        "关系发展路径": "关系演变的可能性和方向"
       }},
-      "角色间关系": "相互关系和互动模式",
-      "关系发展路径": "关系演变的可能性和方向"
-    }},
-    "主要剧情线": {{
-      "开端": "设定背景和初始情况的具体描述",
-      "发展": "矛盾逐步升级和角色互动的详细过程",
-      "高潮": "核心冲突达到顶点的关键事件",
-      "结局": "问题解决和角色成长的完整描述"
-    }},
-    "地点运用策略": {{
-      "地点功能定位": {{
-        "地点1": "在剧情中的功能定位和氛围作用",
-        "地点2": "在剧情中的功能定位和氛围作用"
-      }},
-      "氛围营造": "地点氛围如何服务于情节发展",
-      "空间转换意义": "空间转换的叙事作用"
-    }},
-    "关键事件节点": [
-      {{
-        "事件名": "重要转折点描述",
-        "触发条件": "前置要求和条件",
-        "预期结果": "对后续剧情的影响",
-        "逻辑关联": "与其他事件的逻辑关系"
+      "地点运用策略": {{
+        "地点功能定位": {{
+          "地点1": "在剧情中的功能定位和氛围作用",
+          "地点2": "在剧情中的功能定位和氛围作用"
+        }},
+        "氛围营造": "地点氛围如何服务于情节发展",
+        "空间转换意义": "空间转换的叙事作用"
       }}
-    ],
-    "情感张力设计": {{
-      "情感基调": "根据配置的mood_tone设计基调",
-      "情感起伏曲线": "情感发展的具体安排",
-      "表达方式": "符合主角性格的情感表达",
-      "理性感性平衡": "理性与感性冲突的处理"
-    }}
+    }},
+    "剧情规划列表": [
+      {{
+        "剧情ID": "STORY_001",
+        "剧情名称": "第1个大剧情的名称",
+        "故事主题与核心冲突": {{
+          "故事主题": "基于主角性格特征和生活背景确定的主题",
+          "核心冲突": "结合参与角色设计的合理冲突点"
+        }},
+        "主要剧情线": {{
+          "开端": "设定背景和初始情况的具体描述",
+          "发展": "矛盾逐步升级和角色互动的详细过程",
+          "高潮": "核心冲突达到顶点的关键事件",
+          "结局": "问题解决和角色成长的完整描述"
+        }},
+        "关键事件节点": [
+          {{
+            "事件名": "重要转折点描述",
+            "触发条件": "前置要求和条件",
+            "预期结果": "对后续剧情的影响",
+            "逻辑关联": "与其他事件的逻辑关系"
+          }}
+        ],
+        "情感张力设计": {{
+          "情感基调": "根据配置的mood_tone设计基调",
+          "情感起伏曲线": "情感发展的具体安排",
+          "表达方式": "符合主角性格的情感表达",
+          "理性感性平衡": "理性与感性冲突的处理"
+        }}
+      }}
+    ]
   }}
 }}
 ```
 
 请确保：
-1. 至少包含5个重要的关键事件节点
-2. 角色关系网络清晰详细
-3. 地点运用策略具体可操作
-4. 情感张力设计符合角色特征
-5. 所有要素相互呼应，形成完整框架
+1. 准确生成 **{story_count} 个完整的大剧情规划**
+2. 每个剧情的关键事件节点设计要考虑独立小节的特性
+3. 角色关系网络清晰详细，适用于所有剧情
+4. 地点运用策略要支持独立场景的设计
+5. 情感张力设计要在单个小节内形成完整弧线
+6. 所有剧情相互独立，每个小节也必须独立
+7. 每个剧情都有独特的冲突点，但要能分解为独立的小节情境
 """
         
         # 流式调用LLM并在每个chunk时yield
@@ -724,12 +739,10 @@ class PlotGenerationNode(BaseNode):
         characters_data = input_data.get('characters_data', {})
         selected_characters = input_data.get('selected_characters', [])
         selected_locations = input_data.get('selected_locations', [])
+        story_count = input_data.get('story_count', 5)  # 剧情数量
         story_type = input_data.get('story_type', 'daily_life')
         story_length = input_data.get('story_length', 'medium')
         relationship_depth = input_data.get('relationship_depth', 'casual')
-        time_setting = input_data.get('time_setting', 'current')
-        mood_tone = input_data.get('mood_tone', 'neutral')
-        interaction_level = input_data.get('interaction_level', 'normal')
         
         # 构建通用的剧情生成提示词
         plot_prompt = f"""
@@ -745,53 +758,80 @@ class PlotGenerationNode(BaseNode):
 
 # 剧情配置
 
+- 剧情数量：{story_count} 个大剧情
 - 剧情类型：{story_type}
-- 剧情长度：{story_length}
+- 剧情细分程度：{story_length}（每个剧情包含的独立小节数量）
 - 关系深度：{relationship_depth}
-- 时间设定：{time_setting}
-- 情感基调：{mood_tone}
-- 互动程度：{interaction_level}
+
+**核心要求**：
+1. 每个小节都是独立的一幕演绎，包含完整的四幕式结构
+2. 每个小节必须同时出现主角方知衡和指定的参与角色
+3. 小节之间没有时间空间联系，可以在任意时间地点使用
+4. 每个小节都有开端→发展→高潮→结局的完整戏剧弧线
 
 # 输出要求
 
-请以JSON格式输出丰富的剧情内容：
+请基于规划中的 **{story_count} 个大剧情**，以JSON格式输出丰富的独立小节内容：
 
 ```json
 {{
   "story": {{
-    "剧情名称": "整个剧情的名称",
-    "剧情小节": [
+    "总体信息": {{
+      "剧情总数": {story_count},
+      "生成时间": "{{生成时间}}",
+      "主角": "方知衡"
+    }},
+    "剧情列表": [
       {{
-        "小节ID": "SCENE_001",
-        "小节标题": "小节的简短标题",
-        "小节内容": "详细的剧情内容和场景描述",
-        "地点": "发生地点",
-        "参与角色": ["主角", "其他角色"],
-        "关键对话": [
+        "剧情ID": "STORY_001",
+        "剧情名称": "第1个大剧情的名称",
+        "剧情小节": [
           {{
-            "发言者": "角色名",
-            "对话内容": "具体对话"
+            "小节ID": "S001_SCENE_001",
+            "小节标题": "独立小节的标题",
+            "四幕结构": {{
+              "开端": "场景设定和角色登场，建立情境",
+              "发展": "冲突或问题逐步展开，角色互动",
+              "高潮": "矛盾达到顶点，关键转折",
+              "结局": "问题解决或情境结束，完整收尾"
+            }},
+            "地点": "发生地点",
+            "参与角色": ["方知衡", "指定角色名"],
+            "核心冲突": "本小节的主要矛盾或张力点",
+            "关键对话": [
+              {{
+                "发言者": "角色名",
+                "对话内容": "具体对话",
+                "对话时机": "在四幕中的位置（开端/发展/高潮/结局）"
+              }}
+            ],
+            "情感弧线": "从开始到结束的情感变化轨迹",
+            "独立性说明": "说明此小节如何独立存在，不依赖其他小节"
           }}
         ],
-        "情感基调": "本小节的情感氛围",
-        "关键事件": "本小节的核心事件",
-        "推进作用": "对整体剧情的推进作用"
+        "剧情总结": {{
+          "主要冲突": "核心矛盾点",
+          "情感发展": "角色关系的整体发展",
+          "后续铺垫": "为后续剧情设置的伏笔"
+        }}
       }}
-    ],
-    "剧情总结": {{
-      "主要冲突": "核心矛盾点",
-      "情感发展": "角色关系的整体发展",
-      "后续铺垫": "为后续剧情设置的伏笔"
-    }}
+    ]
   }}
 }}
 ```
 
 请确保：
-1. 生成4-6个剧情小节
-2. 小节内容详细生动，包含场景描述
-3. 对话丰富且符合角色特征
-4. 剧情连贯有逻辑，情感层次分明
+1. 准确生成 **{story_count} 个完整的大剧情**
+2. 每个大剧情根据story_length设置生成相应数量的独立小节：
+   - short: 1-2个独立小节
+   - medium: 3-5个独立小节  
+   - long: 5-8个独立小节
+3. **每个小节都必须包含完整的四幕式结构**
+4. **每个小节都必须同时出现主角方知衡和指定的参与角色**
+5. **小节完全独立，不依赖前后小节的时间空间联系**
+6. 对话丰富且符合角色特征，并标明在四幕中的位置
+7. 每个小节都有完整的情感弧线和冲突解决
+8. 各剧情间相互独立，各小节也相互独立
 """
         
         # 流式调用LLM
@@ -981,43 +1021,103 @@ class CSVExportNode(BaseNode):
             
             filepath = output_dir / filename
             
-            # CSV标题行 - 增强字段
+            # CSV标题行 - 适配四幕式结构
             csv_headers = [
-                "剧情名称", "小节ID", "小节标题", "小节内容", "地点", "参与角色", 
-                "关键对话", "情感基调", "关键事件", "推进作用"
+                "剧情名称", "小节ID", "小节标题", "开端", "发展", "高潮", "结局", 
+                "地点", "参与角色", "核心冲突", "关键对话", "情感弧线", "独立性说明"
             ]
             
             csv_data = []
             story_name = ""
             
             # 解析JSON格式的剧情数据
-            if isinstance(plot_content, dict) and '剧情小节' in plot_content:
-                # plot_content是已解析的JSON对象
-                story_name = plot_content.get('剧情名称', '未命名剧情')
-                scenes = plot_content.get('剧情小节', [])
-                logger.info(f"成功解析JSON格式剧情数据，剧情名称: {story_name}，包含 {len(scenes)} 个小节")
-                
-                for scene in scenes:
-                    # 处理关键对话数组
-                    dialogues = scene.get('关键对话', [])
-                    if isinstance(dialogues, list):
-                        dialogue_text = '; '.join([f"{d.get('发言者', '')}：{d.get('对话内容', '')}" 
-                                                 for d in dialogues if isinstance(d, dict)])
-                    else:
-                        dialogue_text = str(dialogues)
+            if isinstance(plot_content, dict):
+                # 检查是否是新的多剧情格式
+                if '剧情列表' in plot_content:
+                    # 新的多剧情格式
+                    story_list = plot_content.get('剧情列表', [])
+                    total_scenes = 0
+                    logger.info(f"成功解析多剧情JSON格式数据，包含 {len(story_list)} 个大剧情")
                     
-                    csv_data.append([
-                        story_name,
-                        scene.get('小节ID', ''),
-                        scene.get('小节标题', ''),
-                        scene.get('小节内容', ''),
-                        scene.get('地点', ''),
-                        ', '.join(scene.get('参与角色', [])),
-                        dialogue_text,
-                        scene.get('情感基调', ''),
-                        scene.get('关键事件', ''),
-                        scene.get('推进作用', '')
-                    ])
+                    for story in story_list:
+                        story_name = story.get('剧情名称', '未命名剧情')
+                        story_id = story.get('剧情ID', '')
+                        scenes = story.get('剧情小节', [])
+                        total_scenes += len(scenes)
+                        
+                        for scene in scenes:
+                            # 处理四幕结构
+                            four_acts = scene.get('四幕结构', {})
+                            
+                            # 处理关键对话数组
+                            dialogues = scene.get('关键对话', [])
+                            if isinstance(dialogues, list):
+                                dialogue_text = '; '.join([f"{d.get('发言者', '')}：{d.get('对话内容', '')}({d.get('对话时机', '')})" 
+                                                         for d in dialogues if isinstance(d, dict)])
+                            else:
+                                dialogue_text = str(dialogues)
+                            
+                            csv_data.append([
+                                f"{story_name} ({story_id})",
+                                scene.get('小节ID', ''),
+                                scene.get('小节标题', ''),
+                                four_acts.get('开端', ''),
+                                four_acts.get('发展', ''),
+                                four_acts.get('高潮', ''),
+                                four_acts.get('结局', ''),
+                                scene.get('地点', ''),
+                                ', '.join(scene.get('参与角色', [])),
+                                scene.get('核心冲突', ''),
+                                dialogue_text,
+                                scene.get('情感弧线', ''),
+                                scene.get('独立性说明', '')
+                            ])
+                    
+                    story_name = f"多剧情集合({len(story_list)}个剧情)"
+                    
+                elif '剧情小节' in plot_content:
+                    # 旧的单剧情格式
+                    story_name = plot_content.get('剧情名称', '未命名剧情')
+                    scenes = plot_content.get('剧情小节', [])
+                    logger.info(f"成功解析单剧情JSON格式数据，剧情名称: {story_name}，包含 {len(scenes)} 个小节")
+                    
+                    for scene in scenes:
+                        # 处理四幕结构（向后兼容）
+                        four_acts = scene.get('四幕结构', {})
+                        if not four_acts:
+                            # 如果没有四幕结构，使用旧格式的小节内容
+                            four_acts = {
+                                '开端': scene.get('小节内容', '')[:100] + '...' if len(scene.get('小节内容', '')) > 100 else scene.get('小节内容', ''),
+                                '发展': '',
+                                '高潮': '',
+                                '结局': ''
+                            }
+                        
+                        # 处理关键对话数组
+                        dialogues = scene.get('关键对话', [])
+                        if isinstance(dialogues, list):
+                            dialogue_text = '; '.join([f"{d.get('发言者', '')}：{d.get('对话内容', '')}({d.get('对话时机', '')})" 
+                                                     for d in dialogues if isinstance(d, dict)])
+                        else:
+                            dialogue_text = str(dialogues)
+                        
+                        csv_data.append([
+                            story_name,
+                            scene.get('小节ID', ''),
+                            scene.get('小节标题', ''),
+                            four_acts.get('开端', ''),
+                            four_acts.get('发展', ''),
+                            four_acts.get('高潮', ''),
+                            four_acts.get('结局', ''),
+                            scene.get('地点', ''),
+                            ', '.join(scene.get('参与角色', [])),
+                            scene.get('核心冲突', scene.get('关键事件', '')),  # 向后兼容
+                            dialogue_text,
+                            scene.get('情感弧线', scene.get('情感基调', '')),  # 向后兼容
+                            scene.get('独立性说明', scene.get('推进作用', ''))  # 向后兼容
+                        ])
+                else:
+                    raise ValueError("无法识别的剧情数据格式")
                     
             elif isinstance(plot_content, str):
                 # 尝试从字符串中解析JSON
@@ -1032,33 +1132,95 @@ class CSVExportNode(BaseNode):
                     
                     if parsed_data and 'story' in parsed_data:
                         story_data = parsed_data['story']
-                        story_name = story_data.get('剧情名称', '未命名剧情')
-                        scenes = story_data.get('剧情小节', [])
-                        logger.info(f"从字符串解析JSON成功，剧情名称: {story_name}，包含 {len(scenes)} 个小节")
                         
-                        for scene in scenes:
-                            # 处理关键对话数组
-                            dialogues = scene.get('关键对话', [])
-                            if isinstance(dialogues, list):
-                                dialogue_text = '; '.join([f"{d.get('发言者', '')}：{d.get('对话内容', '')}" 
-                                                         for d in dialogues if isinstance(d, dict)])
-                            else:
-                                dialogue_text = str(dialogues)
+                        # 检查是否是新的多剧情格式
+                        if '剧情列表' in story_data:
+                            # 新的多剧情格式
+                            story_list = story_data.get('剧情列表', [])
+                            total_scenes = 0
+                            logger.info(f"从字符串解析多剧情JSON成功，包含 {len(story_list)} 个大剧情")
                             
-                            csv_data.append([
-                                story_name,
-                                scene.get('小节ID', ''),
-                                scene.get('小节标题', ''),
-                                scene.get('小节内容', ''),
-                                scene.get('地点', ''),
-                                ', '.join(scene.get('参与角色', [])),
-                                dialogue_text,
-                                scene.get('情感基调', ''),
-                                scene.get('关键事件', ''),
-                                scene.get('推进作用', '')
-                            ])
+                            for story in story_list:
+                                story_name_item = story.get('剧情名称', '未命名剧情')
+                                story_id = story.get('剧情ID', '')
+                                scenes = story.get('剧情小节', [])
+                                total_scenes += len(scenes)
+                                
+                                for scene in scenes:
+                                    # 处理四幕结构
+                                    four_acts = scene.get('四幕结构', {})
+                                    
+                                    # 处理关键对话数组
+                                    dialogues = scene.get('关键对话', [])
+                                    if isinstance(dialogues, list):
+                                        dialogue_text = '; '.join([f"{d.get('发言者', '')}：{d.get('对话内容', '')}({d.get('对话时机', '')})" 
+                                                                 for d in dialogues if isinstance(d, dict)])
+                                    else:
+                                        dialogue_text = str(dialogues)
+                                    
+                                    csv_data.append([
+                                        f"{story_name_item} ({story_id})",
+                                        scene.get('小节ID', ''),
+                                        scene.get('小节标题', ''),
+                                        four_acts.get('开端', ''),
+                                        four_acts.get('发展', ''),
+                                        four_acts.get('高潮', ''),
+                                        four_acts.get('结局', ''),
+                                        scene.get('地点', ''),
+                                        ', '.join(scene.get('参与角色', [])),
+                                        scene.get('核心冲突', ''),
+                                        dialogue_text,
+                                        scene.get('情感弧线', ''),
+                                        scene.get('独立性说明', '')
+                                    ])
+                            
+                            story_name = f"多剧情集合({len(story_list)}个剧情)"
+                            
+                        elif '剧情小节' in story_data:
+                            # 旧的单剧情格式
+                            story_name = story_data.get('剧情名称', '未命名剧情')
+                            scenes = story_data.get('剧情小节', [])
+                            logger.info(f"从字符串解析单剧情JSON成功，剧情名称: {story_name}，包含 {len(scenes)} 个小节")
+                            
+                            for scene in scenes:
+                                # 处理四幕结构（向后兼容）
+                                four_acts = scene.get('四幕结构', {})
+                                if not four_acts:
+                                    # 如果没有四幕结构，使用旧格式的小节内容
+                                    four_acts = {
+                                        '开端': scene.get('小节内容', '')[:100] + '...' if len(scene.get('小节内容', '')) > 100 else scene.get('小节内容', ''),
+                                        '发展': '',
+                                        '高潮': '',
+                                        '结局': ''
+                                    }
+                                
+                                # 处理关键对话数组
+                                dialogues = scene.get('关键对话', [])
+                                if isinstance(dialogues, list):
+                                    dialogue_text = '; '.join([f"{d.get('发言者', '')}：{d.get('对话内容', '')}({d.get('对话时机', '')})" 
+                                                             for d in dialogues if isinstance(d, dict)])
+                                else:
+                                    dialogue_text = str(dialogues)
+                                
+                                csv_data.append([
+                                    story_name,
+                                    scene.get('小节ID', ''),
+                                    scene.get('小节标题', ''),
+                                    four_acts.get('开端', ''),
+                                    four_acts.get('发展', ''),
+                                    four_acts.get('高潮', ''),
+                                    four_acts.get('结局', ''),
+                                    scene.get('地点', ''),
+                                    ', '.join(scene.get('参与角色', [])),
+                                    scene.get('核心冲突', scene.get('关键事件', '')),  # 向后兼容
+                                    dialogue_text,
+                                    scene.get('情感弧线', scene.get('情感基调', '')),  # 向后兼容
+                                    scene.get('独立性说明', scene.get('推进作用', ''))  # 向后兼容
+                                ])
+                        else:
+                            raise ValueError("未找到story.剧情列表或story.剧情小节字段")
                     else:
-                        raise ValueError("未找到story.剧情小节字段")
+                        raise ValueError("未找到story字段")
                         
                 except Exception as parse_error:
                     logger.warning(f"JSON解析失败: {parse_error}，使用文本分段方式")
@@ -1071,13 +1233,16 @@ class CSVExportNode(BaseNode):
                                 story_name,
                                 f"SCENE_{i+1:03d}",
                                 f"第{i+1}节",
-                                line,
+                                line[:50] + "...",  # 开端
+                                "",  # 发展
+                                "",  # 高潮
+                                "",  # 结局
                                 "默认地点",
                                 "主角",
+                                f"事件{i+1}",
                                 line[:50] + "..." if len(line) > 50 else line,
                                 "中性",
-                                f"事件{i+1}",
-                                "剧情推进"
+                                "独立文本片段"
                             ])
             else:
                 logger.error(f"无法处理的剧情数据类型: {type(plot_content)}")

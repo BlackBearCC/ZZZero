@@ -63,6 +63,7 @@ class WorkflowHandlers:
     async def on_start_workflow(self, 
                                selected_characters: List[str],
                                selected_locations: List[str],
+                               story_count: int,
                                story_type: str,
                                story_length: str,
                                relationship_depth: str):
@@ -123,12 +124,10 @@ class WorkflowHandlers:
                 'protagonist': '方知衡',
                 'selected_characters': selected_characters,
                 'selected_locations': selected_locations,
+                'story_count': story_count,  # 剧情数量
                 'story_type': story_type,
                 'story_length': story_length,
-                'relationship_depth': relationship_depth,
-                'time_setting': 'current',
-                'mood_tone': 'neutral',
-                'interaction_level': 'normal'
+                'relationship_depth': relationship_depth
             }
             
             # 设置LLM

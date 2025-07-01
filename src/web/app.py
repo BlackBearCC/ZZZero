@@ -375,6 +375,7 @@ class AgentApp:
                 inputs=[
                     story_components.get('character_selector'),
                     story_components.get('location_selector'),
+                    story_components.get('story_count'),  # 剧情数量
                     story_components.get('story_type'),
                     story_components.get('story_length'),
                     story_components.get('relationship_depth')

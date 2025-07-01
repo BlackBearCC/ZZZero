@@ -44,31 +44,42 @@ class StoryInterface:
         
         # 创建固定高度的滚动容器
         with gr.Column(elem_id="config_panel_container", elem_classes=["config-panel-scroll"]):
-            with gr.Accordion("📋 剧情配置", open=True):
-                # 角色选择
-                gr.Markdown("### 👥 角色选择")
+            # 剧情数量配置（单独放在最上面，默认展开）
+            with gr.Accordion("🎯 剧情生成设置", open=True):
+                components['story_count'] = gr.Slider(
+                    label="剧情数量",
+                    minimum=1,
+                    maximum=10,
+                    step=1,
+                    value=5,
+                    info="指定要生成的大剧情数量，每个大剧情包含多个剧情小节"
+                )
+                gr.Markdown("💡 **说明**：剧情数量是指完整的大剧情个数，每个大剧情会细分为多个小节")
+            
+            # 角色选择区域（可折叠）
+            with gr.Accordion("👥 角色选择", open=True):
                 components['character_selector'] = gr.CheckboxGroup(
                     label="选择参与剧情的角色",
                     choices=[],  # 将通过事件动态填充
                     value=[],
-                    info="至少选择1个角色"
+                    info="至少选择1个角色与主角方知衡互动"
                 )
                 
                 components['refresh_characters_btn'] = gr.Button("🔄 刷新角色列表", size="sm")
-                
-                # 地点选择  
-                gr.Markdown("### 🏢 地点选择")
+            
+            # 地点选择区域（可折叠）
+            with gr.Accordion("🏢 地点选择", open=True):
                 components['location_selector'] = gr.CheckboxGroup(
                     label="选择剧情发生地点",
                     choices=[],  # 将通过事件动态填充
                     value=[],
-                    info="至少选择1个地点"
+                    info="至少选择1个地点作为剧情发生场所"
                 )
                 
                 components['refresh_locations_btn'] = gr.Button("🔄 刷新地点列表", size="sm")
-                
-                # 剧情类型配置
-                gr.Markdown("### 🎨 剧情设定")
+            
+            # 剧情设定区域（可折叠）
+            with gr.Accordion("🎨 剧情设定", open=True):
                 components['story_type'] = gr.Radio(
                     label="剧情类型",
                     choices=[
@@ -82,14 +93,14 @@ class StoryInterface:
                 )
                 
                 components['story_length'] = gr.Radio(
-                    label="剧情长度",
+                    label="剧情细分程度",
                     choices=[
-                        ("简短(1-2个阶段)", "short"),
-                        ("中等(3-5个阶段)", "medium"),
-                        ("详细(5-8个阶段)", "long")
+                        ("简短(1-2个小节)", "short"),
+                        ("中等(3-5个小节)", "medium"),
+                        ("详细(5-8个小节)", "long")
                     ],
                     value="medium",
-                    info="控制每个角色的剧情细分程度"
+                    info="控制每个大剧情的细分小节数量"
                 )
                 
                 components['relationship_depth'] = gr.Radio(
@@ -103,7 +114,10 @@ class StoryInterface:
                     value="casual",
                     info="角色间的初始关系设定"
                 )
+                
+                # 保留核心剧情设定，移除时间背景、情感基调、互动程度
             
+            # 数据预览区域（默认折叠）
             with gr.Accordion("📊 数据预览", open=False):
                 components['characters_preview'] = gr.Dataframe(
                     label="选中角色信息",
