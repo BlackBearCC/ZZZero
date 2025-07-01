@@ -15,12 +15,15 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from core.types import AgentType, ToolConfig, LLMConfig, TaskResult
 from agents.react_agent import ReactAgent
 from llm.base import LLMFactory
+from llm.openai import OpenAILLM  # 确保注册openai提供商
+from llm.doubao import DoubaoLLM  # 确保注册doubao提供商
 from tools.mcp_tools import MCPToolManager
 
 # 导入重构后的模块
 from web.components.config_panel import ConfigPanel
 from web.components.chat_interface import ChatInterface
 from web.components.story_interface import StoryInterface
+from web.components.schedule_interface import create_schedule_interface
 from web.components.task_queue_interface import TaskQueueInterface
 from web.handlers.event_handlers import EventHandlers
 from web.handlers.workflow_handlers import WorkflowHandlers
@@ -85,6 +88,7 @@ class AgentApp:
         self.config_panel = ConfigPanel()
         self.chat_interface = ChatInterface()
         self.story_interface = StoryInterface()
+        self.schedule_interface = None  # 延迟初始化
         self.task_queue_interface = TaskQueueInterface()
         self.event_handlers = EventHandlers(self)
         self.workflow_handlers = WorkflowHandlers(self)
@@ -183,11 +187,18 @@ class AgentApp:
                 with gr.TabItem("🎭 剧情生成工作流", id="story_tab"):
                     story_components = self.story_interface.create_story_interface()
                 
-                # Tab 3: 任务队列
+                # Tab 3: 日程生成工作流
+                with gr.TabItem("📅 日程生成工作流", id="schedule_tab"):
+                    # 延迟初始化日程界面
+                    if not self.schedule_interface:
+                        self.schedule_interface = create_schedule_interface(LLMFactory)
+                    schedule_components = self.schedule_interface.get_interface()
+                
+                # Tab 4: 任务队列
                 with gr.TabItem("🔄 任务队列", id="queue_tab"):
                     queue_components = self.task_queue_interface.create_interface()
                 
-                # Tab 4: 数据库管理
+                # Tab 5: 数据库管理
                 with gr.TabItem("📊 数据库管理", id="database_tab"):
                     from web.components.database_interface import database_interface
                     database_components = database_interface.create_interface()
@@ -827,4 +838,4 @@ if __name__ == "__main__":
         share=False,
         show_error=True,
         debug=False
-    ) 
+    )

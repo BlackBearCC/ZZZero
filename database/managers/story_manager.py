@@ -141,18 +141,21 @@ class StoryManager(DatabaseManager):
                 logger.error("无效的剧情数据格式")
                 return False
             
+            # 记录新生成的故事ID映射，用于更新返回结果
+            story_id_mapping = {}
+            
             for story in story_list:
-                story_id = story.get('剧情ID', '')
+                temp_story_id = story.get('剧情ID', '')  # 临时ID，可能会被替换
                 story_name = story.get('剧情名称', '未命名剧情')
-                story_overview = story.get('剧情概述', '')  # 新增剧情概述字段
+                story_overview = story.get('剧情概述', '')  
                 scenes = story.get('剧情小节', [])
                 story_summary_data = story.get('剧情总结', {})
                 
-                # 插入或更新剧情主表
+                # 插入剧情主表，使用数据库自增ID
                 story_record = {
-                    'story_id': story_id,
+                    'story_id': temp_story_id,  # 暂时使用临时ID
                     'story_name': story_name,
-                    'story_overview': story_overview,  # 保存剧情概述
+                    'story_overview': story_overview,
                     'story_type': config.get('story_type', 'daily_life'),
                     'story_length': config.get('story_length', 'medium'),
                     'relationship_depth': config.get('relationship_depth', 'casual'),
@@ -168,23 +171,40 @@ class StoryManager(DatabaseManager):
                 # 检查记录是否存在
                 existing = self.execute_query(
                     "SELECT id FROM stories WHERE story_id = ?", 
-                    (story_id,), 
+                    (temp_story_id,), 
                     fetch_all=False
                 )
                 
                 if existing:
                     # 更新现有记录
-                    self.update_record('stories', story_record, 'story_id = ?', (story_id,))
+                    self.update_record('stories', story_record, 'story_id = ?', (temp_story_id,))
+                    story_id = temp_story_id  # 继续使用原ID
                 else:
-                    # 插入新记录
-                    self.insert_record('stories', story_record)
+                    # 插入新记录并获取生成的自增ID
+                    last_row_id = self.insert_record('stories', story_record)
+                    
+                    # 使用数据库自增ID生成真正的故事ID
+                    real_story_id = f"STORY_{last_row_id:05d}"
+                    
+                    # 更新stories表中的story_id字段为真正的ID
+                    self.update_record('stories', {'story_id': real_story_id}, 'id = ?', (last_row_id,))
+                    
+                    # 记录ID映射关系
+                    story_id_mapping[temp_story_id] = real_story_id
+                    
+                    # 使用新生成的ID
+                    story_id = real_story_id
                 
                 # 删除旧的小节数据
                 self.delete_record('scenes', 'story_id = ?', (story_id,))
                 
-                # 插入小节数据
+                # 插入小节数据，使用真正的故事ID
                 for idx, scene in enumerate(scenes):
-                    scene_id = scene.get('小节ID', f'SCENE_{idx+1:03d}')
+                    old_scene_id = scene.get('小节ID', f'SCENE_{idx+1:03d}')
+                    
+                    # 根据新的故事ID生成小节ID
+                    scene_id = f"S{story_id.split('_')[1]}_SCENE_{idx+1:03d}"
+                    
                     participants = scene.get('参与角色', [])
                     
                     scene_record = {
@@ -197,6 +217,7 @@ class StoryManager(DatabaseManager):
                         'scene_order': idx + 1,
                         'scene_metadata': json.dumps({
                             'original_index': idx,
+                            'original_scene_id': old_scene_id,  # 保存原始ID用于追踪
                             'content_length': len(scene.get('小节内容', '')),
                             'participant_count': len(participants)
                         }, ensure_ascii=False)
@@ -243,7 +264,24 @@ class StoryManager(DatabaseManager):
                 # 自动生成标签
                 self._generate_story_tags(story_id, story, config)
             
-            logger.info(f"成功保存 {len(story_list)} 个剧情到数据库")
+            # 更新原始故事数据中的ID映射，用于返回给调用者
+            if story_id_mapping:
+                for i, story in enumerate(story_data['剧情列表']):
+                    old_id = story['剧情ID']
+                    if old_id in story_id_mapping:
+                        story_data['剧情列表'][i]['剧情ID'] = story_id_mapping[old_id]
+                        
+                        # 同时更新所有小节ID
+                        for j, scene in enumerate(story['剧情小节']):
+                            old_scene_prefix = old_id.replace('STORY_', 'S')
+                            new_scene_prefix = story_id_mapping[old_id].replace('STORY_', 'S')
+                            old_scene_id = scene['小节ID']
+                            
+                            if old_scene_id.startswith(old_scene_prefix):
+                                scene_suffix = old_scene_id[len(old_scene_prefix):]
+                                story_data['剧情列表'][i]['剧情小节'][j]['小节ID'] = new_scene_prefix + scene_suffix
+            
+            logger.info(f"成功保存 {len(story_list)} 个剧情到数据库，ID映射: {story_id_mapping}")
             return True
             
         except Exception as e:

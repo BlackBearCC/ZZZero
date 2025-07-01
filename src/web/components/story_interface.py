@@ -11,7 +11,14 @@ class StoryInterface:
     """剧情生成工作流界面"""
     
     def __init__(self):
-        self.workflow_chat = WorkflowChat()
+        self.workflow_chat = WorkflowChat(
+            workflow_name="剧情生成工作流",
+            nodes=[
+                {"id": "planning", "name": "剧情规划", "description": "分析角色关系和剧情主线"},
+                {"id": "plot", "name": "剧情生成", "description": "生成具体的剧情内容"},
+                {"id": "save", "name": "数据保存", "description": "保存到数据库"}
+            ]
+        )
     
     def create_story_interface(self) -> Dict[str, Any]:
         """创建完整的剧情生成界面"""
@@ -263,4 +270,4 @@ class StoryInterface:
                         loc_info.get('atmosphere', '')
                     ])
         
-        return preview_data 
+        return preview_data

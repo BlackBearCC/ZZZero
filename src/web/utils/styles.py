@@ -10,6 +10,34 @@ def get_custom_css() -> str:
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
     }
     
+    /* 配置面板滚动样式 */
+    .config-panel-scroll {
+        max-height: 800px;
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding-right: 10px;
+        scrollbar-width: thin;
+        scrollbar-color: #888 #f1f1f1;
+    }
+    
+    .config-panel-scroll::-webkit-scrollbar {
+        width: 8px;
+    }
+    
+    .config-panel-scroll::-webkit-scrollbar-track {
+        background: #f1f1f1;
+        border-radius: 4px;
+    }
+    
+    .config-panel-scroll::-webkit-scrollbar-thumb {
+        background: #888;
+        border-radius: 4px;
+    }
+    
+    .config-panel-scroll::-webkit-scrollbar-thumb:hover {
+        background: #555;
+    }
+    
     /* 工作流进度样式 */
     .workflow-progress {
         background: #ffffff;
@@ -107,6 +135,23 @@ HTML_HEAD = """
             childList: true,
             subtree: true
         });
+        
+        // 修复配置面板滚动 - 确保应用CSS类而不是覆盖样式
+        setTimeout(function() {
+            const configPanels = document.querySelectorAll('.config-panel-scroll');
+            configPanels.forEach(panel => {
+                if(panel) {
+                    // 确保类名应用正确
+                    panel.classList.add('config-panel-scroll');
+                }
+            });
+        }, 1000);
     });
 </script>
-""" 
+"""
+
+# 将CSS样式添加到全局样式列表中
+GLOBAL_CSS = [
+    get_custom_css(),
+    HTML_HEAD
+] 

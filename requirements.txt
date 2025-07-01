@@ -40,4 +40,8 @@ pytest-asyncio>=0.21.0
 black>=23.0.0
 flake8>=6.0.0
 mypy>=1.5.0
-ipython>=8.0.0 
+ipython>=8.0.0
+
+# 日历功能相关
+holidays>=0.37
+chinese_calendar>=1.10.0 

@@ -13,12 +13,25 @@ import logging
 class WorkflowChat:
     """工作流聊天界面类"""
     
-    def __init__(self):
+    def __init__(self, workflow_name: str = "工作流", nodes: List[Dict[str, str]] = None):
+        """
+        初始化工作流聊天界面
+        
+        Args:
+            workflow_name: 工作流名称
+            nodes: 节点列表，每个节点包含id、name、description字段
+        """
+        self.workflow_name = workflow_name
+        self.nodes = nodes or []
         self.messages = []
         self.current_node = None
         self.node_states = {}
         self.node_results = {}  # 存储每个节点的结果
         self.user_inputs = {}
+        
+        # 初始化节点状态
+        for node in self.nodes:
+            self.node_states[node['id']] = 'pending'
         
     def create_workflow_chat_interface(self) -> Dict[str, Any]:
         """创建工作流聊天界面"""
@@ -82,15 +95,31 @@ class WorkflowChat:
     
     def _create_workflow_progress(self) -> str:
         """创建竖向工作流进度显示"""
-        nodes = [
-            ("📋", "剧情规划", "planning"),
-            ("📚", "剧情生成", "plot"),
-            ("💾", "数据库写入", "save")
-        ]
+        # 使用动态节点配置，如果没有配置则使用默认节点
+        if self.nodes:
+            # 为每个节点添加默认图标
+            node_icons = {
+                "planning": "📋",
+                "daily": "📅", 
+                "assignment": "👥",
+                "integration": "🔗",
+                "save": "💾",
+                "plot": "📚",
+                "character": "👤",
+                "location": "📍"
+            }
+            nodes = [(node_icons.get(node['id'], "⚙️"), node['name'], node['id']) for node in self.nodes]
+        else:
+            # 默认节点配置（向后兼容）
+            nodes = [
+                ("📋", "剧情规划", "planning"),
+                ("📚", "剧情生成", "plot"),
+                ("💾", "数据库写入", "save")
+            ]
         
-        progress_html = """
+        progress_html = f"""
         <div style='background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);'>
-            <h3 style='color: #374151; margin: 0 0 20px 0; text-align: center; font-weight: 700; font-size: 18px;'>🔄 工作流执行进度</h3>
+            <h3 style='color: #374151; margin: 0 0 20px 0; text-align: center; font-weight: 700; font-size: 18px;'>🔄 {self.workflow_name}执行进度</h3>
         """
         
         for i, (icon, name, node_id) in enumerate(nodes):
@@ -360,4 +389,4 @@ class WorkflowChat:
 
     def _create_node_indicator(self, current_node: str = None) -> str:
         """创建节点状态指示器 - 废弃，使用新的进度显示"""
-        return self._create_workflow_progress() 
+        return self._create_workflow_progress()

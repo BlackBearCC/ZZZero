@@ -88,8 +88,8 @@ class StoryWorkflow:
         return {
             'name': '方知衡',
             'type': 'protagonist',
-            'description': '云枢大学天文系客座教授、香丘天文院研究员，28岁，理性严谨、内敛温和、平等包容、责任感强',
-            'full_profile': self.protagonist_data[:200] + "..." if len(self.protagonist_data) > 200 else self.protagonist_data
+            'description': '大学天文系教授、研究员，28岁，理性严谨、内敛温和、平等包容、责任感强',
+            'full_profile': self.protagonist_data
         }
     
     def get_characters_list(self) -> List[Dict[str, Any]]:
@@ -801,20 +801,13 @@ class PlotGenerationNode(BaseNode):
             all_stories = story_manager.get_stories_by_filter({}, limit=1000)
             existing_story_ids = [story['story_id'] for story in all_stories]
             
-            # 分析现有ID模式，找出最大编号
-            import re
-            story_numbers = []
-            for story_id in existing_story_ids:
-                match = re.match(r'STORY_(\d+)', story_id)
-                if match:
-                    story_numbers.append(int(match.group(1)))
-            
-            max_story_number = max(story_numbers) if story_numbers else 0
+            # 生成临时ID前缀，实际存储时会被替换为数据库自增ID
+            temp_prefix = "TEMP_"
             
         except Exception as e:
             logger.warning(f"获取现有故事ID失败: {e}")
             existing_story_ids = []
-            max_story_number = 0
+            temp_prefix = "TEMP_"
         
         # 构建通用的剧情生成提示词
         plot_prompt = f"""
@@ -835,18 +828,17 @@ class PlotGenerationNode(BaseNode):
 - 剧情细分程度：{story_length}（每个剧情包含的独立小节数量）
 - 关系深度：{relationship_depth}
 
-# 现有故事ID信息（避免重复）
+# 剧情ID生成说明
 
-- 现有故事ID: {', '.join(existing_story_ids[:10])}{'...' if len(existing_story_ids) > 10 else ''}
-- 最大故事编号: {max_story_number}
-- 新故事ID必须从 STORY_{max_story_number + 1:03d} 开始递增
+- 使用临时ID，格式为 TEMP_001, TEMP_002 等
+- 数据库保存时会自动分配真正的ID
 
 **核心要求**：
 1. 每个小节都是独立的一幕演绎，包含完整的四幕式结构
 2. 每个小节必须同时出现主角方知衡和指定的参与角色
 3. 小节之间没有时间空间联系，可以在任意时间地点使用
 4. 每个小节都有开端→发展→高潮→结局的完整戏剧弧线
-5. **故事ID必须按照现有编号递增，避免重复**
+5. **故事使用临时ID，数据库会自动替换为真正的ID**
 
 # 输出要求
 
@@ -862,12 +854,12 @@ class PlotGenerationNode(BaseNode):
     }},
     "剧情列表": [
       {{
-        "剧情ID": "STORY_{max_story_number + 1:03d}",
+        "剧情ID": "TEMP_001",
         "剧情名称": "第1个大剧情的名称",
         "剧情概述": "整段大剧情的四幕式概述，清晰描述从开端到结局的完整故事弧线",
         "剧情小节": [
           {{
-            "小节ID": "S{max_story_number + 1:03d}_SCENE_001",
+            "小节ID": "STEMP_001_SCENE_001",
             "小节标题": "独立小节的标题",
             "小节内容": "完整的故事内容，自然融入四幕式结构（开端→发展→高潮→结局），包含角色对话和情感变化，体现独立完整的一幕演绎，禁止包含时间，主角说话要正常合理的人设语气，禁止装逼",
             "地点": "发生地点",
@@ -887,8 +879,8 @@ class PlotGenerationNode(BaseNode):
 
 请确保：
 1. 准确生成 **{story_count} 个完整的大剧情**
-2. **故事ID必须按顺序递增**：第1个剧情使用 STORY_{max_story_number + 1:03d}，第2个使用 STORY_{max_story_number + 2:03d}，以此类推
-3. **小节ID格式**：第1个剧情的小节使用 S{max_story_number + 1:03d}_SCENE_001、S{max_story_number + 1:03d}_SCENE_002 等
+2. **故事ID使用临时ID**：第1个剧情使用 TEMP_001，第2个使用 TEMP_002，以此类推
+3. **小节ID格式**：第1个剧情的小节使用 STEMP_001_SCENE_001、STEMP_001_SCENE_002 等
 4. 每个大剧情根据story_length设置生成相应数量的独立小节：
    - short: 1-2个独立小节
    - medium: 3-5个独立小节  
