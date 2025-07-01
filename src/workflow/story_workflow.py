@@ -655,14 +655,14 @@ class StoryPlanningNode(BaseNode):
                             if think_content.strip():
                                 display_content += f"""
 <div style="background: #f8f9fa; border-left: 4px solid #6c757d; padding: 10px; margin: 10px 0; border-radius: 4px;">
-🤔 思考过程：<br>
+思考过程：<br>
 {think_content}
 </div>"""
                             
                             if final_content.strip():
                                 display_content += f"""
 <div style="background: #e8f5e9; border-left: 4px solid #28a745; padding: 10px; margin: 10px 0; border-radius: 4px;">
-📋 规划结果：<br>
+规划结果：<br>
 {final_content}
 </div>"""
                             
@@ -927,7 +927,7 @@ class PlotGenerationNode(BaseNode):
                             if think_content.strip():
                                 display_content += f"""
 <div style="background: #f8f9fa; border-left: 4px solid #6c757d; padding: 10px; margin: 10px 0; border-radius: 4px;">
-🤔 思考过程：<br>
+思考过程：<br>
 {think_content}
 </div>"""
                             

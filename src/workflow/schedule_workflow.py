@@ -581,12 +581,18 @@ class ScheduleGenerateNode(BaseNode):
         protagonist = input_data.get('protagonist', '方知衡')
         protagonist_data = input_data.get('protagonist_data', '')
         
+        # 获取上一批次总结信息（如果有）
+        config = input_data.get('config', {})
+        previous_summary = config.get('previous_batch_summary', '')
+        
         # 构建日程生成提示词
         generation_prompt = f"""
-你是一名专业的日程规划师和故事编剧，需要为主角{protagonist}生成从{start_date}到{end_date}的详细日程安排。这不仅是简单的时间安排，更是一个完整的生活故事。
+你是一名专业的日程规划师和故事编剧，需要为主角{protagonist}生成从{start_date}到{end_date}的详细日程安排。这不仅是简单的时间安排，更是一个完整的生活故事，要体现他在云枢市真实的日常生活。
 
 # 主角信息
 {protagonist_data}
+
+{previous_summary if previous_summary else ''}
 
 # 日程需求
 - 日程类型：{schedule_type}（周期规划）
@@ -604,13 +610,21 @@ class ScheduleGenerateNode(BaseNode):
 
 # 核心生成要求
 
+## 云枢市真实生活感
+1. **角色均衡分布**：所有角色（除主角外）都平等重要，根据自然的生活节奏出现
+2. **日常随机事件**：增加偶遇、意外发现等真实生活元素
+3. **城市生活细节**：路边小店、街头艺人、流浪动物、天气变化等
+4. **非NPC互动**：与环境、动物、自然现象的互动，体现生活的丰富性
+5. **节日活动**：节日活动、文化活动等
+
 ## 故事性要求
 1. **情感发展线**：每个角色的出现都应该有情感推进，不是简单的功能性互动
 2. **细节丰富度**：每个时间段的描述应该包含具体的对话片段、内心活动、环境描写
 3. **连贯性**：前一天的事件应该对后续产生影响，形成完整的故事链
-4. **角色深度**：充分利用每个角色的性格特点，创造有趣的互动情节
+4. **生活真实感**：包含工作压力、情绪波动、小确幸、意外惊喜等真实元素
 
 ## 计划与总结的区别
+- **周期计划(weekly_plan)**：{protagonist}对整个{total_days}天周期的整体规划和期望
 - **每日计划(daily_plan)**：{protagonist}早晨醒来时对这一天的预期和安排，基于他现有的信息和经验
 - **每日总结(daily_summary)**：一天结束后对实际发生事件的回顾，可能与计划有出入，包含意外和惊喜
 
@@ -621,10 +635,11 @@ class ScheduleGenerateNode(BaseNode):
 4. **下午(14:00-18:00)**：继续工作、实地考察、学术活动
 5. **晚上(18:00-23:00)**：社交活动、娱乐、个人时间、深度交流
 
-## 角色互动原则
-1. **频率分配**：重要角色每2-3天出现一次，次要角色每4-5天出现一次
+## 角色出现原则
+1. **自然分布**：根据生活逻辑和工作关系自然出现，不强制平均分配
 2. **互动深度**：每次互动都要有具体的对话内容和情感变化
 3. **关系发展**：角色间的关系应该随时间推进而发展变化
+4. **随机偶遇**：增加意外碰面、巧合事件等真实生活元素
 
 # 输出格式
 请按以下JSON格式输出日程安排：
@@ -638,11 +653,11 @@ class ScheduleGenerateNode(BaseNode):
     "结束日期": "{end_date}",
     "日程特点": "描述这段时间的整体特点和主要故事线",
     "情感主线": "这段时间的主要情感发展线",
-    "常规活动": ["教学工作", "天文研究", "学术交流", "..."],
+    "常规活动": ["教学工作", "锻炼", "习惯", "..."],
     "主要互动角色": ["角色1", "角色2", "..."],
     "常去地点": ["地点1", "地点2", "..."]
   }},
-  "weekly_plan": "{protagonist}对这{total_days}天的整体规划和期望，包括工作目标、想要完成的事情、期待的发展等",
+  "weekly_plan": "{protagonist}对这{total_days}天的整体规划，第三人称描述，250字以内",
   "daily_schedules": [
     {{
       "date": "YYYY-MM-DD",
@@ -650,9 +665,8 @@ class ScheduleGenerateNode(BaseNode):
       "weekday_name": "周几",
       "is_holiday": true/false,
       "holiday_name": "节日名称（如果是节假日）",
-      "weather": "天气情况和对心情的影响",
-      "daily_theme": "当日的核心主题或故事重点",
-      "daily_plan": "{protagonist}早晨对这一天的计划和期望，基于他现有的认知",
+      "weather": "天气情况",
+      "daily_plan": "{protagonist}早晨对这一天的计划和期望，基于他现有的认知，第三人称描述，250字以内",
       "time_slots": [
         {{
           "slot_name": "夜间",
@@ -661,20 +675,51 @@ class ScheduleGenerateNode(BaseNode):
           "assigned_character": "{protagonist}",
           "activity_type": "休息/特殊事件",
           "location": "具体地点",
-          "story_content": "详细的故事描述，包含环境、心理活动、具体事件、对话内容（如果有其他角色）等，至少150字"
+          "story_content": "详细的故事描述，四幕式结构思路，250字以内",
+          "involved_characters": ["角色名1", "角色名2"]
         }},
         {{
           "slot_name": "上午",
           "start_time": "06:00",
           "end_time": "11:00",
-          "assigned_character": "主要互动角色",
+          "assigned_character": "主要互动角色或{protagonist}",
           "activity_type": "工作/学术/社交",
           "location": "具体地点",
-          "story_content": "详细的故事描述，重点描述与角色的互动，包含具体对话、情感变化、环境细节等，至少200字"
+          "story_content": "详细的一段话故事描述，四幕式结构思路，250字以内",
+          "involved_characters": ["角色名1", "角色名2"]
         }},
-        // ... 其他时间段，每个都要有丰富的故事内容
+        {{
+          "slot_name": "中午",
+          "start_time": "11:00",
+          "end_time": "14:00",
+          "assigned_character": "互动角色或{protagonist}",
+          "activity_type": "用餐/社交/休息",
+          "location": "具体地点",
+          "story_content": "详细的一段话故事描述，四幕式结构思路，250字以内",
+          "involved_characters": ["角色名1", "小动物名等"]
+        }},
+        {{
+          "slot_name": "下午",
+          "start_time": "14:00",
+          "end_time": "18:00",
+          "assigned_character": "互动角色或{protagonist}",
+          "activity_type": "工作/学术/生活",
+          "location": "具体地点",
+          "story_content": "详细的故事描述，至少200字",
+          "involved_characters": ["角色名1", "角色名2"]
+        }},
+        {{
+          "slot_name": "晚上",
+          "start_time": "18:00",
+          "end_time": "23:00",
+          "assigned_character": "互动角色或{protagonist}",
+          "activity_type": "社交/娱乐/个人时间",
+          "location": "具体地点",
+          "story_content": "详细的故事描述，可以包含深度交流、意外发现等，至少200字",
+          "involved_characters": ["角色名1", "角色名2"]
+        }}
       ],
-      "daily_summary": "一天结束时对实际发生事件的总结"
+      "daily_summary": "第三人称，一天结束时对实际发生事件的总结"
     }},
     // ... 其他日期
   ]
@@ -682,14 +727,34 @@ class ScheduleGenerateNode(BaseNode):
 ```
 
 # 重要提醒
-1. 每个时间段的story_content必须丰富详实，像小说片段一样生动
-2. 角色对话要符合各自的性格特点，有真实感
-3. 情节要有起伏，不能每天都平淡无奇
-4. 要体现{protagonist}的职业特色和个人特点
-5. daily_plan是计划，daily_summary是实际发生的总结，两者可以不同
-6. 确保JSON格式完全正确，可以被程序解析
+1. **数据完整性要求**：
+   - weekly_plan：必须包含整个周期的计划
+   - daily_plan：每天都要有具体的早晨计划
+   - 每天必须有5个完整的时间段（夜间、上午、中午、下午、晚上）
+   - involved_characters：每个时间段都要明确列出涉及的角色名称列表
 
-请开始生成这个充满故事性的详细日程安排。
+2. **故事质量要求**：
+   - 每个时间段的story_content必须丰富详实，像小说片段一样生动
+   - 角色对话要符合各自的性格特点，有真实感
+   - 增加随机事件：路边小猫、意外发现、巧遇等云枢市生活细节
+   - 情节要有起伏，包含工作压力、小确幸、意外惊喜等真实元素
+   - 禁止有任何男女恋爱元素
+
+3. **角色处理要求**：
+   - 所有角色平等重要，根据生活逻辑自然出现
+   - 可以创造临时角色（如店主、路人、小动物）增加真实感
+   - involved_characters中只需列出角色名称，不需要描述
+
+4. **生活真实感要求**：
+   - 体现{protagonist}的职业特色和个人特点
+   - 包含云枢市的城市生活细节
+   - daily_plan是计划，daily_summary是实际发生的总结，可以有差异
+
+5. **技术要求**：
+   - 确保JSON格式完全正确，可以被程序解析
+   - 每个字段都要填写完整，不能为空
+
+请开始生成这个充满云枢市生活真实感的详细日程安排。
 """
         
         # 流式调用LLM
@@ -727,14 +792,14 @@ class ScheduleGenerateNode(BaseNode):
                             if think_content.strip():
                                 display_content += f"""
 <div style="background: #f8f9fa; border-left: 4px solid #6c757d; padding: 10px; margin: 10px 0; border-radius: 4px;">
-🤔 思考过程：<br>
+思考过程：<br>
 {think_content}
 </div>"""
                             
                             if final_content.strip():
                                 display_content += f"""
 <div style="background: #e8f5e9; border-left: 4px solid #28a745; padding: 10px; margin: 10px 0; border-radius: 4px;">
-📋 生成结果：<br>
+生成结果：<br>
 {final_content}
 </div>"""
                             
