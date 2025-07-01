@@ -497,14 +497,14 @@ class ScheduleGenerateNode(BaseNode):
                 date_str = current_date.strftime('%Y-%m-%d')
                 weekday = current_date.weekday()
                 weekday_name = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'][weekday]
-                
+            
                 # 检查是否节假日
                 is_holiday = False
                 holiday_name = ""
                 if include_holidays and date_str in holidays_data:
                     is_holiday = True
                     holiday_name = holidays_data[date_str]['name']
-                
+            
                 # 添加日期信息
                 dates_info.append({
                     'date': date_str,
@@ -550,7 +550,7 @@ class ScheduleGenerateNode(BaseNode):
 
 # 生成要求
 1. 为每天生成合理的日程安排，每个时间段都要有具体安排
-2. 考虑工作日和休息日的区别，工作日以教学科研为主，休息日以休闲娱乐为主
+2. 考虑工作日和休息日的区别，工作日以工作为主，休息日以休闲娱乐为主
 3. 合理分配不同角色的出现频率，确保主要角色互动更频繁
 4. 考虑天气、季节、节假日等因素对日程的影响
 5. 为每天生成一个主题和总结
@@ -673,8 +673,9 @@ class ScheduleGenerateNode(BaseNode):
             error_msg = "日程生成: LLM未初始化"
             logger.error(error_msg)
             raise Exception(error_msg)
-        
+                
         # 解析JSON格式的结果
+        schedule_data = None
         try:
             from parsers.json_parser import JSONParser
             parser = JSONParser()
@@ -705,7 +706,6 @@ class ScheduleGenerateNode(BaseNode):
                         "JSON解析失败，但已生成日程内容文本。",
                         "warning"
                     )
-                
         except Exception as parse_error:
             logger.warning(f"日程JSON解析异常: {parse_error}，使用原始内容")
             schedule_data = {"schedule_content": final_content}

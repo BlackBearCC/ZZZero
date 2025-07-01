@@ -52,7 +52,13 @@ class DoubaoLLM(BaseLLMProvider):
             ThinkResult: 包含推理过程和最终答案的结果
         """
         # 获取DeepSeek R1模型名称，默认从环境变量获取
-        deepseek_model = os.getenv('DOUBAO_MODEL_DEEPSEEKR1', 'deepseek-reasoner')
+        deepseek_model = os.getenv('DOUBAO_MODEL_DEEPSEEKR1', 'ep-20250221154107-c4qc7')
+        
+        # 确保API基础URL存在
+        if not self.config.api_base:
+            self.config.api_base = os.getenv('DOUBAO_BASE_URL', "https://ark.cn-beijing.volces.com/api/v3")
+            if not self.config.api_base:
+                raise ValueError("豆包API基础URL未设置，请在环境变量中设置DOUBAO_BASE_URL或在配置中提供api_base")
         
         headers = {
             "Authorization": f"Bearer {self.config.api_key}",
@@ -126,7 +132,13 @@ class DoubaoLLM(BaseLLMProvider):
             Dict: 包含推理过程或最终答案的流式数据
         """
         # 获取DeepSeek R1模型名称
-        deepseek_model = os.getenv('DOUBAO_MODEL_DEEPSEEKR1', 'deepseek-reasoner')
+        deepseek_model = os.getenv('DOUBAO_MODEL_DEEPSEEKR1', 'ep-20250221154107-c4qc7')
+        
+        # 确保API基础URL存在
+        if not self.config.api_base:
+            self.config.api_base = os.getenv('DOUBAO_BASE_URL', "https://ark.cn-beijing.volces.com/api/v3")
+            if not self.config.api_base:
+                raise ValueError("豆包API基础URL未设置，请在环境变量中设置DOUBAO_BASE_URL或在配置中提供api_base")
         
         headers = {
             "Authorization": f"Bearer {self.config.api_key}",
@@ -255,6 +267,13 @@ class DoubaoLLM(BaseLLMProvider):
                     "reasoning_content": think_result.reasoning_content
                 }
             )
+            
+        # 确保API基础URL存在
+        if not self.config.api_base:
+            self.config.api_base = os.getenv('DOUBAO_BASE_URL', "https://ark.cn-beijing.volces.com/api/v3")
+            if not self.config.api_base:
+                raise ValueError("豆包API基础URL未设置，请在环境变量中设置DOUBAO_BASE_URL或在配置中提供api_base")
+                
         headers = {
             "Authorization": f"Bearer {self.config.api_key}",
             "Content-Type": "application/json"
@@ -319,6 +338,12 @@ class DoubaoLLM(BaseLLMProvider):
             return_dict: 是否返回字典格式（工作流使用）
             **kwargs: 其他参数
         """
+        # 确保API基础URL存在
+        if not self.config.api_base:
+            self.config.api_base = os.getenv('DOUBAO_BASE_URL', "https://ark.cn-beijing.volces.com/api/v3")
+            if not self.config.api_base:
+                raise ValueError("豆包API基础URL未设置，请在环境变量中设置DOUBAO_BASE_URL或在配置中提供api_base")
+        
         # 移除默认超时限制，允许长时间生成
         actual_timeout = timeout if timeout is not None else None
         

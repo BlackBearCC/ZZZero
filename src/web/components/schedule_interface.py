@@ -68,12 +68,13 @@ class ScheduleInterface:
     def _init_workflow(self):
         """初始化日程工作流"""
         try:
-            # 创建LLM实例
+            # 创建LLM实例 - 使用doubao与故事工作流保持一致
             llm_config = LLMConfig(
-                provider="openai",
-                model_name="gpt-4",
+                provider="doubao",
+                api_key=os.getenv('DOUBAO_API_KEY', 'b633a622-b5d0-4f16-a8a9-616239cf15d1'),
+                model_name=os.getenv('DOUBAO_MODEL_DEEPSEEKR1', 'ep-20250221154107-c4qc7'),  # 使用豆包的默认模型
                 temperature=0.7,
-                max_tokens=2000
+                max_tokens=16384
             )
             llm = self.llm_factory.create(llm_config)
             
@@ -93,6 +94,8 @@ class ScheduleInterface:
             
         except Exception as e:
             logger.error(f"日程生成工作流初始化失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     def create_schedule_interface(self) -> Dict[str, Any]:
         """创建完整的日程生成界面"""
@@ -129,6 +132,18 @@ class ScheduleInterface:
                 
                 # 右侧工作流聊天界面 - 与Agent窗口相同高度
                 with gr.Column(scale=2, min_width=600):
+                    # 检查workflow_chat是否正确初始化
+                    if self.workflow_chat is None:
+                        # 如果为空，重新创建一个实例
+                        self.workflow_chat = WorkflowChat(
+                            workflow_name="日程生成工作流",
+                            nodes=[
+                                {"id": "generate", "name": "日程生成", "description": "生成完整日程安排，包含日期、角色和剧情"},
+                                {"id": "save", "name": "数据保存", "description": "保存日程到数据库"}
+                            ]
+                        )
+                        logger.info("在界面创建过程中重新初始化了WorkflowChat")
+                    
                     workflow_components = self.workflow_chat.create_workflow_chat_interface()
             
             # 底部结果展示
@@ -361,7 +376,7 @@ class ScheduleInterface:
             # 生成按钮 - 设置为明显的主要动作按钮
             with gr.Row():
                 components['generate_btn'] = gr.Button(
-                    "🚀 开始生成日程",
+                    "🚀 启动工作流",
                     variant="primary",
                     size="lg",
                     scale=2,  # 加大按钮
@@ -461,7 +476,7 @@ class ScheduleInterface:
         <div style="text-align: center; font-family: Arial, sans-serif; max-width: 100%; overflow-x: auto;">
             <div style="display: flex; justify-content: space-between; margin-bottom: 10px; align-items: center;">
                 <button onclick="prevMonth()" style="padding: 5px 10px; cursor: pointer;">◀</button>
-                <h3>{year}年 {month_name}</h3>
+            <h3>{year}年 {month_name}</h3>
                 <button onclick="nextMonth()" style="padding: 5px 10px; cursor: pointer;">▶</button>
             </div>
             <table style="margin: 0 auto; border-collapse: collapse; width: 100%;">
@@ -659,19 +674,31 @@ class ScheduleInterface:
             if not self._validate_config(config):
                 return
             
-            # 执行工作流
+            # 设置工作流的LLM（确保使用应用的LLM实例）
+            if hasattr(self, 'app') and hasattr(self.app, 'llm') and self.app.llm:
+                self.schedule_workflow.llm = self.app.llm
+            
+            # 执行工作流 - 确保正确使用async for处理异步生成器
             if self.schedule_workflow and self.workflow_chat:
-                # 修复异步生成器使用方式：使用async for循环而不是await
-                async for _ in self.schedule_workflow.execute_workflow_stream(
+                async for progress_update in self.schedule_workflow.execute_workflow_stream(
                     config, self.workflow_chat
                 ):
-                    # 这里生成器每次迭代都会更新UI，不需要额外处理
+                    # 这里只需要迭代，不需要额外操作
+                    # 每次迭代会通过yield返回更新后的UI状态
                     pass
             
         except Exception as e:
             logger.error(f"日程生成失败: {e}")
             import traceback
             logger.error(traceback.format_exc())
+            
+            # 添加错误消息到工作流聊天
+            if self.workflow_chat:
+                await self.workflow_chat.add_node_message(
+                    "系统",
+                    f"日程生成失败: {str(e)}",
+                    "error"
+                )
     
     def _parse_generation_config(self, *args) -> Dict[str, Any]:
         """解析生成配置"""

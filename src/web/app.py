@@ -54,6 +54,7 @@ class AgentApp:
         self.agent = None
         self.tool_manager = None
         self.llm = None
+        self.llm_factory = LLMFactory()  # 添加LLM工厂实例
         
         # 保存当前配置
         self.current_config = {
@@ -189,9 +190,13 @@ class AgentApp:
                 
                 # Tab 3: 日程生成工作流
                 with gr.TabItem("📅 日程生成工作流", id="schedule_tab"):
-                    # 延迟初始化日程界面
+                    # 延迟初始化日程界面 - 使用app的LLM
                     if not self.schedule_interface:
-                        self.schedule_interface = create_schedule_interface(LLMFactory)
+                        from web.components.schedule_interface import create_schedule_interface
+                        self.schedule_interface = create_schedule_interface(self.llm_factory)
+                        # 设置LLM为app的实例，确保与其他工作流一致
+                        if hasattr(self, 'llm') and self.llm and hasattr(self.schedule_interface, 'schedule_workflow') and self.schedule_interface.schedule_workflow:
+                            self.schedule_interface.schedule_workflow.llm = self.llm
                     schedule_components = self.schedule_interface.get_interface()
                 
                 # Tab 4: 任务队列
