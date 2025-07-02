@@ -927,9 +927,13 @@ class ScheduleGenerateNode(BaseNode):
         # 获取最近4个3天批次的summary作为历史记录
         recent_batch_summaries = await self._get_recent_batch_summaries(4, cycle_start_date)
         batch_history_context = ""
+        logger.info(f"🔍 尝试获取历史3天总结，日期界限: {cycle_start_date}")
+        logger.info(f"📋 获取到 {len(recent_batch_summaries)} 个历史3天总结:")
+        for i, summary in enumerate(recent_batch_summaries):
+            logger.info(f"  📝 总结 {i+1}: {summary[:150]}...")
         if recent_batch_summaries:
             batch_history_context = f"## 最近批次历史记录\n{chr(10).join(recent_batch_summaries)}\n"
-            logger.info(f"获取到最近 {len(recent_batch_summaries)} 个批次的历史记录")
+            logger.info(f"✅ 历史记录上下文已构建，长度: {len(batch_history_context)} 字符")
         
         # 分批生成：将周期分成3天一批
         batch_size = 3  # 每次生成3天
@@ -1139,7 +1143,7 @@ class ScheduleGenerateNode(BaseNode):
 5. **上下文连贯**：虽然是独立的，但各时间段之间应该有连贯的关系，形成日常生活的完整画面
 
 # 输出格式
-请按以下JSON格式输出批次日程安排：
+请按以下JSON格式输出批次日程安排，禁止输入任何其他内容：
 
 ```json
 {{
@@ -1276,26 +1280,77 @@ class ScheduleGenerateNode(BaseNode):
             batch_data = None
             try:
                 json_content = self._extract_json_from_content(final_content)
+                logger.info(f"🔍 提取的JSON内容长度: {len(json_content)}")
+                logger.info(f"📝 JSON内容前200字符: {json_content[:200]}...")
+                
                 from parsers.json_parser import JSONParser
                 parser = JSONParser()
                 parsed_result = parser.parse(json_content)
                 
-                if parsed_result and 'daily_schedules' in parsed_result:
-                    batch_data = parsed_result
-                    batch_daily_schedules = batch_data.get('daily_schedules', [])
-                    logger.info(f"批次 {current_batch_start//batch_size + 1} 成功解析，包含 {len(batch_daily_schedules)} 天")
-                    
+                logger.info(f"📊 解析结果类型: {type(parsed_result)}")
+                if isinstance(parsed_result, dict):
+                    logger.info(f"🔑 解析结果顶级键: {list(parsed_result.keys())}")
+                    # 检查是否有daily_schedules字段，如果没有检查嵌套结构
+                    if 'daily_schedules' in parsed_result:
+                        batch_data = parsed_result
+                        batch_daily_schedules = batch_data.get('daily_schedules', [])
+                        batch_summary = batch_data.get('batch_summary', '')  # 提取批次总结
+                        logger.info(f"✅ 直接找到daily_schedules，包含 {len(batch_daily_schedules)} 天")
+                        if batch_summary:
+                            logger.info(f"📝 找到batch_summary: {batch_summary[:100]}...")
+                    elif isinstance(parsed_result, dict) and len(parsed_result) == 1:
+                        # 检查是否是嵌套结构，如 {"batch_info": {...}, "daily_schedules": [...]}
+                        nested_key = list(parsed_result.keys())[0]
+                        nested_data = parsed_result[nested_key]
+                        logger.info(f"🔍 检查嵌套结构，顶级键: {nested_key}")
+                        if isinstance(nested_data, dict) and 'daily_schedules' in nested_data:
+                            batch_data = nested_data
+                            batch_daily_schedules = batch_data.get('daily_schedules', [])
+                            batch_summary = batch_data.get('batch_summary', '')
+                            logger.info(f"✅ 从嵌套结构找到daily_schedules，包含 {len(batch_daily_schedules)} 天")
+                            if batch_summary:
+                                logger.info(f"📝 找到batch_summary: {batch_summary[:100]}...")
+                        else:
+                            # 检查是否整体结构包含daily_schedules
+                            if 'daily_schedules' in str(parsed_result):
+                                logger.info(f"🔍 JSON中包含daily_schedules文本，但结构不符合预期")
+                                logger.info(f"📊 完整解析结果: {parsed_result}")
+                            raise Exception(f"批次解析失败：嵌套结构中缺少daily_schedules字段，找到键: {list(nested_data.keys()) if isinstance(nested_data, dict) else 'non-dict'}")
+                    else:
+                        raise Exception(f"批次解析失败：缺少daily_schedules字段，找到键: {list(parsed_result.keys())}")
+                else:
+                    raise Exception(f"批次解析失败：解析结果不是字典类型，而是 {type(parsed_result)}")
+                
+                if batch_data and batch_daily_schedules:
                     # 合并到周期日程中
                     cycle_daily_schedules.extend(batch_daily_schedules)
+                    
+                    # 立即保存当前批次到CSV（工作流内部保险机制）
+                    await self._save_batch_to_csv_immediately(
+                        batch_daily_schedules, 
+                        batch_data, 
+                        current_cycle_index + 1, 
+                        current_batch_start//batch_size + 1,
+                        current_cycle
+                    )
+                    
+                    # 保存LLM原始回复到TXT文件（增量保存，保留格式）
+                    await self._save_raw_response_to_txt(
+                        final_content,
+                        current_cycle_index + 1,
+                        current_batch_start//batch_size + 1,
+                        batch_start_date,
+                        batch_end_date
+                    )
                     
                     if workflow_chat:
                         await workflow_chat.add_node_message(
                             "日程生成",
-                            f"✅ 批次 {current_batch_start//batch_size + 1} 生成完成（{len(batch_daily_schedules)}天）",
+                            f"✅ 批次 {current_batch_start//batch_size + 1} 生成完成（{len(batch_daily_schedules)}天），已保存到CSV",
                             "success"
                         )
                 else:
-                    raise Exception(f"批次解析失败：缺少daily_schedules字段")
+                    raise Exception(f"批次解析失败：batch_data或batch_daily_schedules为空")
                     
             except Exception as parse_error:
                 logger.error(f"批次 {current_batch_start//batch_size + 1} JSON解析失败: {parse_error}")
@@ -1334,13 +1389,13 @@ class ScheduleGenerateNode(BaseNode):
                 'cycle_summary': cycle_summary
             }
             
-            # 立即保存当前周期到CSV（增量更新）
-            await self._save_cycle_to_csv_immediately(schedule_data, current_cycle_index + 1)
+            # 注释：不在这里保存CSV，等批次生成器统一保存
+            # await self._save_cycle_to_csv_immediately(schedule_data, current_cycle_index + 1)
             
             if workflow_chat:
                 await workflow_chat.add_node_message(
                     "日程生成",
-                    f"✅ 第 {current_cycle_index + 1} 个周期生成完成！共 {len(cycle_daily_schedules)} 天，已立即保存到CSV",
+                    f"✅ 第 {current_cycle_index + 1} 个周期生成完成！共 {len(cycle_daily_schedules)} 天",
                     "success"
                 )
         else:
@@ -1363,6 +1418,130 @@ class ScheduleGenerateNode(BaseNode):
         
         print(f"✅ 周期 {current_cycle_index + 1} 日程生成完成")
         yield output_data
+    
+    async def _save_batch_to_csv_immediately(self, batch_daily_schedules: List[Dict], batch_data: Dict, cycle_number: int, batch_number: int, current_cycle: Dict):
+        """每3天批次完成后立即保存到CSV（工作流内部保险机制）"""
+        try:
+            from pathlib import Path
+            import csv
+            import os
+            from datetime import datetime
+            
+            # 创建输出目录
+            output_dir = Path("workspace/batch_schedule_output")
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 使用带时间戳的文件名，区别于batch_schedule_generator.py的文件
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            csv_file_path = output_dir / f"workflow_batch_C{cycle_number:02d}_B{batch_number:02d}_{timestamp}.csv"
+            
+            # 定义CSV列头（与batch_schedule_generator.py保持一致）
+            csv_headers = [
+                "日期", "星期", "节日信息", "季节", "天气", "主题", 
+                "周期计划", "3天总结", "每日计划", "每日总结", "涉及角色", "角色简介",
+                "上午", "中午", "下午", "晚上", "夜间"
+            ]
+            
+            # 获取周期和批次信息
+            cycle_theme = current_cycle.get('cycle_theme', '')
+            cycle_summary = f"周期{cycle_number}主题：{cycle_theme}"  # 简化的周期计划
+            batch_summary = batch_data.get('batch_summary', '')
+            
+            logger.info(f"🔄 开始保存批次CSV: 周期{cycle_number}, 批次{batch_number}, 包含{len(batch_daily_schedules)}天")
+            if batch_summary:
+                logger.info(f"📝 批次总结: {batch_summary[:100]}...")
+            
+            # 写入CSV文件
+            with open(csv_file_path, 'w', encoding='utf-8', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                
+                # 写入表头
+                writer.writerow(csv_headers)
+                
+                # 遍历每天的日程数据
+                for day_index, day_data in enumerate(batch_daily_schedules):
+                    date = day_data.get('date', '')
+                    weekday = day_data.get('weekday_name', '')
+                    weather = day_data.get('weather', '')
+                    is_holiday = day_data.get('is_holiday', False)
+                    holiday_name = day_data.get('holiday_name', '')
+                    
+                    # 节日信息处理
+                    holiday_info = holiday_name if is_holiday and holiday_name else "无"
+                    
+                    # 根据日期确定季节
+                    season = self._get_season_from_date(date)
+                    
+                    daily_plan = day_data.get('daily_plan', '')
+                    daily_summary = day_data.get('daily_summary', '')
+                    
+                    # 提取每日涉及角色信息
+                    daily_involved_characters = day_data.get('daily_involved_characters', [])
+                    daily_characters_info = ''
+                    
+                    # 从时间段中自动提取角色信息（如果daily_involved_characters为空）
+                    if not daily_involved_characters:
+                        time_slot_chars = set()
+                        for slot in day_data.get('time_slots', []):
+                            involved_chars = slot.get('involved_characters', [])
+                            time_slot_chars.update(involved_chars)
+                        daily_involved_characters = list(time_slot_chars)
+                    
+                    # 生成角色简介信息（简化版，因为工作流内部没有完整角色数据）
+                    if daily_involved_characters:
+                        daily_characters_info = '；'.join([f"{char}-角色简介" for char in daily_involved_characters])
+                    
+                    # 初始化时间段数据
+                    time_slots_data = {
+                        '上午': '',
+                        '中午': '', 
+                        '下午': '',
+                        '晚上': '',
+                        '夜间': ''
+                    }
+                    
+                    # 提取时间段数据
+                    time_slots = day_data.get('time_slots', [])
+                    for slot in time_slots:
+                        slot_name = slot.get('slot_name', '')
+                        if slot_name in time_slots_data:
+                            time_slots_data[slot_name] = slot.get('story_content', '')
+                    
+                    # 3天总结：只在第一天显示批次总结，其他天为空
+                    day_batch_summary = ""
+                    if day_index == 0:  # 第一天显示批次总结
+                        day_batch_summary = batch_summary
+                    
+                    # 构建CSV行数据
+                    row_data = [
+                        date,                          # 日期
+                        weekday,                       # 星期
+                        holiday_info,                  # 节日信息
+                        season,                        # 季节
+                        weather,                       # 天气
+                        cycle_theme,                   # 主题
+                        cycle_summary,                 # 周期计划
+                        day_batch_summary,             # 3天总结
+                        daily_plan,                    # 每日计划
+                        daily_summary,                 # 每日总结
+                        ', '.join(daily_involved_characters),  # 涉及角色
+                        daily_characters_info,         # 角色简介
+                        time_slots_data['上午'],        # 上午
+                        time_slots_data['中午'],        # 中午
+                        time_slots_data['下午'],        # 下午
+                        time_slots_data['晚上'],        # 晚上
+                        time_slots_data['夜间']         # 夜间
+                    ]
+                    
+                    writer.writerow(row_data)
+            
+            logger.info(f"✅ 批次CSV保存成功: {csv_file_path}")
+            logger.info(f"📊 文件内容: {len(batch_daily_schedules)}天日程 + 表头")
+            
+        except Exception as e:
+            logger.error(f"❌ 保存批次CSV失败: 周期{cycle_number}, 批次{batch_number}, 错误: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
         
     async def _save_cycle_to_csv_immediately(self, schedule_data: Dict[str, Any], cycle_number: int):
         """周期完成后立即保存到CSV（增量更新）"""
@@ -1495,6 +1674,48 @@ class ScheduleGenerateNode(BaseNode):
             import traceback
             logger.error(traceback.format_exc())
     
+    async def _save_raw_response_to_txt(self, raw_content: str, cycle_number: int, batch_number: int, start_date: str, end_date: str):
+        """增量保存LLM原始回复到TXT文件，保留格式便于后期解析"""
+        try:
+            from pathlib import Path
+            from datetime import datetime
+            
+            # 创建输出目录
+            output_dir = Path("workspace/batch_schedule_output")
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 使用固定文件名进行增量保存
+            txt_file_path = output_dir / "raw_llm_responses.txt"
+            
+            # 构建格式化的回复内容
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            separator = "=" * 80
+            
+            formatted_content = f"""
+{separator}
+批次信息: 周期{cycle_number}-批次{batch_number} | 日期范围: {start_date} 至 {end_date}
+保存时间: {timestamp}
+{separator}
+
+{raw_content}
+
+{separator}
+批次结束: 周期{cycle_number}-批次{batch_number}
+{separator}
+
+"""
+            
+            # 增量追加到文件
+            with open(txt_file_path, 'a', encoding='utf-8') as f:
+                f.write(formatted_content)
+            
+            logger.info(f"✅ 原始回复已保存到TXT: 周期{cycle_number}-批次{batch_number}, 内容长度: {len(raw_content)} 字符")
+            
+        except Exception as e:
+            logger.error(f"保存原始回复到TXT失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+    
     def _get_season_from_date(self, date_str: str) -> str:
         """根据日期确定季节"""
         try:
@@ -1525,17 +1746,23 @@ class ScheduleGenerateNode(BaseNode):
             
             # 从CSV文件读取最近的3天总结
             csv_file_path = Path("workspace/batch_schedule_output/batch_schedules.csv")
+            logger.info(f"🔍 查找CSV文件: {csv_file_path}")
+            
             if not csv_file_path.exists():
-                logger.info("CSV文件不存在，返回空历史记录")
+                logger.info("❌ CSV文件不存在，返回空历史记录")
                 return []
             
+            logger.info(f"✅ CSV文件存在，文件大小: {csv_file_path.stat().st_size} 字节")
             recent_summaries = []
             before_dt = datetime.strptime(before_date, '%Y-%m-%d')
             
             # 读取CSV文件，提取3天总结
+            row_count = 0
+            valid_summary_count = 0
             with open(csv_file_path, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
+                    row_count += 1
                     try:
                         row_date = row.get('日期', '')
                         if row_date:
@@ -1544,14 +1771,19 @@ class ScheduleGenerateNode(BaseNode):
                                 three_day_summary = row.get('3天总结', '').strip()
                                 if three_day_summary and three_day_summary not in recent_summaries:
                                     recent_summaries.append(three_day_summary)
-                    except:
+                                    valid_summary_count += 1
+                                    logger.info(f"📝 找到有效3天总结 {valid_summary_count}: 日期={row_date}, 总结={three_day_summary[:100]}...")
+                    except Exception as e:
+                        logger.warning(f"⚠️ 解析CSV行失败: {e}, 行数据: {row}")
                         continue
+            
+            logger.info(f"📊 CSV处理完成: 共{row_count}行, 找到{len(recent_summaries)}个不重复的3天总结")
             
             # 返回最近的count个summary（倒序，最新的在前）
             result = recent_summaries[-count:] if len(recent_summaries) >= count else recent_summaries
             result.reverse()  # 最新的在前
             
-            logger.info(f"从CSV获取到 {len(result)} 个历史3天总结记录")
+            logger.info(f"🎯 最终返回 {len(result)} 个历史3天总结记录")
             return result
             
         except Exception as e:
@@ -1637,24 +1869,70 @@ class ScheduleGenerateNode(BaseNode):
             return f"周期{cycle_info.get('cycle_number', '')}完成，共{len(daily_schedules)}天，主题：{cycle_info.get('cycle_theme', '')}。"
         
     def _extract_json_from_content(self, content: str) -> str:
-        """从生成内容中提取JSON部分"""
+        """从生成内容中提取JSON部分 - 修复完整JSON提取"""
         import re
         
-        # 查找```json...```代码块
+        logger.info(f"🔍 开始提取JSON，原始内容长度: {len(content)}")
+        
+        # 优先查找```json...```代码块
         json_pattern = r'```json\s*(.*?)\s*```'
         matches = re.findall(json_pattern, content, re.DOTALL | re.IGNORECASE)
         
         if matches:
-            return matches[0].strip()
+            extracted_json = matches[0].strip()
+            logger.info(f"✅ 从```json```代码块提取JSON，长度: {len(extracted_json)}")
+            return extracted_json
         
-        # 如果没有代码块，尝试查找以{开头}结尾的内容
+        # 如果没有代码块，使用改进的JSON匹配
+        # 查找完整的JSON对象，使用括号匹配计数
+        def extract_complete_json(text):
+            start_pos = text.find('{')
+            if start_pos == -1:
+                return None
+            
+            brace_count = 0
+            in_string = False
+            escape_next = False
+            
+            for i, char in enumerate(text[start_pos:], start_pos):
+                if escape_next:
+                    escape_next = False
+                    continue
+                    
+                if char == '\\' and in_string:
+                    escape_next = True
+                    continue
+                    
+                if char == '"' and not escape_next:
+                    in_string = not in_string
+                    continue
+                    
+                if not in_string:
+                    if char == '{':
+                        brace_count += 1
+                    elif char == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            return text[start_pos:i+1]
+            
+            return None
+        
+        complete_json = extract_complete_json(content)
+        if complete_json:
+            logger.info(f"✅ 使用括号匹配提取完整JSON，长度: {len(complete_json)}")
+            return complete_json.strip()
+        
+        # 最后尝试简单的{}匹配（作为后备）
         json_pattern2 = r'\{.*\}'
         matches2 = re.findall(json_pattern2, content, re.DOTALL)
         
         if matches2:
-            return matches2[0].strip()
+            # 选择最长的匹配（通常是完整的JSON）
+            longest_match = max(matches2, key=len)
+            logger.info(f"⚠️ 使用简单正则匹配JSON，长度: {len(longest_match)}")
+            return longest_match.strip()
         
-        # 如果都没找到，返回原内容
+        logger.warning("❌ 未能提取JSON，返回原内容")
         return content.strip()
 
 # 数据库保存节点已删除，改为在batch_schedule_generator.py中直接保存CSV

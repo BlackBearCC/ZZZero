@@ -211,65 +211,66 @@ class BatchScheduleGenerator:
             logger.info("未找到历史批次总结，这是第一个批次或历史文件为空")
             return ""
     
-    async def _generate_single_batch(self, batch_num: int) -> Optional[Dict[str, Any]]:
-        """生成单个批次的日程 - 支持新的多周期规划模式"""
-        try:
-            logger.info(f"开始生成第 {batch_num} 批次日程...")
-            
-            # 生成随机配置
-            config = self._get_random_config(batch_num)
-            
-            logger.info(f"批次 {batch_num} 配置:")
-            logger.info(f"  日期范围: {config['start_date']} - {config['end_date']} ({config['total_days']}天)")
-            logger.info(f"  预计周期数: {(config['total_days'] + 10) // 11} 个周期（每周期7-15天）")
-            logger.info(f"  角色数量: {len(config['selected_characters'])}")
-            logger.info(f"  地点数量: {len(config['selected_locations'])}")
-            logger.info(f"  选择角色: {', '.join(config['selected_characters'])}")
-            logger.info(f"  选择地点: {', '.join(config['selected_locations'])}")
-            
-            # 创建简化的工作流聊天接口（豆包已有流式打印，简化日志）
-            class SimpleWorkflowChat:
-                def __init__(self):
-                    self.current_node = ""
-                
-                async def add_node_message(self, node_name: str, message: str, status: str):
-                    # 只打印重要的状态信息
-                    if status in ['success', 'error', 'warning']:
-                        clean_message = message.replace('✅', '[成功]').replace('❌', '[失败]').replace('⚠️', '[警告]')
-                        logger.info(f"[{node_name}] {clean_message}")
-                
-                def _create_workflow_progress(self):
-                    return ""
-            
-            workflow_chat = SimpleWorkflowChat()
-            
-            # 执行新的多周期工作流
-            logger.info(f"开始执行多周期工作流...")
-            
-            # 收集所有周期的结果
-            all_cycles_data = []
-            total_daily_schedules = []
-            progress_count = 0
-            
-            async for stream_event in self.workflow.execute_workflow_stream(config, workflow_chat):
-                progress_count += 1
-                
-                # 检查是否是最终输出事件
-                if isinstance(stream_event, tuple) and len(stream_event) >= 4:
-                    # 元组格式: (html, content, message, is_complete)
-                    html, content, message, is_complete = stream_event
-                    if "周期生成完成" in message or "执行完成" in message:
-                        logger.info(f"检测到周期完成信号: {message}")
-                
-            logger.info(f"多周期工作流执行完成，共收到 {progress_count} 次事件")
-            
-            # 等待数据库写入完成
-            logger.info("等待数据库写入完成...")
-            import time
-            time.sleep(2)  # 增加等待时间，确保所有周期都已保存
-            
-            # 从数据库获取最新的日程记录（支持多周期）
+    async def _generate_single_batch(self, batch_num: int, retry_count: int = 0) -> Optional[Dict[str, Any]]:
+        """生成单个批次的日程 - 支持异常重试机制"""
+        max_retries = 3
+        
+        # 生成配置（保持一致）
+        config = self._get_random_config(batch_num)
+        
+        for attempt in range(max_retries):
             try:
+                current_attempt = retry_count + attempt + 1
+                logger.info(f"开始生成第 {batch_num} 批次日程（第 {current_attempt} 次尝试）...")
+                
+                if attempt > 0:
+                    logger.info(f"批次 {batch_num} 重试第 {attempt} 次，使用相同配置")
+                
+                logger.info(f"批次 {batch_num} 配置:")
+                logger.info(f"  日期范围: {config['start_date']} - {config['end_date']} ({config['total_days']}天)")
+                logger.info(f"  预计周期数: {(config['total_days'] + 10) // 11} 个周期（每周期7-15天）")
+                logger.info(f"  角色数量: {len(config['selected_characters'])}")
+                logger.info(f"  地点数量: {len(config['selected_locations'])}")
+                logger.info(f"  选择角色: {', '.join(config['selected_characters'])}")
+                logger.info(f"  选择地点: {', '.join(config['selected_locations'])}")
+                
+                # 创建简化的工作流聊天接口
+                class SimpleWorkflowChat:
+                    def __init__(self):
+                        self.current_node = ""
+                    
+                    async def add_node_message(self, node_name: str, message: str, status: str):
+                        # 只打印重要的状态信息
+                        if status in ['success', 'error', 'warning']:
+                            clean_message = message.replace('✅', '[成功]').replace('❌', '[失败]').replace('⚠️', '[警告]')
+                            logger.info(f"[{node_name}] {clean_message}")
+                    
+                    def _create_workflow_progress(self):
+                        return ""
+                
+                workflow_chat = SimpleWorkflowChat()
+                
+                # 执行多周期工作流
+                logger.info(f"开始执行多周期工作流...")
+                
+                progress_count = 0
+                async for stream_event in self.workflow.execute_workflow_stream(config, workflow_chat):
+                    progress_count += 1
+                    
+                    # 检查是否是最终输出事件
+                    if isinstance(stream_event, tuple) and len(stream_event) >= 4:
+                        html, content, message, is_complete = stream_event
+                        if "周期生成完成" in message or "执行完成" in message:
+                            logger.info(f"检测到周期完成信号: {message}")
+                    
+                logger.info(f"多周期工作流执行完成，共收到 {progress_count} 次事件")
+                
+                # 等待数据库写入完成
+                logger.info("等待数据库写入完成...")
+                import time
+                time.sleep(2)
+                
+                # 从数据库获取生成的日程记录
                 from database.managers.schedule_manager import ScheduleManager
                 schedule_manager = ScheduleManager()
                 
@@ -282,10 +283,10 @@ class BatchScheduleGenerator:
                     schedule_start = schedule.get('start_date', '')
                     schedule_end = schedule.get('end_date', '')
                     
-                    # 检查是否在当前批次的日期范围内
-                    if (schedule_start >= config['start_date'] and 
-                        schedule_end <= config['end_date']):
+                    # 检查是否在当前批次的日期范围内或有重叠
+                    if (schedule_start <= config['end_date'] and schedule_end >= config['start_date']):
                         batch_schedules.append(schedule)
+                        logger.info(f"找到匹配周期: {schedule_start} - {schedule_end}, daily_schedules数量: {len(schedule.get('daily_schedules', []))}")
                 
                 if batch_schedules:
                     logger.info(f"批次 {batch_num} 找到 {len(batch_schedules)} 个周期的日程记录")
@@ -296,26 +297,28 @@ class BatchScheduleGenerator:
                     if batch_info:
                         # 保存到历史记录
                         self.batch_history.append(batch_info)
-                        logger.info(f"批次 {batch_num} 完成，合并了 {len(batch_schedules)} 个周期的数据")
+                        logger.info(f"✅ 批次 {batch_num} 完成（第 {current_attempt} 次尝试成功）")
                         return batch_info
                     else:
-                        logger.error(f"批次 {batch_num} 合并周期数据失败")
-                        return None
+                        raise Exception("合并周期数据失败")
                 else:
-                    logger.error("数据库中没有找到当前批次的日程记录")
-                    return None
-                    
-            except Exception as db_error:
-                logger.error(f"批次 {batch_num} 从数据库获取记录失败: {db_error}")
-                import traceback
-                logger.error(traceback.format_exc())
-                return None
+                    raise Exception("数据库中没有找到当前批次的日程记录")
+                        
+            except Exception as e:
+                current_attempt = retry_count + attempt + 1
+                logger.error(f"❌ 批次 {batch_num} 第 {current_attempt} 次尝试失败: {e}")
                 
-        except Exception as e:
-            logger.error(f"批次 {batch_num} 生成异常: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return None
+                if attempt < max_retries - 1:
+                    wait_time = (attempt + 1) * 2  # 递增等待时间：2s, 4s, 6s
+                    logger.info(f"⏳ 等待 {wait_time} 秒后重试...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    logger.error(f"❌ 批次 {batch_num} 经过 {max_retries} 次尝试仍然失败，跳过该批次")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                    return None
+        
+        return None
     
     def _extract_key_events(self, daily_schedules: List[Dict]) -> str:
         """从日程中提取关键事件"""
@@ -370,7 +373,7 @@ class BatchScheduleGenerator:
             end_dates = []
             total_days = 0
             
-            for schedule in batch_schedules:
+            for i, schedule in enumerate(batch_schedules):
                 # 收集日期信息
                 start_dates.append(schedule.get('start_date', ''))
                 end_dates.append(schedule.get('end_date', ''))
@@ -378,6 +381,7 @@ class BatchScheduleGenerator:
                 
                 # 合并每日安排
                 daily_schedules = schedule.get('daily_schedules', [])
+                logger.info(f"周期 {i+1}: {schedule.get('start_date', '')} - {schedule.get('end_date', '')}, 包含 {len(daily_schedules)} 天")
                 all_daily_schedules.extend(daily_schedules)
                 
                 # 收集周期总结
@@ -559,7 +563,7 @@ class BatchScheduleGenerator:
             ]
             
             # 检查文件是否存在，决定是追加还是创建新文件
-            file_exists = csv_file_path.exists()
+            file_exists = csv_file_path.exists() and csv_file_path.stat().st_size > 0
             write_mode = 'a' if file_exists else 'w'
             
             # 获取周期计划和周期总结
@@ -581,17 +585,30 @@ class BatchScheduleGenerator:
                 if not file_exists:
                     writer.writerow(csv_headers)
                 
-                # 处理3天总结：每3天写一次
-                batch_summary = ""
-                if len(daily_schedules) >= 3:
-                    # 简单总结前3天的主要内容
-                    summary_events = []
-                    for day in daily_schedules[:3]:
-                        for slot in day.get('time_slots', []):
-                            content = slot.get('story_content', '')
-                            if len(content) > 50:  # 选择内容较丰富的事件
-                                summary_events.append(f"{day.get('date', '')} {slot.get('slot_name', '')}: {content[:50]}...")
-                    batch_summary = '; '.join(summary_events[:2])  # 最多2个关键事件
+                # 获取LLM生成的批次总结(batch_summary)
+                llm_batch_summary = ""
+                logger.info(f"正在查找LLM生成的batch_summary...")
+                
+                # 从batch_schedules中查找LLM生成的batch_summary
+                for schedule in batch_schedules:
+                    # 直接从schedule中查找batch_summary
+                    if 'batch_summary' in schedule and schedule['batch_summary']:
+                        llm_batch_summary = schedule['batch_summary']
+                        logger.info(f"✅ 从周期数据中找到LLM生成的batch_summary: {llm_batch_summary[:150]}...")
+                        break
+                    
+                    # 从daily_schedules中查找batch_summary
+                    daily_schedules_in_cycle = schedule.get('daily_schedules', [])
+                    for day in daily_schedules_in_cycle:
+                        if 'batch_summary' in day and day['batch_summary']:
+                            llm_batch_summary = day['batch_summary']
+                            logger.info(f"✅ 从每日数据中找到LLM生成的batch_summary: {llm_batch_summary[:150]}...")
+                            break
+                    if llm_batch_summary:
+                        break
+                
+                if not llm_batch_summary:
+                    logger.warning("⚠️ 未找到LLM生成的batch_summary，将使用空值")
                 
                 # 遍历每天的日程数据
                 for day_index, day_data in enumerate(daily_schedules):
@@ -641,10 +658,10 @@ class BatchScheduleGenerator:
                         if slot_name in time_slots_data:
                             time_slots_data[slot_name] = slot.get('story_content', '')
                     
-                    # 3天总结：只在每3天的第一天显示，其他天为空
+                    # 3天总结：只在每3天的第一天显示LLM生成的batch_summary，其他天为空
                     day_batch_summary = ""
-                    if day_index % 3 == 0:  # 每3天的第一天显示总结
-                        day_batch_summary = batch_summary
+                    if day_index % 3 == 0:  # 每3天的第一天显示LLM生成的总结
+                        day_batch_summary = llm_batch_summary
                     
                     # 构建CSV行数据
                     row_data = [
@@ -692,99 +709,108 @@ class BatchScheduleGenerator:
             logger.error(f"保存详细JSON数据失败: {e}")
     
     async def generate_all_batches(self):
-        """连续生成所有批次的日程，实现时间连续性"""
+        """连续生成所有批次的日程，实现时间连续性和异常重试"""
         logger.info(f"开始连续生成 {self.batch_count} 个批次的日程...")
         
         success_count = 0
         failed_count = 0
+        total_attempts = 0
         
         for batch_num in range(1, self.batch_count + 1):
-            try:
-                logger.info(f"\n{'='*50}")
-                logger.info(f"正在处理第 {batch_num}/{self.batch_count} 批次")
-                logger.info(f"当前开始日期: {self.current_date.strftime('%Y-%m-%d')}")
-                logger.info(f"{'='*50}")
+            logger.info(f"\n{'='*60}")
+            logger.info(f"正在处理第 {batch_num}/{self.batch_count} 批次")
+            logger.info(f"当前开始日期: {self.current_date.strftime('%Y-%m-%d')}")
+            logger.info(f"{'='*60}")
+            
+            # 生成单个批次（内含重试机制）
+            batch_info = await self._generate_single_batch(batch_num)
+            total_attempts += 1  # 统计总尝试次数
+            
+            if batch_info:
+                # 确保日期连续性：下一批次从当前批次结束日期+1天开始
+                batch_end_date = batch_info['end_date']
+                next_start_date = datetime.strptime(batch_end_date, '%Y-%m-%d') + timedelta(days=1)
+                self.current_date = next_start_date
                 
-                # 生成单个批次（内部会完成所有周期并保存CSV）
-                batch_info = await self._generate_single_batch(batch_num)
-                
-                if batch_info:
-                    # 确保日期连续性：下一批次从当前批次结束日期+1天开始
-                    batch_end_date = batch_info['end_date']
-                    next_start_date = datetime.strptime(batch_end_date, '%Y-%m-%d') + timedelta(days=1)
-                    self.current_date = next_start_date
-                    
-                    success_count += 1
-                    logger.info(f"✅ 批次 {batch_num} 完成")
-                    logger.info(f"   覆盖天数: {batch_info['total_days']} 天")
-                    logger.info(f"   涉及周期: {batch_info.get('cycles_count', 1)} 个")
-                    logger.info(f"   下批次开始: {self.current_date.strftime('%Y-%m-%d')}")
-                    
-                    # 验证连续性
-                    logger.info(f"✓ 日期连续性: {batch_end_date} → {self.current_date.strftime('%Y-%m-%d')}")
-                else:
-                    failed_count += 1
-                    logger.error(f"❌ 批次 {batch_num} 失败")
-                    # 失败时推进随机天数，保持时间前进
-                    config = self._get_random_config(batch_num)
-                    skip_days = config['total_days']  # 使用本应生成的天数
-                    self.current_date += timedelta(days=skip_days)
-                    logger.info(f"   跳过 {skip_days} 天到: {self.current_date.strftime('%Y-%m-%d')}")
-                
-                # 批次间休息
-                await asyncio.sleep(2)
-                
-            except Exception as e:
-                logger.error(f"批次 {batch_num} 处理异常: {e}")
+                success_count += 1
+                logger.info(f"🎉 批次 {batch_num} 最终成功")
+                logger.info(f"   📊 覆盖天数: {batch_info['total_days']} 天")
+                logger.info(f"   🔄 涉及周期: {batch_info.get('cycles_count', 1)} 个")
+                logger.info(f"   📅 下批次开始: {self.current_date.strftime('%Y-%m-%d')}")
+                logger.info(f"   ✓ 日期连续性: {batch_end_date} → {self.current_date.strftime('%Y-%m-%d')}")
+            else:
                 failed_count += 1
-                # 异常时也要推进日期
+                logger.error(f"💥 批次 {batch_num} 最终失败（已重试3次）")
+                
+                # 失败时推进随机天数，保持时间前进
                 try:
                     config = self._get_random_config(batch_num)
                     skip_days = config['total_days']
-                except:
-                    skip_days = random.randint(30, 50)  # 后备跳跃天数
+                except Exception as config_error:
+                    logger.warning(f"获取配置失败: {config_error}，使用默认跳过天数")
+                    skip_days = random.randint(30, 50)
+                
                 self.current_date += timedelta(days=skip_days)
-                logger.info(f"   异常跳过 {skip_days} 天到: {self.current_date.strftime('%Y-%m-%d')}")
-                continue
+                logger.info(f"   ⏭️ 跳过 {skip_days} 天到: {self.current_date.strftime('%Y-%m-%d')}")
+            
+            # 批次间休息，给系统恢复时间
+            logger.info(f"⏸️ 批次间休息 3 秒...")
+            await asyncio.sleep(3)
         
         # 生成总结报告
-        self._generate_summary_report(success_count, failed_count)
+        self._generate_summary_report(success_count, failed_count, total_attempts)
         
-        logger.info(f"\n🎉 连续批量生成完成!")
-        logger.info(f"✅ 成功: {success_count} 批次")
-        logger.info(f"❌ 失败: {failed_count} 批次")
+        logger.info(f"\n🏁 连续批量生成完成!")
+        logger.info(f"✅ 成功批次: {success_count}/{self.batch_count}")
+        logger.info(f"❌ 失败批次: {failed_count}/{self.batch_count}")
+        logger.info(f"📈 成功率: {success_count/self.batch_count*100:.1f}%")
+        logger.info(f"🔄 总尝试次数: {total_attempts}")
         logger.info(f"📁 输出目录: {self.output_dir}")
         logger.info(f"📅 最终日期: {self.current_date.strftime('%Y-%m-%d')}")
         
         return success_count, failed_count
     
-    def _generate_summary_report(self, success_count: int, failed_count: int):
-        """生成总结报告"""
+    def _generate_summary_report(self, success_count: int, failed_count: int, total_attempts: int = None):
+        """生成带重试统计的总结报告"""
         try:
             report_file = self.output_dir / f"batch_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
             
             with open(report_file, 'w', encoding='utf-8') as f:
-                f.write(f"批量日程生成总结报告\n")
-                f.write(f"{'='*50}\n\n")
-                f.write(f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"开始日期: {self.start_date.strftime('%Y-%m-%d')}\n")
-                f.write(f"计划批次: {self.batch_count}\n")
-                f.write(f"成功批次: {success_count}\n")
-                f.write(f"失败批次: {failed_count}\n")
-                f.write(f"成功率: {success_count/self.batch_count*100:.1f}%\n\n")
+                f.write(f"📊 批量日程生成总结报告（异常重试版）\n")
+                f.write(f"{'='*60}\n\n")
+                f.write(f"🕐 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"📅 开始日期: {self.start_date.strftime('%Y-%m-%d')}\n")
+                f.write(f"📅 结束日期: {self.current_date.strftime('%Y-%m-%d')}\n")
+                f.write(f"🎯 计划批次: {self.batch_count}\n")
+                f.write(f"✅ 成功批次: {success_count}\n")
+                f.write(f"❌ 失败批次: {failed_count}\n")
+                f.write(f"📈 成功率: {success_count/self.batch_count*100:.1f}%\n")
+                if total_attempts:
+                    f.write(f"🔄 总尝试次数: {total_attempts}\n")
+                    f.write(f"💪 平均每批次尝试: {total_attempts/self.batch_count:.1f} 次\n")
+                f.write(f"\n")
                 
-                f.write("批次详情:\n")
-                f.write("-" * 30 + "\n")
+                f.write("📋 批次详情:\n")
+                f.write("-" * 40 + "\n")
                 for batch in self.batch_history:
+                    cycle_count = batch.get('cycles_count', 1)
                     f.write(f"批次 {batch['batch_number']}: {batch['start_date']} - {batch['end_date']} "
-                           f"({batch['total_days']}天, {len(batch['characters'])}角色, {len(batch['locations'])}地点)\n")
+                           f"({batch['total_days']}天, {cycle_count}周期, {len(batch['characters'])}角色, {len(batch['locations'])}地点)\n")
                 
                 if self.batch_history:
                     total_days = sum(batch['total_days'] for batch in self.batch_history)
-                    f.write(f"\n总计生成天数: {total_days} 天\n")
-                    f.write(f"平均每批次天数: {total_days/len(self.batch_history):.1f} 天\n")
+                    total_cycles = sum(batch.get('cycles_count', 1) for batch in self.batch_history)
+                    f.write(f"\n📊 统计汇总:\n")
+                    f.write(f"   📅 总生成天数: {total_days} 天\n")
+                    f.write(f"   🔄 总周期数: {total_cycles} 个\n")
+                    f.write(f"   📊 平均每批次天数: {total_days/len(self.batch_history):.1f} 天\n")
+                    f.write(f"   📊 平均每批次周期: {total_cycles/len(self.batch_history):.1f} 个\n")
+                    f.write(f"   📊 平均每周期天数: {total_days/total_cycles:.1f} 天\n")
+                
+                f.write(f"\n🎉 报告生成完成!\n")
+                f.write(f"📁 CSV输出文件: workspace/batch_schedule_output/batch_schedules.csv\n")
             
-            logger.info(f"总结报告已保存到: {report_file}")
+            logger.info(f"📋 总结报告已保存到: {report_file}")
             
         except Exception as e:
             logger.error(f"生成总结报告失败: {e}")
@@ -796,7 +822,7 @@ async def main():
     
     parser = argparse.ArgumentParser(description='批量日程生成器')
     parser.add_argument('--start-date', default='2025-07-03', help='开始日期 (YYYY-MM-DD)')
-    parser.add_argument('--batch-count', type=int, default=3, help='批次数量')
+    parser.add_argument('--batch-count', type=int, default=30, help='批次数量')
     
     args = parser.parse_args()
     
