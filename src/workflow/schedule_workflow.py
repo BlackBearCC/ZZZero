@@ -55,7 +55,9 @@ class ScheduleWorkflow:
             'include_holidays': True,
             'include_lunar': True,
             'mood_variety': True,
-            'location_variety': True
+            'location_variety': True,
+            'enable_cycle_summary': False,  # 是否启用周期总结功能，默认关闭
+            'cycle_summary': ''  # 当前周期总结内容
         }
         
         # 预先初始化数据库表结构，防止执行时才创建导致错误
@@ -259,6 +261,37 @@ class ScheduleWorkflow:
     def update_config(self, config_updates: Dict[str, Any]):
         """更新工作流配置"""
         self.current_config.update(config_updates)
+    
+    async def prepare_cycle_summary(self, config: Dict[str, Any]) -> str:
+        """准备周期总结，获取历史数据"""
+        try:
+            # 检查是否启用周期总结
+            if not config.get('enable_cycle_summary', False):
+                logger.info("周期总结功能未启用")
+                return ""
+            
+            # 等待1秒，确保数据库写入完成
+            import time
+            time.sleep(1)
+            
+            # 从数据库获取最新的周期总结
+            from database.managers.schedule_manager import ScheduleManager
+            schedule_manager = ScheduleManager()
+            
+            # 传递开始日期，确保获取早于开始日期且时间不超过三天的总结
+            start_date = config.get('start_date', '')
+            previous_summary = schedule_manager.get_latest_cycle_summary(before_date=start_date)
+            
+            if previous_summary:
+                logger.info(f"获取到适当的历史周期总结，长度: {len(previous_summary)} 字符")
+                return previous_summary
+            else:
+                logger.info(f"未找到{start_date}前三天内的周期总结，这可能是第一个周期或时间间隔较长")
+                return ""
+                
+        except Exception as e:
+            logger.error(f"准备周期总结失败: {e}")
+            return ""
     
     async def create_schedule_graph(self) -> StateGraph:
         """创建日程生成图工作流 - 简化版本，只有生成和保存两个节点"""
@@ -515,6 +548,34 @@ class ScheduleGenerateNode(BaseNode):
                 "progress"
             )
         
+        # 准备历史周期总结（如果启用）
+        workflow_instance = input_data.get('workflow_instance')
+        history_context = ""
+        cycle_summary_requirement = ""
+        
+        if workflow_instance and input_data.get('config', {}).get('enable_cycle_summary', False):
+            try:
+                previous_summary = await workflow_instance.prepare_cycle_summary(input_data['config'])
+                if previous_summary:
+                    logger.info("已准备历史周期总结上下文")
+                    if workflow_chat:
+                        await workflow_chat.add_node_message(
+                            "日程生成",
+                            "已获取历史周期总结，将保持故事连续性...",
+                            "progress"
+                        )
+                    
+                    # 如果有历史总结，添加简化的上下文
+                    history_context = f"## 历史周期总结\n{previous_summary}\n"
+                    
+                else:
+                    # 第一个周期，不需要历史上下文
+                    history_context = ""
+                    
+            except Exception as e:
+                logger.warning(f"准备历史周期总结失败: {e}")
+                history_context = ""
+
         # 准备日期信息
         dates_info = []
         try:
@@ -592,7 +653,11 @@ class ScheduleGenerateNode(BaseNode):
 # 主角信息
 {protagonist_data}
 
+{history_context if history_context else ''}
+
 {previous_summary if previous_summary else ''}
+
+
 
 # 日程需求
 - 日程类型：{schedule_type}（周期规划）
@@ -624,7 +689,7 @@ class ScheduleGenerateNode(BaseNode):
 4. **生活真实感**：包含工作压力、情绪波动、小确幸、意外惊喜等真实元素
 
 ## 计划与总结的区别
-- **周期计划(weekly_plan)**：{protagonist}对整个{total_days}天周期的整体规划和期望
+- **周期计划(cycle_plan)**：{protagonist}对整个{total_days}天周期的整体规划和期望
 - **每日计划(daily_plan)**：{protagonist}早晨醒来时对这一天的预期和安排，基于他现有的信息和经验
 - **每日总结(daily_summary)**：一天结束后对实际发生事件的回顾，可能与计划有出入，包含意外和惊喜
 
@@ -640,6 +705,13 @@ class ScheduleGenerateNode(BaseNode):
 2. **互动深度**：每次互动都要有具体的对话内容和情感变化
 3. **关系发展**：角色间的关系应该随时间推进而发展变化
 4. **随机偶遇**：增加意外碰面、巧合事件等真实生活元素
+
+## 独立故事要求
+1. **时间段故事独立性**：每个时间段的故事内容必须是独立完整的，能够单独阅读理解
+2. **前因后果清晰**：即使是独立的时间段故事，也要描述清楚事件的前因后果
+3. **情境完整性**：包含明确的场景、人物、对话和情感描述，保证内容的完整性
+4. **独立叙事**：每个时间段内容可能被单独提取使用，因此必须是自包含的完整故事
+5. **上下文连贯**：虽然是独立的，但各时间段之间应该有连贯的关系，形成日常生活的完整画面
 
 # 输出格式
 请按以下JSON格式输出日程安排：
@@ -657,7 +729,8 @@ class ScheduleGenerateNode(BaseNode):
     "主要互动角色": ["角色1", "角色2", "..."],
     "常去地点": ["地点1", "地点2", "..."]
   }},
-  "weekly_plan": "{protagonist}对这{total_days}天的整体规划，第三人称描述，250字以内",
+  "cycle_plan": "{protagonist}对这{total_days}天的整体规划，第三人称描述，200-300字",
+
   "daily_schedules": [
     {{
       "date": "YYYY-MM-DD",
@@ -670,73 +743,56 @@ class ScheduleGenerateNode(BaseNode):
       "time_slots": [
         {{
           "slot_name": "夜间",
-          "start_time": "23:00",
-          "end_time": "06:00",
-          "assigned_character": "{protagonist}",
-          "activity_type": "休息/特殊事件",
           "location": "具体地点",
-          "story_content": "详细的第三人称故事描述，方知衡为主体，像小说片段一样生动，事件描述为主，少量对话，250字以内",
+          "story_content": "详细的第三人称故事描述，方知衡为主体，像小说片段一样生动，环境，事件，剧情描述为主，少量对话，200-300字。内容必须独立完整，描述清楚前因后果，即使单独阅读也能理解。",
           "involved_characters": ["角色名1", "角色名2"]
         }},
         {{
           "slot_name": "上午",
-          "start_time": "06:00",
-          "end_time": "11:00",
-          "assigned_character": "主要互动角色或{protagonist}",
-          "activity_type": "工作/学术/社交",
           "location": "具体地点",
-          "story_content": "详细的第三人称故事描述，方知衡为主体，像小说片段一样生动，事件描述为主，少量对话，250字以内",
+          "story_content": "详细的第三人称故事描述，方知衡为主体，像小说片段一样生动，环境，事件，剧情描述为主，少量对话，200-300字。内容必须独立完整，描述清楚前因后果，即使单独阅读也能理解。",
           "involved_characters": ["角色名1", "角色名2"]
         }},
         {{
           "slot_name": "中午",
-          "start_time": "11:00",
-          "end_time": "14:00",
-          "assigned_character": "互动角色或{protagonist}",
-          "activity_type": "用餐/社交/休息",
           "location": "具体地点",
-          "story_content": "详细的第三人称故事描述，方知衡为主体，像小说片段一样生动，事件描述为主，少量对话，250字以内",
+          "story_content": "详细的第三人称故事描述，方知衡为主体，像小说片段一样生动，环境，事件，剧情描述为主，少量对话，200-300字。内容必须独立完整，描述清楚前因后果，即使单独阅读也能理解。",
           "involved_characters": ["角色名1", "小动物名等"]
         }},
         {{
           "slot_name": "下午",
-          "start_time": "14:00",
-          "end_time": "18:00",
-          "assigned_character": "互动角色或{protagonist}",
-          "activity_type": "工作/学术/生活",
           "location": "具体地点",
-          "story_content": "详细的第三人称故事描述，方知衡为主体，像小说片段一样生动，事件描述为主，少量对话，250字以内",
+          "story_content": "详细的第三人称故事描述，方知衡为主体，像小说片段一样生动，环境，事件，剧情描述为主，少量对话，200-300字。内容必须独立完整，描述清楚前因后果，即使单独阅读也能理解。",
           "involved_characters": ["角色名1", "角色名2"]
         }},
         {{
           "slot_name": "晚上",
-          "start_time": "18:00",
-          "end_time": "23:00",
-          "assigned_character": "互动角色或{protagonist}",
-          "activity_type": "社交/娱乐/个人时间",
           "location": "具体地点",
-          "story_content": "详细的第三人称故事描述，方知衡为主体，像小说片段一样生动，事件描述为主，少量对话，250字以内",
+          "story_content": "详细的第三人称故事描述，方知衡为主体，像小说片段一样生动，环境，事件，剧情描述为主，少量对话，200-300字。内容必须独立完整，描述清楚前因后果，即使单独阅读也能理解。",
           "involved_characters": ["角色名1", "角色名2"]
         }}
       ],
-      "daily_summary": "第三人称，一天结束时对实际发生事件的总结"
+      "daily_summary": "第三人称，一天结束时对实际发生事件的总结，200-300字",
+
     }},
     // ... 其他日期
-  ]
+  ],
+  "cycle_summary": "周期总结：1. 如有历史总结则压缩到200字以内保留核心信息 2. 添加本周期重要发展300字以内 3. 总计500字以内 4. 第三人称以主角为主体 5. 重点关注角色关系发展、情感变化、重要事件、地点活动等",
 }}
 ```
 
 # 重要提醒
 1. **数据完整性要求**：
-   - weekly_plan：必须包含整个周期的计划
+   - cycle_plan：必须包含整个周期的计划
    - daily_plan：每天都要有具体的早晨计划
    - 每天必须有5个完整的时间段（夜间、上午、中午、下午、晚上）
    - involved_characters：每个时间段都要明确列出涉及的角色名称列表
 
 2. **故事质量要求**：
    - 每个时间段的story_content必须丰富详实，像小说片段一样生动
+   - 各时间段的故事必须是独立完整的，能够被单独提取和理解
    - 角色对话要符合各自的性格特点，有真实感
-   - 增加随机事件：路边小猫、意外发现、巧遇等云枢市生活细节
+   - 增加随机事件：意外发现、巧遇等云枢市生活细节
    - 情节要有起伏，包含工作压力、小确幸、意外惊喜等真实元素
    - 禁止有任何男女恋爱元素
    - 禁止提起生活中提起天文，主角不是工作狂，说话也是正常人，不会用精确到秒的数字
@@ -791,20 +847,20 @@ class ScheduleGenerateNode(BaseNode):
                         try:
                             display_content = ""
                             if think_content.strip():
-                                
-                                display_content += f"""
-<div style="background: #f8f9fa; border-left: 4px solid #6c757d; padding: 10px; margin: 10px 0; border-radius: 4px;">
-思考过程：<br>
-{think_content}
-</div>"""
+                                display_content = think_part
+#                                 display_content += f"""
+# <div style="background: #f8f9fa; border-left: 4px solid #6c757d; padding: 10px; margin: 10px 0; border-radius: 4px;">
+# 思考过程：<br>
+# {think_content}
+# </div>"""
                             
                             if final_content.strip():
-                                
-                                display_content += f"""
-<div style="background: #e8f5e9; border-left: 4px solid #28a745; padding: 10px; margin: 10px 0; border-radius: 4px;">
-生成结果：<br>
-{final_content}
-</div>"""
+                                display_content = content_part
+#                                 display_content += f"""
+# <div style="background: #e8f5e9; border-left: 4px solid #28a745; padding: 10px; margin: 10px 0; border-radius: 4px;">
+# 生成结果：<br>
+# {final_content}
+# </div>"""
                             
                             await workflow_chat.add_node_message(
                                 "日程生成",
@@ -845,8 +901,8 @@ class ScheduleGenerateNode(BaseNode):
                 # 生成成功，提取日程数据
                 schedule_data = parsed_result
                 daily_schedules = schedule_data.get('daily_schedules', [])
-                logger.info(f"成功解析日程JSON结果，包含 {len(daily_schedules)} 天")
-                logger.info(f"日程数据: {schedule_data}")
+                # logger.info(f"成功解析日程JSON结果，包含 {len(daily_schedules)} 天")
+                # logger.info(f"日程数据: {schedule_data}")
                 if workflow_chat:
                     await workflow_chat.add_node_message(
                         "日程生成",
@@ -949,12 +1005,27 @@ class ScheduleDatabaseSaveNode(BaseNode):
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             schedule_id = f"SCHEDULE_{timestamp}"
             
+            # 获取周期总结（如果启用且已在JSON中生成）
+            cycle_summary = ""
+            if config.get('enable_cycle_summary', False):
+                if isinstance(schedule_result, dict) and 'cycle_summary' in schedule_result:
+                    cycle_summary = schedule_result.get('cycle_summary', '')
+                    logger.info(f"从JSON结果中提取周期总结，长度: {len(cycle_summary)} 字符")
+                    if workflow_chat:
+                        await workflow_chat.add_node_message(
+                            "数据库保存",
+                            f"已提取周期总结（{len(cycle_summary)}字符）",
+                            "progress"
+                        )
+                else:
+                    logger.warning("启用了周期总结功能但JSON结果中未找到cycle_summary字段")
+            
             # 构建保存数据 - 需要从schedule_result中提取正确的数据
             if isinstance(schedule_result, dict) and 'daily_schedules' in schedule_result:
                 # 从解析好的JSON数据中获取
                 daily_schedules = schedule_result.get('daily_schedules', [])
                 schedule_summary = schedule_result.get('schedule_summary', {})
-                weekly_plan = schedule_result.get('weekly_plan', '')
+                cycle_plan = schedule_result.get('cycle_plan', '')
                 
                 schedule_data = {
                     'schedule_id': schedule_id,
@@ -963,7 +1034,8 @@ class ScheduleDatabaseSaveNode(BaseNode):
                     'end_date': end_date,
                     'total_days': total_days,
                     'description': schedule_summary.get('日程特点', f"为{protagonist}生成的{total_days}天详细日程安排"),
-                    'weekly_plan': weekly_plan,
+                    'cycle_plan': cycle_plan,
+                    'cycle_summary': cycle_summary,
                     'daily_schedules': daily_schedules
                 }
             else:
@@ -975,12 +1047,174 @@ class ScheduleDatabaseSaveNode(BaseNode):
                     'end_date': end_date,
                     'total_days': total_days,
                     'description': f"为{protagonist}生成的{total_days}天详细日程安排",
-                    'weekly_plan': '',
+                    'cycle_plan': '',
+                    'cycle_summary': cycle_summary,
                     'daily_schedules': daily_schedules
                 }
             
             # 保存到数据库
             success = schedule_manager.save_schedule_data(schedule_data, config)
+            
+            # 将日程数据保存为CSV文件
+            if success and daily_schedules:
+                try:
+                    # 创建输出目录
+                    output_dir = os.path.join(os.path.dirname(__file__), '../../workspace/annual_schedule_output')
+                    os.makedirs(output_dir, exist_ok=True)
+                    
+                    # 使用固定CSV文件名，便于增量更新
+                    csv_file_path = os.path.join(output_dir, f"schedule_summary.csv")
+                    
+                    # 定义CSV列头
+                    csv_headers = [
+                        "日期", "星期", "季节", "天气", "是否节假日", "节日名称",
+                        "周期计划", "周期总结", "每日计划", "每日总结", "当日角色",
+                        "上午内容", "上午角色",
+                        "中午内容", "中午角色",
+                        "下午内容", "下午角色",
+                        "晚上内容", "晚上角色",
+                        "夜间内容", "夜间角色"
+                    ]
+                    
+                    # 检查文件是否存在，决定是追加还是创建新文件
+                    file_exists = os.path.isfile(csv_file_path)
+                    write_mode = 'a' if file_exists else 'w'
+                    
+                    # 写入CSV文件
+                    with open(csv_file_path, write_mode, encoding='utf-8', newline='') as csvfile:
+                        writer = csv.writer(csvfile)
+                        
+                        # 只在文件不存在时写入表头
+                        if not file_exists:
+                            writer.writerow(csv_headers)
+                        
+                        # 获取周期计划和周期总结
+                        cycle_plan = schedule_result.get('cycle_plan', '')
+                        cycle_summary = schedule_result.get('cycle_summary', '')
+                        
+                        # 遍历每天的日程数据
+                        for day_data in daily_schedules:
+                            date = day_data.get('date', '')
+                            weekday = day_data.get('weekday_name', '')
+                            weather = day_data.get('weather', '')
+                            is_holiday = day_data.get('is_holiday', False)
+                            holiday_name = day_data.get('holiday_name', '')
+                            
+                            # 根据日期确定季节（简单实现）
+                            month = int(date.split('-')[1]) if '-' in date else 0
+                            season = '春季'
+                            if 3 <= month <= 5:
+                                season = '春季'
+                            elif 6 <= month <= 8:
+                                season = '夏季'
+                            elif 9 <= month <= 11:
+                                season = '秋季'
+                            else:
+                                season = '冬季'
+                            
+                            daily_plan = day_data.get('daily_plan', '')
+                            daily_summary = day_data.get('daily_summary', '')
+                            
+                            # 初始化时间段数据
+                            time_slots_data = {
+                                '上午': {'content': '', 'characters': []},
+                                '中午': {'content': '', 'characters': []},
+                                '下午': {'content': '', 'characters': []},
+                                '晚上': {'content': '', 'characters': []},
+                                '夜间': {'content': '', 'characters': []}
+                            }
+                            
+                            # 提取时间段数据
+                            time_slots = day_data.get('time_slots', [])
+                            all_characters = set()  # 收集所有角色
+                            
+                            for slot in time_slots:
+                                slot_name = slot.get('slot_name', '')
+                                if slot_name in time_slots_data:
+                                    time_slots_data[slot_name]['content'] = slot.get('story_content', '')
+                                    chars = slot.get('involved_characters', [])
+                                    time_slots_data[slot_name]['characters'] = chars
+                                    # 添加到所有角色集合
+                                    all_characters.update(chars)
+                            
+                            # 将所有角色合并为一个字符串
+                            all_characters_str = ', '.join(all_characters)
+                            
+                            # 为了支持数据库保存，在每天的数据中添加时间段信息
+                            # 这些字段将被传递给数据库保存函数
+                            day_data['cycle_plan'] = cycle_plan
+                            day_data['cycle_summary'] = cycle_summary
+                            day_data['season'] = season
+                            day_data['is_holiday'] = is_holiday
+                            day_data['holiday_name'] = holiday_name
+                            day_data['daily_characters'] = all_characters_str
+                            
+                            # 查找每个时间段的数据，并添加到day_data中
+                            for time_slot in time_slots:
+                                slot_name = time_slot.get('slot_name', '')
+                                if slot_name == '上午':
+                                    day_data['morning_content'] = time_slot.get('story_content', '')
+                                    day_data['morning_characters'] = time_slot.get('involved_characters', [])
+                                elif slot_name == '中午':
+                                    day_data['noon_content'] = time_slot.get('story_content', '')
+                                    day_data['noon_characters'] = time_slot.get('involved_characters', [])
+                                elif slot_name == '下午':
+                                    day_data['afternoon_content'] = time_slot.get('story_content', '')
+                                    day_data['afternoon_characters'] = time_slot.get('involved_characters', [])
+                                elif slot_name == '晚上':
+                                    day_data['evening_content'] = time_slot.get('story_content', '')
+                                    day_data['evening_characters'] = time_slot.get('involved_characters', [])
+                                elif slot_name == '夜间':
+                                    day_data['night_content'] = time_slot.get('story_content', '')
+                                    day_data['night_characters'] = time_slot.get('involved_characters', [])
+                            
+                            # 确保所有字段都有默认值
+                            if 'morning_content' not in day_data:
+                                day_data['morning_content'] = ''
+                                day_data['morning_characters'] = []
+                            if 'noon_content' not in day_data:
+                                day_data['noon_content'] = ''
+                                day_data['noon_characters'] = []
+                            if 'afternoon_content' not in day_data:
+                                day_data['afternoon_content'] = ''
+                                day_data['afternoon_characters'] = []
+                            if 'evening_content' not in day_data:
+                                day_data['evening_content'] = ''
+                                day_data['evening_characters'] = []
+                            if 'night_content' not in day_data:
+                                day_data['night_content'] = ''
+                                day_data['night_characters'] = []
+                            
+                            # 构建CSV行数据
+                            row_data = [
+                                date, weekday, season, weather, 'Yes' if is_holiday else 'No', holiday_name,
+                                cycle_plan, cycle_summary, daily_plan, daily_summary, all_characters_str,
+                                time_slots_data['上午']['content'], ', '.join(time_slots_data['上午']['characters']),
+                                time_slots_data['中午']['content'], ', '.join(time_slots_data['中午']['characters']),
+                                time_slots_data['下午']['content'], ', '.join(time_slots_data['下午']['characters']),
+                                time_slots_data['晚上']['content'], ', '.join(time_slots_data['晚上']['characters']),
+                                time_slots_data['夜间']['content'], ', '.join(time_slots_data['夜间']['characters'])
+                            ]
+                            
+                            writer.writerow(row_data)
+                    
+                    logger.info(f"日程数据已保存为CSV文件: {csv_file_path}")
+                    
+                    if workflow_chat:
+                        await workflow_chat.add_node_message(
+                            "数据库保存",
+                            f"日程数据已{'追加到' if file_exists else '保存为新'}CSV文件: schedule_summary.csv",
+                            "success"
+                        )
+                    
+                except Exception as csv_error:
+                    logger.error(f"保存CSV文件失败: {csv_error}")
+                    if workflow_chat:
+                        await workflow_chat.add_node_message(
+                            "数据库保存",
+                            f"保存CSV文件失败: {str(csv_error)}",
+                            "warning"
+                        )
             
             if success:
                 if workflow_chat:

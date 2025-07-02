@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 class BatchScheduleGenerator:
     """批量日程生成器"""
     
-    def __init__(self, start_date: str = "2025-07-02", batch_count: int = 100):
+    def __init__(self, start_date: str = "2025-07-18", batch_count: int = 100):
         """
         初始化批量生成器
         
@@ -588,7 +588,7 @@ async def main():
     import argparse
     
     parser = argparse.ArgumentParser(description='批量日程生成器')
-    parser.add_argument('--start-date', default='2025-07-02', help='开始日期 (YYYY-MM-DD)')
+    parser.add_argument('--start-date', default='2025-07-03', help='开始日期 (YYYY-MM-DD)')
     parser.add_argument('--batch-count', type=int, default=3, help='批次数量')
     
     args = parser.parse_args()
