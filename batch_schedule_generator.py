@@ -100,9 +100,9 @@ class BatchScheduleGenerator:
             raise
     
     def _get_random_config(self, batch_num: int) -> Dict[str, Any]:
-        """生成随机配置 - 支持新的周期规划模式"""
-        # 随机天数 (现在可以支持更大的范围，因为会自动分成多个周期)
-        total_days = 400  # 增加天数范围，让周期规划更有意义
+        """生成随机配置 - 每次生成较短周期，保持灵活性"""
+        # 随机天数 (每次生成30-50天的周期，保持灵活性)
+        total_days = random.randint(30, 50)  # 每个批次30-50天，避免过长周期
         end_date = self.current_date + timedelta(days=total_days - 1)
         
         # 获取可用角色列表（排除主角方知衡）
@@ -554,7 +554,7 @@ class BatchScheduleGenerator:
             # 定义CSV列头
             csv_headers = [
                 "日期", "星期", "节日信息", "季节", "天气", "主题", 
-                "周期计划", "3天总结", "每日计划", "涉及角色", "角色简介",
+                "周期计划", "3天总结", "每日计划", "每日总结", "涉及角色", "角色简介",
                 "上午", "中午", "下午", "晚上", "夜间"
             ]
             
@@ -608,6 +608,7 @@ class BatchScheduleGenerator:
                     season = self._get_season_from_date(date)
                     
                     daily_plan = day_data.get('daily_plan', '')
+                    daily_summary = day_data.get('daily_summary', '')  # 每日总结
                     
                     # 提取每日涉及角色信息
                     daily_involved_characters = day_data.get('daily_involved_characters', [])
@@ -656,6 +657,7 @@ class BatchScheduleGenerator:
                         cycle_summary,                 # 周期计划
                         day_batch_summary,             # 3天总结
                         daily_plan,                    # 每日计划
+                        daily_summary,                 # 每日总结
                         ', '.join(daily_involved_characters),  # 涉及角色
                         daily_characters_info,         # 角色简介
                         time_slots_data['上午'],        # 上午
@@ -690,8 +692,8 @@ class BatchScheduleGenerator:
             logger.error(f"保存详细JSON数据失败: {e}")
     
     async def generate_all_batches(self):
-        """生成所有批次的日程"""
-        logger.info(f"开始批量生成 {self.batch_count} 个批次的日程...")
+        """连续生成所有批次的日程，实现时间连续性"""
+        logger.info(f"开始连续生成 {self.batch_count} 个批次的日程...")
         
         success_count = 0
         failed_count = 0
@@ -700,53 +702,60 @@ class BatchScheduleGenerator:
             try:
                 logger.info(f"\n{'='*50}")
                 logger.info(f"正在处理第 {batch_num}/{self.batch_count} 批次")
+                logger.info(f"当前开始日期: {self.current_date.strftime('%Y-%m-%d')}")
                 logger.info(f"{'='*50}")
                 
-                # 生成单个批次
+                # 生成单个批次（内部会完成所有周期并保存CSV）
                 batch_info = await self._generate_single_batch(batch_num)
                 
                 if batch_info:
-                    # 更新当前日期为下一批次的开始日期（确保日期连续）
-                    next_start_date = datetime.strptime(batch_info['end_date'], '%Y-%m-%d') + timedelta(days=1)
+                    # 确保日期连续性：下一批次从当前批次结束日期+1天开始
+                    batch_end_date = batch_info['end_date']
+                    next_start_date = datetime.strptime(batch_end_date, '%Y-%m-%d') + timedelta(days=1)
                     self.current_date = next_start_date
                     
                     success_count += 1
-                    logger.info(f"批次 {batch_num} 完成，下次开始日期: {self.current_date.strftime('%Y-%m-%d')}")
+                    logger.info(f"✅ 批次 {batch_num} 完成")
+                    logger.info(f"   覆盖天数: {batch_info['total_days']} 天")
+                    logger.info(f"   涉及周期: {batch_info.get('cycles_count', 1)} 个")
+                    logger.info(f"   下批次开始: {self.current_date.strftime('%Y-%m-%d')}")
                     
-                    # 数据已经从数据库获取，无需重复操作
-                    
-                    # 验证日期连续性
-                    logger.info(f"日期连续性检查: 当前批次结束 {batch_info['end_date']}, 下批次开始 {self.current_date.strftime('%Y-%m-%d')}")
+                    # 验证连续性
+                    logger.info(f"✓ 日期连续性: {batch_end_date} → {self.current_date.strftime('%Y-%m-%d')}")
                 else:
                     failed_count += 1
-                    logger.error(f"批次 {batch_num} 失败，跳过")
-                    # 即使失败也要推进日期，避免重复 - 使用随机天数确保时间连续
-                    skip_days = random.randint(7, 14)  # 与成功时的随机天数保持一致
+                    logger.error(f"❌ 批次 {batch_num} 失败")
+                    # 失败时推进随机天数，保持时间前进
+                    config = self._get_random_config(batch_num)
+                    skip_days = config['total_days']  # 使用本应生成的天数
                     self.current_date += timedelta(days=skip_days)
-                    logger.info(f"批次 {batch_num} 失败，推进日期 {skip_days} 天到: {self.current_date.strftime('%Y-%m-%d')}")
+                    logger.info(f"   跳过 {skip_days} 天到: {self.current_date.strftime('%Y-%m-%d')}")
                 
-                # 批次间短暂休息，避免API限制
+                # 批次间休息
                 await asyncio.sleep(2)
                 
             except Exception as e:
                 logger.error(f"批次 {batch_num} 处理异常: {e}")
                 failed_count += 1
-                # 异常时也要推进日期，避免重复
-                skip_days = random.randint(7, 14)
+                # 异常时也要推进日期
+                try:
+                    config = self._get_random_config(batch_num)
+                    skip_days = config['total_days']
+                except:
+                    skip_days = random.randint(30, 50)  # 后备跳跃天数
                 self.current_date += timedelta(days=skip_days)
-                logger.info(f"批次 {batch_num} 异常，推进日期 {skip_days} 天到: {self.current_date.strftime('%Y-%m-%d')}")
+                logger.info(f"   异常跳过 {skip_days} 天到: {self.current_date.strftime('%Y-%m-%d')}")
                 continue
         
         # 生成总结报告
         self._generate_summary_report(success_count, failed_count)
         
-        logger.info(f"\n批量生成完成!")
-        logger.info(f"成功: {success_count} 批次")
-        logger.info(f"失败: {failed_count} 批次")
-        logger.info(f"输出目录: {self.output_dir}")
+        logger.info(f"\n🎉 连续批量生成完成!")
+        logger.info(f"✅ 成功: {success_count} 批次")
+        logger.info(f"❌ 失败: {failed_count} 批次")
+        logger.info(f"📁 输出目录: {self.output_dir}")
+        logger.info(f"📅 最终日期: {self.current_date.strftime('%Y-%m-%d')}")
         
-        # 确保程序能够正常结束
-        print(f"\n所有批次处理完成，程序即将退出...")
         return success_count, failed_count
     
     def _generate_summary_report(self, success_count: int, failed_count: int):

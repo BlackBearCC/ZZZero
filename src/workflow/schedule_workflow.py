@@ -655,7 +655,7 @@ class CyclePlanningNode(BaseNode):
 {', '.join(selected_locations)}
 
 # 周期分配
-已智能分配为{len(cycles)}个周期：
+已分配为{len(cycles)}个周期：
 {json.dumps(cycles, ensure_ascii=False, indent=2)}
 
 # 节假日信息
@@ -664,18 +664,18 @@ class CyclePlanningNode(BaseNode):
 
 # 规划要求
 
-## 整体故事弧线
-1. **时间跨度感**：{total_days}天是一个相对较长的时间段，需要体现时间的推移和变化
-2. **角色关系发展**：每个角色的关系应该有明显的发展轨迹，不是静态的
-3. **事件层次性**：包含日常事件、重要事件、转折事件等不同层次
-4. **季节变化**：体现季节对活动和心情的影响
-5. **工作生活平衡**：{protagonist}的学术工作与个人生活的平衡发展
-6. **节假日融入**：合理安排节假日期间的特殊活动和氛围，体现传统文化和现代生活
+## 主角中心的故事发展
+1. **时间跨度感**：{total_days}天的时间段中，{protagonist}的个人成长和发展轨迹
+2. **个人目标推进**：{protagonist}的学术研究、工作项目、个人技能等方面的进展
+3. **生活节奏建立**：工作与生活的平衡，日常习惯的养成和调整
+4. **季节适应**：根据季节变化调整活动安排和心理状态
 
-## 周期特色差异
-1. **前期周期**：建立日常节奏、初步开展
-2. **中期周期**：深入工作、关系深化、面临挑战
-3. **后期周期**：成果显现、关系稳定、新的规划
+6. **节假日体验**：在节假日中的个人安排和文化体验
+
+## 周期发展阶段
+1. **适应期**：新环境适应、日常节奏建立、基础社交
+2. **发展期**：工作深入、技能提升、关系深化
+3. **收获期**：成果显现、经验积累、新的规划
 
 ## 每个周期规划内容
 为每个周期制定：
@@ -688,11 +688,7 @@ class CyclePlanningNode(BaseNode):
 - **情感基调**：整个周期的情感发展方向
 - **衔接要点**：与前后周期的连接点
 
-## 角色分配原则
-1. **重要角色优先**：从上述重要角色中选择2-4个作为本周期的重点角色
-2. **平衡发展**：确保不同周期中各重要角色都有机会成为重点
-3. **关系发展**：考虑角色间的关系发展需要时间和连续性
-4. **生活化设定**：避免天文、星空等主题，重点体现云枢市的日常生活气息
+
 
 # 输出格式
 请按以下JSON格式输出周期规划，禁止输出任何其他内容：
@@ -703,10 +699,6 @@ class CyclePlanningNode(BaseNode):
     "total_days": {total_days},
     "total_cycles": {len(cycles)},
     "story_theme": "整个时间段的故事主题",
-    "character_arcs": {{
-      "角色名1": "该角色的发展轨迹",
-      "角色名2": "该角色的发展轨迹"
-    }},
     "major_milestones": [
       "重要节点1",
       "重要节点2"
@@ -927,6 +919,7 @@ class ScheduleGenerateNode(BaseNode):
         current_cycle_plan = current_cycle.get('cycle_theme', '')
         current_cycle_objectives = current_cycle.get('main_objectives', [])
         focus_characters = current_cycle.get('focus_characters', [])
+        secondary_characters = current_cycle.get('secondary_characters', [])
         core_locations = current_cycle.get('core_locations', [])
         key_events = current_cycle.get('key_events', [])
         emotional_tone = current_cycle.get('emotional_tone', '')
@@ -1008,7 +1001,7 @@ class ScheduleGenerateNode(BaseNode):
                     "progress"
                 )
         
-            # 收集所有可用角色信息（完整信息，不省略）
+                                # 收集所有可用角色信息（完整信息，不省略）
             char_list = input_data.get('characters_data', {}).get("角色列表", {})
             
             # 收集当前批次的所有相关角色
@@ -1020,7 +1013,6 @@ class ScheduleGenerateNode(BaseNode):
                     all_batch_characters.append(char_name)
             
             # 2. 次要角色
-            secondary_characters = current_cycle.get('secondary_characters', [])
             for char_name in secondary_characters:
                 if char_name in char_list and char_name not in all_batch_characters:
                     all_batch_characters.append(char_name)
@@ -1170,7 +1162,7 @@ class ScheduleGenerateNode(BaseNode):
       "is_holiday": true/false,
       "holiday_name": "节日名称（如果是节假日）",
       "weather": "天气情况",
-      "daily_plan": "{protagonist}早晨对这一天的计划和期望，基于他现有的认知，第三人称描述，250字以内",
+      "daily_plan": "方知衡的计划安排，第三人称以他为主体描述当天的具体打算，200-300字，包含：主要目标、具体安排、期望收获",
       "daily_involved_characters": ["角色名1", "角色名2", "角色名3"],
       "time_slots": [
         {{
@@ -1204,7 +1196,7 @@ class ScheduleGenerateNode(BaseNode):
           "involved_characters": ["角色名1", "角色名2"]
         }}
       ],
-      "daily_summary": "第三人称，角色作为主体，一天结束时对实际发生事件的总结，200-300字",
+      "daily_summary": "第三人称，以方知衡为主体，一天结束时的简要总结，200-300字，重点关注：重要事件、人物互动、心情变化、发现思考",
 
     }},
     // ... 其他日期
@@ -1342,10 +1334,13 @@ class ScheduleGenerateNode(BaseNode):
                 'cycle_summary': cycle_summary
             }
             
+            # 立即保存当前周期到CSV（增量更新）
+            await self._save_cycle_to_csv_immediately(schedule_data, current_cycle_index + 1)
+            
             if workflow_chat:
                 await workflow_chat.add_node_message(
                     "日程生成",
-                    f"✅ 第 {current_cycle_index + 1} 个周期生成完成！共 {len(cycle_daily_schedules)} 天，{len(cycle_daily_schedules)//batch_size + (1 if len(cycle_daily_schedules)%batch_size else 0)} 个批次",
+                    f"✅ 第 {current_cycle_index + 1} 个周期生成完成！共 {len(cycle_daily_schedules)} 天，已立即保存到CSV",
                     "success"
                 )
         else:
@@ -1369,89 +1364,198 @@ class ScheduleGenerateNode(BaseNode):
         print(f"✅ 周期 {current_cycle_index + 1} 日程生成完成")
         yield output_data
         
-    async def _get_recent_batch_summaries(self, count: int, before_date: str) -> List[str]:
-        """获取最近count个批次的summary作为历史记录"""
+    async def _save_cycle_to_csv_immediately(self, schedule_data: Dict[str, Any], cycle_number: int):
+        """周期完成后立即保存到CSV（增量更新）"""
         try:
-            from database.managers.schedule_manager import ScheduleManager
-            from datetime import datetime, timedelta
+            from pathlib import Path
+            import csv
+            import os
             
-            schedule_manager = ScheduleManager()
-            summaries = []
+            # 创建输出目录
+            output_dir = Path("workspace/batch_schedule_output")
+            output_dir.mkdir(parents=True, exist_ok=True)
             
-            # 获取最近的日程记录
-            recent_schedules = schedule_manager.get_schedules_by_filter({}, limit=20)
+            # 使用固定CSV文件名，便于增量更新
+            csv_file_path = output_dir / "batch_schedules.csv"
             
-            # 筛选在before_date之前的记录，并按日期排序
-            valid_schedules = []
-            before_dt = datetime.strptime(before_date, '%Y-%m-%d')
+            # 定义CSV列头
+            csv_headers = [
+                "日期", "星期", "节日信息", "季节", "天气", "主题", 
+                "周期计划", "3天总结", "每日计划", "每日总结", "涉及角色", "角色简介",
+                "上午", "中午", "下午", "晚上", "夜间"
+            ]
             
-            for schedule in recent_schedules:
-                try:
-                    schedule_end_date = schedule.get('end_date', '')
-                    if schedule_end_date:
-                        schedule_end_dt = datetime.strptime(schedule_end_date, '%Y-%m-%d')
-                        if schedule_end_dt < before_dt:
-                            valid_schedules.append(schedule)
-                except:
-                    continue
+            # 检查文件是否存在，决定是追加还是创建新文件
+            file_exists = csv_file_path.exists()
+            write_mode = 'a' if file_exists else 'w'
             
-            # 按结束日期倒序排序，获取最新的记录
-            valid_schedules.sort(key=lambda x: x.get('end_date', ''), reverse=True)
+            # 获取周期信息
+            cycle_info = schedule_data.get('cycle_info', {})
+            cycle_theme = cycle_info.get('cycle_theme', '')
+            cycle_summary = schedule_data.get('cycle_summary', '')
+            daily_schedules = schedule_data.get('daily_schedules', [])
             
-            # 提取最近count个批次的summary
-            for schedule in valid_schedules[:count]:
-                daily_schedules = schedule.get('daily_schedules', [])
-                if daily_schedules:
-                    # 按3天一组创建批次summary
-                    batch_size = 3
-                    batch_summaries = []
+            # 写入CSV文件
+            with open(csv_file_path, write_mode, encoding='utf-8', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                
+                # 只在文件不存在时写入表头
+                if not file_exists:
+                    writer.writerow(csv_headers)
+                
+                # 处理3天总结：每3天写一次
+                batch_summary = ""
+                if len(daily_schedules) >= 3:
+                    # 简单总结前3天的主要内容
+                    summary_events = []
+                    for day in daily_schedules[:3]:
+                        for slot in day.get('time_slots', []):
+                            content = slot.get('story_content', '')
+                            if len(content) > 50:  # 选择内容较丰富的事件
+                                summary_events.append(f"{day.get('date', '')} {slot.get('slot_name', '')}: {content[:50]}...")
+                    batch_summary = '; '.join(summary_events[:2])  # 最多2个关键事件
+                
+                # 遍历每天的日程数据
+                for day_index, day_data in enumerate(daily_schedules):
+                    date = day_data.get('date', '')
+                    weekday = day_data.get('weekday_name', '')
+                    weather = day_data.get('weather', '')
+                    is_holiday = day_data.get('is_holiday', False)
+                    holiday_name = day_data.get('holiday_name', '')
                     
-                    for i in range(0, len(daily_schedules), batch_size):
-                        batch_days = daily_schedules[i:i + batch_size]
-                        if batch_days:
-                            batch_start = batch_days[0].get('date', '')
-                            batch_end = batch_days[-1].get('date', '')
-                            
-                            # 提取批次关键信息
-                            key_events = []
-                            involved_chars = set()
-                            
-                            for day in batch_days:
-                                # 检查是否有batch_summary字段
-                                daily_summary = day.get('daily_summary', '')
-                                if daily_summary:
-                                    key_events.append(f"{day.get('date', '')}: {daily_summary[:100]}")
-                                
-                                # 收集涉及的角色
-                                daily_chars = day.get('daily_involved_characters', [])
-                                involved_chars.update(daily_chars)
-                                
-                                # 从时间段中提取事件
-                                for slot in day.get('time_slots', []):
-                                    content = slot.get('story_content', '')
-                                    if len(content) > 150:  # 选择内容丰富的事件
-                                        key_events.append(f"{day.get('date', '')} {slot.get('slot_name', '')}: {content[:80]}...")
-                                    slot_chars = slot.get('involved_characters', [])
-                                    involved_chars.update(slot_chars)
-                            
-                            # 构建批次摘要
-                            char_summary = ', '.join(list(involved_chars)[:4]) if involved_chars else '无特定角色'
-                            event_summary = '; '.join(key_events[:2]) if key_events else '日常活动'
-                            
-                            batch_summary = f"**{batch_start}至{batch_end}（{len(batch_days)}天）**：主要角色{char_summary}，关键事件：{event_summary}"
-                            batch_summaries.append(batch_summary)
+                    # 节日信息处理
+                    holiday_info = holiday_name if is_holiday and holiday_name else "无"
                     
-                    # 只取最近的几个批次
-                    summaries.extend(batch_summaries[-2:])  # 每个周期取最后2个批次
+                    # 根据日期确定季节
+                    season = self._get_season_from_date(date)
                     
-                    if len(summaries) >= count:
-                        break
+                    daily_plan = day_data.get('daily_plan', '')
+                    daily_summary = day_data.get('daily_summary', '')  # 每日总结
+                    
+                    # 提取每日涉及角色信息
+                    daily_involved_characters = day_data.get('daily_involved_characters', [])
+                    daily_characters_info = day_data.get('daily_characters_info', '')
+                    
+                    # 如果没有提供字符串格式的角色信息，则自动生成
+                    if not daily_characters_info and daily_involved_characters:
+                        # 从角色数据中获取简介（这里需要传入角色数据）
+                        char_infos = []
+                        for char_name in daily_involved_characters:
+                            char_infos.append(f"{char_name}-简介待补充")  # 简化处理
+                        daily_characters_info = '；'.join(char_infos)
+                    
+                    # 初始化时间段数据
+                    time_slots_data = {
+                        '上午': '',
+                        '中午': '', 
+                        '下午': '',
+                        '晚上': '',
+                        '夜间': ''
+                    }
+                    
+                    # 提取时间段数据
+                    time_slots = day_data.get('time_slots', [])
+                    for slot in time_slots:
+                        slot_name = slot.get('slot_name', '')
+                        if slot_name in time_slots_data:
+                            time_slots_data[slot_name] = slot.get('story_content', '')
+                    
+                    # 3天总结：只在每3天的第一天显示，其他天为空
+                    day_batch_summary = ""
+                    if day_index % 3 == 0:  # 每3天的第一天显示总结
+                        day_batch_summary = batch_summary
+                    
+                    # 构建CSV行数据
+                    row_data = [
+                        date,                          # 日期
+                        weekday,                       # 星期
+                        holiday_info,                  # 节日信息
+                        season,                        # 季节
+                        weather,                       # 天气
+                        cycle_theme,                   # 主题
+                        cycle_summary,                 # 周期计划
+                        day_batch_summary,             # 3天总结
+                        daily_plan,                    # 每日计划
+                        daily_summary,                 # 每日总结
+                        ', '.join(daily_involved_characters),  # 涉及角色
+                        daily_characters_info,         # 角色简介
+                        time_slots_data['上午'],        # 上午
+                        time_slots_data['中午'],        # 中午
+                        time_slots_data['下午'],        # 下午
+                        time_slots_data['晚上'],        # 晚上
+                        time_slots_data['夜间']         # 夜间
+                    ]
+                    
+                    writer.writerow(row_data)
             
-            # 返回最近的count个summary
-            return summaries[-count:] if summaries else []
+            logger.info(f"周期 {cycle_number} CSV数据已{'追加到' if file_exists else '保存为新'}文件: {csv_file_path}")
             
         except Exception as e:
-            logger.warning(f"获取历史批次摘要失败: {e}")
+            logger.error(f"保存周期 {cycle_number} CSV文件失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+    
+    def _get_season_from_date(self, date_str: str) -> str:
+        """根据日期确定季节"""
+        try:
+            from datetime import datetime
+            date = datetime.strptime(date_str, '%Y-%m-%d')
+            month = date.month
+            
+            if month in [12, 1, 2]:
+                return '冬季'
+            elif month in [3, 4, 5]:
+                return '春季'
+            elif month in [6, 7, 8]:
+                return '夏季'
+            elif month in [9, 10, 11]:
+                return '秋季'
+            else:
+                return '未知'
+        except:
+            return '未知'
+    
+    async def _get_recent_batch_summaries(self, count: int, before_date: str) -> List[str]:
+        """获取最近4个3天批次的summary作为历史记录 - 跨周期跨批次记忆"""
+        try:
+            import csv
+            import os
+            from pathlib import Path
+            from datetime import datetime
+            
+            # 从CSV文件读取最近的3天总结
+            csv_file_path = Path("workspace/batch_schedule_output/batch_schedules.csv")
+            if not csv_file_path.exists():
+                logger.info("CSV文件不存在，返回空历史记录")
+                return []
+            
+            recent_summaries = []
+            before_dt = datetime.strptime(before_date, '%Y-%m-%d')
+            
+            # 读取CSV文件，提取3天总结
+            with open(csv_file_path, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    try:
+                        row_date = row.get('日期', '')
+                        if row_date:
+                            row_dt = datetime.strptime(row_date, '%Y-%m-%d')
+                            if row_dt < before_dt:  # 在指定日期之前
+                                three_day_summary = row.get('3天总结', '').strip()
+                                if three_day_summary and three_day_summary not in recent_summaries:
+                                    recent_summaries.append(three_day_summary)
+                    except:
+                        continue
+            
+            # 返回最近的count个summary（倒序，最新的在前）
+            result = recent_summaries[-count:] if len(recent_summaries) >= count else recent_summaries
+            result.reverse()  # 最新的在前
+            
+            logger.info(f"从CSV获取到 {len(result)} 个历史3天总结记录")
+            return result
+            
+        except Exception as e:
+            logger.error(f"获取历史批次总结失败: {e}")
             return []
         
     async def _generate_cycle_summary(self, cycle_info: Dict, daily_schedules: List[Dict], llm, workflow_chat) -> str:
