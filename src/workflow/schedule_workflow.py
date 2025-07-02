@@ -1142,6 +1142,43 @@ class ScheduleGenerateNode(BaseNode):
 4. **独立叙事**：每个时间段内容可能被单独提取使用，因此必须是自包含的完整故事
 5. **上下文连贯**：虽然是独立的，但各时间段之间应该有连贯的关系，形成日常生活的完整画面
 
+
+# 重要提醒
+1. **分批生成要求**：
+   - 只生成{batch_days_count}天的日程，不要生成整个周期
+   - 要体现周期规划的主题和目标，但重点是当前批次
+   - 要为后续批次留下自然的衔接点
+
+2. **数据完整性要求**：
+   - daily_plan：每天都要有具体的早晨计划
+   - daily_involved_characters：必须列出当天所有出现的有配置的角色名称
+   - 每天必须有5个完整的时间段（夜间、上午、中午、下午、晚上）
+   - involved_characters：每个时间段都要明确列出涉及的角色名称列表
+   - batch_summary：必须包含这{batch_days_count}天的阶段性总结
+
+3. **故事质量要求**：
+   - 每个时间段的story_content必须丰富详实，像小说片段一样生动
+   - 各时间段的故事必须是独立完整的，能够被单独提取和理解
+   - 角色对话要符合各自的性格特点，有真实感
+   - 增加随机事件：意外发现、巧遇等云枢市生活细节
+   - 情节要有起伏，包含工作压力、小确幸、意外惊喜等真实元素
+   - 禁止有任何男女恋爱元素
+   - 严禁涉及天文、星空、宇宙等主题，主角是普通人，过普通的都市生活
+   - 重点体现云枢市的生活气息：美食、购物、娱乐、社交、文化等
+
+4. **角色处理要求**：
+   - 重点角色要多安排，体现周期主题
+   - 其他角色根据生活逻辑自然出现
+   - 可以创造临时角色（如店主、路人、小动物）增加真实感
+   - involved_characters中只需列出角色名称，不需要描述
+
+5. **技术要求**：
+   - 确保JSON格式完全正确，可以被程序解析
+   - 每个字段都要填写完整，不能为空
+   - 关注batch_summary字段，它是本批次的重要总结
+
+禁止输入任何其他内容。
+
 # 输出格式
 请按以下JSON格式输出批次日程安排，禁止输入任何其他内容：
 
@@ -1209,41 +1246,6 @@ class ScheduleGenerateNode(BaseNode):
 }}
 ```
 
-# 重要提醒
-1. **分批生成要求**：
-   - 只生成{batch_days_count}天的日程，不要生成整个周期
-   - 要体现周期规划的主题和目标，但重点是当前批次
-   - 要为后续批次留下自然的衔接点
-
-2. **数据完整性要求**：
-   - daily_plan：每天都要有具体的早晨计划
-   - daily_involved_characters：必须列出当天所有出现的有配置的角色名称
-   - 每天必须有5个完整的时间段（夜间、上午、中午、下午、晚上）
-   - involved_characters：每个时间段都要明确列出涉及的角色名称列表
-   - batch_summary：必须包含这{batch_days_count}天的阶段性总结
-
-3. **故事质量要求**：
-   - 每个时间段的story_content必须丰富详实，像小说片段一样生动
-   - 各时间段的故事必须是独立完整的，能够被单独提取和理解
-   - 角色对话要符合各自的性格特点，有真实感
-   - 增加随机事件：意外发现、巧遇等云枢市生活细节
-   - 情节要有起伏，包含工作压力、小确幸、意外惊喜等真实元素
-   - 禁止有任何男女恋爱元素
-   - 严禁涉及天文、星空、宇宙等主题，主角是普通人，过普通的都市生活
-   - 重点体现云枢市的生活气息：美食、购物、娱乐、社交、文化等
-
-4. **角色处理要求**：
-   - 重点角色要多安排，体现周期主题
-   - 其他角色根据生活逻辑自然出现
-   - 可以创造临时角色（如店主、路人、小动物）增加真实感
-   - involved_characters中只需列出角色名称，不需要描述
-
-5. **技术要求**：
-   - 确保JSON格式完全正确，可以被程序解析
-   - 每个字段都要填写完整，不能为空
-   - 关注batch_summary字段，它是本批次的重要总结
-
-请开始生成这{batch_days_count}天充满云枢市生活真实感的详细日程安排。
 """
         
             # 调用LLM生成当前批次的日程
@@ -1279,9 +1281,17 @@ class ScheduleGenerateNode(BaseNode):
             # 解析当前批次的JSON结果
             batch_data = None
             try:
+                # 🔍 调试：打印LLM返回的完整内容
+                logger.info(f"🔍 LLM返回的完整内容长度: {len(final_content)}")
+                logger.info(f"📝 LLM返回内容前500字符: {final_content[:500]}...")
+                logger.info(f"📝 LLM返回内容后500字符: ...{final_content[-500:]}")
+                
                 json_content = self._extract_json_from_content(final_content)
                 logger.info(f"🔍 提取的JSON内容长度: {len(json_content)}")
                 logger.info(f"📝 JSON内容前200字符: {json_content[:200]}...")
+                
+                # 🔍 调试：打印提取的完整JSON内容
+                logger.info(f"📝 提取的完整JSON内容:\n{json_content}")
                 
                 from parsers.json_parser import JSONParser
                 parser = JSONParser()
@@ -1290,34 +1300,60 @@ class ScheduleGenerateNode(BaseNode):
                 logger.info(f"📊 解析结果类型: {type(parsed_result)}")
                 if isinstance(parsed_result, dict):
                     logger.info(f"🔑 解析结果顶级键: {list(parsed_result.keys())}")
-                    # 检查是否有daily_schedules字段，如果没有检查嵌套结构
-                    if 'daily_schedules' in parsed_result:
+                    # 🔍 调试：打印解析结果的完整结构（限制长度避免日志过长）
+                    result_str = str(parsed_result)
+                    if len(result_str) > 1000:
+                        result_str = result_str[:500] + "..." + result_str[-500:]
+                    logger.info(f"📊 解析结果结构: {result_str}")
+                    
+                    # 🔍 强健性修复：多种方式检查和提取数据
+                    batch_data = None
+                    batch_daily_schedules = []
+                    batch_summary = ""
+                    
+                    # 方式1：直接检查是否有expected字段
+                    if 'daily_schedules' in parsed_result and 'batch_info' in parsed_result:
+                        logger.info("✅ 方式1：找到标准结构 - batch_info, daily_schedules")
                         batch_data = parsed_result
                         batch_daily_schedules = batch_data.get('daily_schedules', [])
-                        batch_summary = batch_data.get('batch_summary', '')  # 提取批次总结
-                        logger.info(f"✅ 直接找到daily_schedules，包含 {len(batch_daily_schedules)} 天")
-                        if batch_summary:
-                            logger.info(f"📝 找到batch_summary: {batch_summary[:100]}...")
-                    elif isinstance(parsed_result, dict) and len(parsed_result) == 1:
-                        # 检查是否是嵌套结构，如 {"batch_info": {...}, "daily_schedules": [...]}
+                        batch_summary = batch_data.get('batch_summary', '')
+                        
+                    # 方式2：检查是否只有一个顶级键，且该键包含所有数据
+                    elif len(parsed_result) == 1:
                         nested_key = list(parsed_result.keys())[0]
                         nested_data = parsed_result[nested_key]
-                        logger.info(f"🔍 检查嵌套结构，顶级键: {nested_key}")
+                        logger.info(f"🔍 方式2：检查单键嵌套结构，顶级键: {nested_key}")
                         if isinstance(nested_data, dict) and 'daily_schedules' in nested_data:
+                            logger.info("✅ 方式2：从嵌套结构找到daily_schedules")
                             batch_data = nested_data
                             batch_daily_schedules = batch_data.get('daily_schedules', [])
                             batch_summary = batch_data.get('batch_summary', '')
-                            logger.info(f"✅ 从嵌套结构找到daily_schedules，包含 {len(batch_daily_schedules)} 天")
-                            if batch_summary:
-                                logger.info(f"📝 找到batch_summary: {batch_summary[:100]}...")
-                        else:
-                            # 检查是否整体结构包含daily_schedules
-                            if 'daily_schedules' in str(parsed_result):
-                                logger.info(f"🔍 JSON中包含daily_schedules文本，但结构不符合预期")
-                                logger.info(f"📊 完整解析结果: {parsed_result}")
-                            raise Exception(f"批次解析失败：嵌套结构中缺少daily_schedules字段，找到键: {list(nested_data.keys()) if isinstance(nested_data, dict) else 'non-dict'}")
+                    
+                    # 方式3：检查是否解析结果中缺少wrapper，实际内容就是batch_info
+                    elif any(key in ['批次天数', '批次开始日期', '批次结束日期'] for key in parsed_result.keys()):
+                        logger.warning("⚠️ 方式3：检测到batch_info直接作为根对象，可能JSON提取不完整")
+                        logger.info(f"🔍 原始JSON内容重新检查: {json_content[:200]}...")
+                        # 重新尝试提取完整JSON
+                        complete_json = self._extract_json_from_content(final_content)
+                        if complete_json != json_content:
+                            logger.info("🔄 重新提取到不同的JSON，再次解析")
+                            parsed_result = parser.parse(complete_json)
+                            if 'daily_schedules' in parsed_result:
+                                batch_data = parsed_result
+                                batch_daily_schedules = batch_data.get('daily_schedules', [])
+                                batch_summary = batch_data.get('batch_summary', '')
+                                logger.info("✅ 方式3：重新解析成功")
+                    
+                    # 验证最终结果
+                    if batch_data and batch_daily_schedules:
+                        logger.info(f"✅ 成功提取批次数据：{len(batch_daily_schedules)}天，总结长度{len(batch_summary)}字符")
                     else:
-                        raise Exception(f"批次解析失败：缺少daily_schedules字段，找到键: {list(parsed_result.keys())}")
+                        # 如果所有方式都失败，提供详细的错误信息
+                        error_msg = f"批次解析失败：无法找到daily_schedules。"
+                        error_msg += f"解析结果键: {list(parsed_result.keys())}"
+                        if 'daily_schedules' in str(parsed_result):
+                            error_msg += "。JSON文本中包含daily_schedules但结构异常"
+                        raise Exception(error_msg)
                 else:
                     raise Exception(f"批次解析失败：解析结果不是字典类型，而是 {type(parsed_result)}")
                 
@@ -1325,13 +1361,22 @@ class ScheduleGenerateNode(BaseNode):
                     # 合并到周期日程中
                     cycle_daily_schedules.extend(batch_daily_schedules)
                     
-                    # 立即保存当前批次到CSV（工作流内部保险机制）
-                    await self._save_batch_to_csv_immediately(
+                    # 立即增量保存当前批次到CSV
+                    await self._save_batch_to_csv_incrementally(
                         batch_daily_schedules, 
                         batch_data, 
                         current_cycle_index + 1, 
                         current_batch_start//batch_size + 1,
                         current_cycle
+                    )
+                    
+                    # 保存每3天批次的解析结果到TXT（方便错误时手动解析）
+                    await self._save_batch_json_to_txt(
+                        batch_data,
+                        current_cycle_index + 1,
+                        current_batch_start//batch_size + 1,
+                        batch_start_date,
+                        batch_end_date
                     )
                     
                     # 保存LLM原始回复到TXT文件（增量保存，保留格式）
@@ -1881,6 +1926,9 @@ class ScheduleGenerateNode(BaseNode):
         if matches:
             extracted_json = matches[0].strip()
             logger.info(f"✅ 从```json```代码块提取JSON，长度: {len(extracted_json)}")
+            # 🔍 调试：打印提取的JSON的开头和结尾
+            logger.info(f"📝 提取的JSON开头200字符: {extracted_json[:200]}...")
+            logger.info(f"📝 提取的JSON结尾200字符: ...{extracted_json[-200:]}")
             return extracted_json
         
         # 如果没有代码块，使用改进的JSON匹配
