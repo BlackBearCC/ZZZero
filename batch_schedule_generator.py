@@ -9,6 +9,7 @@ import random
 import json
 import os
 import sys
+import csv
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 from pathlib import Path
@@ -101,7 +102,7 @@ class BatchScheduleGenerator:
     def _get_random_config(self, batch_num: int) -> Dict[str, Any]:
         """生成随机配置 - 支持新的周期规划模式"""
         # 随机天数 (现在可以支持更大的范围，因为会自动分成多个周期)
-        total_days = random.randint(20, 50)  # 增加天数范围，让周期规划更有意义
+        total_days = 400  # 增加天数范围，让周期规划更有意义
         end_date = self.current_date + timedelta(days=total_days - 1)
         
         # 获取可用角色列表（排除主角方知衡）
@@ -353,7 +354,7 @@ class BatchScheduleGenerator:
         return "无特别遗留问题"
     
     def _merge_multiple_cycles_data(self, batch_schedules: List[Dict], batch_num: int, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """合并多个周期的数据为一个批次信息"""
+        """合并多个周期的数据为一个批次信息，并保存CSV"""
         try:
             if not batch_schedules:
                 return None
@@ -398,6 +399,9 @@ class BatchScheduleGenerator:
             
             # 按日期排序
             all_daily_schedules.sort(key=lambda x: x.get('date', ''))
+            
+            # 直接保存为CSV文件
+            self._save_batch_to_csv(all_daily_schedules, batch_schedules, batch_num)
             
             # 构建批次信息
             batch_info = {
@@ -537,6 +541,138 @@ class BatchScheduleGenerator:
                 return '未知'
         except:
             return '未知'
+    
+    def _save_batch_to_csv(self, daily_schedules: List[Dict], batch_schedules: List[Dict], batch_num: int):
+        """保存批次数据到CSV文件"""
+        try:
+            # 创建输出目录
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 使用固定CSV文件名，便于增量更新
+            csv_file_path = self.output_dir / "batch_schedules.csv"
+            
+            # 定义CSV列头
+            csv_headers = [
+                "日期", "星期", "节日信息", "季节", "天气", "主题", 
+                "周期计划", "3天总结", "每日计划", "涉及角色", "角色简介",
+                "上午", "中午", "下午", "晚上", "夜间"
+            ]
+            
+            # 检查文件是否存在，决定是追加还是创建新文件
+            file_exists = csv_file_path.exists()
+            write_mode = 'a' if file_exists else 'w'
+            
+            # 获取周期计划和周期总结
+            cycle_theme = ""
+            cycle_summary = ""
+            if batch_schedules:
+                first_schedule = batch_schedules[0]
+                if isinstance(first_schedule, dict) and 'cycle_summary' in first_schedule:
+                    cycle_summary = first_schedule.get('cycle_summary', '')
+                    # 从周期数据中提取主题
+                    cycle_info = first_schedule.get('cycle_info', {})
+                    cycle_theme = cycle_info.get('cycle_theme', '')
+            
+            # 写入CSV文件
+            with open(csv_file_path, write_mode, encoding='utf-8', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                
+                # 只在文件不存在时写入表头
+                if not file_exists:
+                    writer.writerow(csv_headers)
+                
+                # 处理3天总结：每3天写一次
+                batch_summary = ""
+                if len(daily_schedules) >= 3:
+                    # 简单总结前3天的主要内容
+                    summary_events = []
+                    for day in daily_schedules[:3]:
+                        for slot in day.get('time_slots', []):
+                            content = slot.get('story_content', '')
+                            if len(content) > 50:  # 选择内容较丰富的事件
+                                summary_events.append(f"{day.get('date', '')} {slot.get('slot_name', '')}: {content[:50]}...")
+                    batch_summary = '; '.join(summary_events[:2])  # 最多2个关键事件
+                
+                # 遍历每天的日程数据
+                for day_index, day_data in enumerate(daily_schedules):
+                    date = day_data.get('date', '')
+                    weekday = day_data.get('weekday_name', '')
+                    weather = day_data.get('weather', '')
+                    is_holiday = day_data.get('is_holiday', False)
+                    holiday_name = day_data.get('holiday_name', '')
+                    
+                    # 节日信息处理
+                    holiday_info = holiday_name if is_holiday and holiday_name else "无"
+                    
+                    # 根据日期确定季节
+                    season = self._get_season_from_date(date)
+                    
+                    daily_plan = day_data.get('daily_plan', '')
+                    
+                    # 提取每日涉及角色信息
+                    daily_involved_characters = day_data.get('daily_involved_characters', [])
+                    daily_characters_info = day_data.get('daily_characters_info', '')
+                    
+                    # 如果没有提供字符串格式的角色信息，则自动生成
+                    if not daily_characters_info and daily_involved_characters:
+                        # 从角色数据中获取简介
+                        char_infos = []
+                        char_list = self.workflow.characters_data.get("角色列表", {})
+                        for char_name in daily_involved_characters:
+                            if char_name in char_list:
+                                char_desc = char_list[char_name].get('简介', '')
+                                char_infos.append(f"{char_name}-{char_desc}")
+                        daily_characters_info = '；'.join(char_infos)
+                    
+                    # 初始化时间段数据
+                    time_slots_data = {
+                        '上午': '',
+                        '中午': '', 
+                        '下午': '',
+                        '晚上': '',
+                        '夜间': ''
+                    }
+                    
+                    # 提取时间段数据
+                    time_slots = day_data.get('time_slots', [])
+                    for slot in time_slots:
+                        slot_name = slot.get('slot_name', '')
+                        if slot_name in time_slots_data:
+                            time_slots_data[slot_name] = slot.get('story_content', '')
+                    
+                    # 3天总结：只在每3天的第一天显示，其他天为空
+                    day_batch_summary = ""
+                    if day_index % 3 == 0:  # 每3天的第一天显示总结
+                        day_batch_summary = batch_summary
+                    
+                    # 构建CSV行数据
+                    row_data = [
+                        date,                          # 日期
+                        weekday,                       # 星期
+                        holiday_info,                  # 节日信息
+                        season,                        # 季节
+                        weather,                       # 天气
+                        cycle_theme,                   # 主题
+                        cycle_summary,                 # 周期计划
+                        day_batch_summary,             # 3天总结
+                        daily_plan,                    # 每日计划
+                        ', '.join(daily_involved_characters),  # 涉及角色
+                        daily_characters_info,         # 角色简介
+                        time_slots_data['上午'],        # 上午
+                        time_slots_data['中午'],        # 中午
+                        time_slots_data['下午'],        # 下午
+                        time_slots_data['晚上'],        # 晚上
+                        time_slots_data['夜间']         # 夜间
+                    ]
+                    
+                    writer.writerow(row_data)
+            
+            logger.info(f"批次 {batch_num} CSV数据已{'追加到' if file_exists else '保存为新'}文件: {csv_file_path}")
+            
+        except Exception as e:
+            logger.error(f"保存批次 {batch_num} CSV文件失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
 
     

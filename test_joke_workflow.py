@@ -55,7 +55,7 @@ async def test_joke_workflow():
     try:
         # 初始化LLM
         llm_config = {
-            'api_key': 'your_doubao_api_key_here',  # 需要配置实际的API密钥
+            'api_key': 'b633a622-b5d0-4f16-a8a9-616239cf15d1',  # 需要配置实际的API密钥
             'model': 'ep-20241228203630-nqr7v',
             'base_url': 'https://ark.cn-beijing.volces.com/api/v3'
         }
