@@ -675,7 +675,7 @@ class ScheduleGenerateNode(BaseNode):
           "assigned_character": "{protagonist}",
           "activity_type": "休息/特殊事件",
           "location": "具体地点",
-          "story_content": "详细的故事描述，四幕式结构思路，250字以内",
+          "story_content": "详细的第三人称故事描述，方知衡为主体，像小说片段一样生动，事件描述为主，少量对话，250字以内",
           "involved_characters": ["角色名1", "角色名2"]
         }},
         {{
@@ -685,7 +685,7 @@ class ScheduleGenerateNode(BaseNode):
           "assigned_character": "主要互动角色或{protagonist}",
           "activity_type": "工作/学术/社交",
           "location": "具体地点",
-          "story_content": "详细的一段话故事描述，四幕式结构思路，250字以内",
+          "story_content": "详细的第三人称故事描述，方知衡为主体，像小说片段一样生动，事件描述为主，少量对话，250字以内",
           "involved_characters": ["角色名1", "角色名2"]
         }},
         {{
@@ -695,7 +695,7 @@ class ScheduleGenerateNode(BaseNode):
           "assigned_character": "互动角色或{protagonist}",
           "activity_type": "用餐/社交/休息",
           "location": "具体地点",
-          "story_content": "详细的一段话故事描述，四幕式结构思路，250字以内",
+          "story_content": "详细的第三人称故事描述，方知衡为主体，像小说片段一样生动，事件描述为主，少量对话，250字以内",
           "involved_characters": ["角色名1", "小动物名等"]
         }},
         {{
@@ -705,7 +705,7 @@ class ScheduleGenerateNode(BaseNode):
           "assigned_character": "互动角色或{protagonist}",
           "activity_type": "工作/学术/生活",
           "location": "具体地点",
-          "story_content": "详细的故事描述，至少200字",
+          "story_content": "详细的第三人称故事描述，方知衡为主体，像小说片段一样生动，事件描述为主，少量对话，250字以内",
           "involved_characters": ["角色名1", "角色名2"]
         }},
         {{
@@ -715,7 +715,7 @@ class ScheduleGenerateNode(BaseNode):
           "assigned_character": "互动角色或{protagonist}",
           "activity_type": "社交/娱乐/个人时间",
           "location": "具体地点",
-          "story_content": "详细的故事描述，可以包含深度交流、意外发现等，至少200字",
+          "story_content": "详细的第三人称故事描述，方知衡为主体，像小说片段一样生动，事件描述为主，少量对话，250字以内",
           "involved_characters": ["角色名1", "角色名2"]
         }}
       ],
@@ -739,6 +739,7 @@ class ScheduleGenerateNode(BaseNode):
    - 增加随机事件：路边小猫、意外发现、巧遇等云枢市生活细节
    - 情节要有起伏，包含工作压力、小确幸、意外惊喜等真实元素
    - 禁止有任何男女恋爱元素
+   - 禁止提起生活中提起天文，主角不是工作狂，说话也是正常人，不会用精确到秒的数字
 
 3. **角色处理要求**：
    - 所有角色平等重要，根据生活逻辑自然出现
@@ -790,6 +791,7 @@ class ScheduleGenerateNode(BaseNode):
                         try:
                             display_content = ""
                             if think_content.strip():
+                                
                                 display_content += f"""
 <div style="background: #f8f9fa; border-left: 4px solid #6c757d; padding: 10px; margin: 10px 0; border-radius: 4px;">
 思考过程：<br>
@@ -797,6 +799,7 @@ class ScheduleGenerateNode(BaseNode):
 </div>"""
                             
                             if final_content.strip():
+                                
                                 display_content += f"""
 <div style="background: #e8f5e9; border-left: 4px solid #28a745; padding: 10px; margin: 10px 0; border-radius: 4px;">
 生成结果：<br>

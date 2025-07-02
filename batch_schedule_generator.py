@@ -7,14 +7,12 @@
 import asyncio
 import random
 import json
-import csv
 import os
 import sys
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 from pathlib import Path
 import logging
-import io
 
 
 
@@ -39,7 +37,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('batch_schedule_generator.log'),
+        logging.FileHandler('batch_schedule_generator.log', encoding='utf-8'),  # 明确指定UTF-8编码
         logging.StreamHandler()
     ]
 )
@@ -49,7 +47,7 @@ logger = logging.getLogger(__name__)
 class BatchScheduleGenerator:
     """批量日程生成器"""
     
-    def __init__(self, start_date: str = "2025-07-02", batch_count: int = 3):
+    def __init__(self, start_date: str = "2025-07-02", batch_count: int = 100):
         """
         初始化批量生成器
         
@@ -68,16 +66,13 @@ class BatchScheduleGenerator:
         self.output_dir = Path("workspace/batch_schedule_output")
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
-        # CSV文件路径
-        self.csv_file = self.output_dir / f"batch_schedules_{start_date.replace('-', '')}.csv"
-        
         # 初始化LLM和工作流
         self._init_workflow()
         
         logger.info(f"批量日程生成器初始化完成")
         logger.info(f"开始日期: {start_date}")
         logger.info(f"批次数量: {batch_count}")
-        logger.info(f"输出文件: {self.csv_file}")
+        logger.info(f"输出目录: {self.output_dir}")
     
     def _init_workflow(self):
         """初始化工作流和LLM"""
@@ -105,8 +100,8 @@ class BatchScheduleGenerator:
     
     def _get_random_config(self, batch_num: int) -> Dict[str, Any]:
         """生成随机配置"""
-        # 随机天数 (7-30天)
-        total_days = random.randint(7, 30)
+        # 随机天数 (7-14天)
+        total_days = random.randint(5, 14)
         end_date = self.current_date + timedelta(days=total_days - 1)
         
         # 获取可用角色列表（排除主角方知衡）
@@ -114,8 +109,8 @@ class BatchScheduleGenerator:
         if '方知衡' in available_characters:
             available_characters.remove('方知衡')
         
-        # 随机选择角色 (3-9个)
-        char_count = min(random.randint(3, 9), len(available_characters))
+        # 随机选择角色 (2-6)
+        char_count = min(random.randint(2, 6), len(available_characters))
         selected_characters = random.sample(available_characters, char_count)
         
         # 获取可用地点列表
@@ -125,7 +120,7 @@ class BatchScheduleGenerator:
                 available_locations.append(loc_info.get('name', loc_name))
         
         # 随机选择地点 (3-9个)
-        loc_count = min(random.randint(3, 9), len(available_locations))
+        loc_count = min(random.randint(2, 6), len(available_locations))
         selected_locations = random.sample(available_locations, loc_count)
         
         # 生成配置
@@ -192,55 +187,142 @@ class BatchScheduleGenerator:
             logger.info(f"  选择角色: {', '.join(config['selected_characters'])}")
             logger.info(f"  选择地点: {', '.join(config['selected_locations'])}")
             
-            # 创建简化的工作流聊天接口（不需要UI）
+            # 创建简化的工作流聊天接口（不需要UI），避免使用emoji符号
             class SimpleWorkflowChat:
                 def __init__(self):
                     self.current_node = ""
                 
                 async def add_node_message(self, node_name: str, message: str, status: str):
-                    logger.info(f"[{node_name}] {message}")
+                    # 移除emoji符号，使用纯文本
+                    clean_message = message.replace('✅', '[成功]').replace('❌', '[失败]').replace('📅', '[日程]').replace('💾', '[保存]')
+                    logger.info(f"[{node_name}] {clean_message}")
                 
                 def _create_workflow_progress(self):
                     return ""
             
             workflow_chat = SimpleWorkflowChat()
             
-            # 执行工作流
-            schedule_result = None
-            async for progress in self.workflow.execute_workflow_stream(config, workflow_chat):
-                # 获取最终结果
-                schedule_result = progress
+            # 执行工作流 - 修复结果收集逻辑
+            logger.info(f"开始执行工作流...")
             
-            if schedule_result and schedule_result.get('save_success'):
-                logger.info(f"批次 {batch_num} 生成并保存成功!")
+            final_state = None
+            final_output = None
+            progress_count = 0
+            
+            async for stream_event in self.workflow.execute_workflow_stream(config, workflow_chat):
+                progress_count += 1
+                logger.info(f"收到工作流事件 {progress_count}: {type(stream_event)}")
                 
-                # 提取生成的数据用于CSV保存
-                schedule_data = schedule_result.get('schedule_result', {})
-                daily_schedules = schedule_data.get('daily_schedules', [])
+                # 检查是否是最终输出事件
+                if isinstance(stream_event, tuple) and len(stream_event) >= 4:
+                    # 元组格式: (html, content, message, is_complete)
+                    html, content, message, is_complete = stream_event
+                    logger.info(f"收到UI事件: message='{message}', is_complete={is_complete}")
+                    
+                    # 如果包含成功完成的信息，说明有实际的执行结果
+                    if "执行完成" in message or "生成完成" in message:
+                        logger.info("检测到任务完成信号")
                 
-                # 构建批次信息
-                batch_info = {
-                    'batch_number': batch_num,
-                    'schedule_id': schedule_result.get('schedule_id', ''),
-                    'start_date': config['start_date'],
-                    'end_date': config['end_date'],
-                    'total_days': config['total_days'],
-                    'characters': config['selected_characters'],
-                    'locations': config['selected_locations'],
-                    'daily_schedules': daily_schedules,
-                    'schedule_summary': schedule_data.get('schedule_summary', {}),
-                    'weekly_plan': schedule_data.get('weekly_plan', ''),
-                    'key_events': self._extract_key_events(daily_schedules),
-                    'emotional_progress': self._extract_emotional_progress(daily_schedules),
-                    'pending_issues': self._extract_pending_issues(daily_schedules)
+            logger.info(f"工作流UI流执行完成，共收到 {progress_count} 次事件")
+            
+            # 使用流式获取最终状态数据
+            logger.info("通过流式调用获取最终数据...")
+            
+            try:
+                # 准备相同的输入数据
+                initial_input = {
+                    'characters_data': self.workflow.characters_data,
+                    'locations_data': self.workflow.locations_data,
+                    'stories_data': self.workflow.stories_data,
+                    'protagonist_data': self.workflow.protagonist_data,
+                    'holidays_data': self.workflow.holidays_data,
+                    'config': config,
+                    'protagonist': config.get('protagonist', '方知衡'),
+                    'schedule_type': config.get('schedule_type', 'weekly'),
+                    'start_date': config.get('start_date', ''),
+                    'end_date': config.get('end_date', ''),
+                    'total_days': config.get('total_days', 7),
+                    'selected_characters': config.get('selected_characters', []),
+                    'selected_locations': config.get('selected_locations', []),
+                    'selected_stories': config.get('selected_stories', []),
+                    'time_slots_config': config.get('time_slots_config', self.workflow.current_config['time_slots_config']),
+                    'character_distribution': config.get('character_distribution', 'balanced'),
+                    'story_integration': config.get('story_integration', 'moderate'),
+                    'include_holidays': config.get('include_holidays', True),
+                    'include_lunar': config.get('include_lunar', True),
+                    'workflow_chat': workflow_chat,
+                    'llm': self.workflow.llm
                 }
                 
-                # 保存到历史记录
-                self.batch_history.append(batch_info)
+                # 使用流式执行图获取最终状态
+                if not self.workflow.graph:
+                    await self.workflow.create_schedule_graph()
                 
-                return batch_info
-            else:
-                logger.error(f"批次 {batch_num} 生成失败")
+                compiled_graph = self.workflow.graph.compile()
+                
+                # 简单执行流式图，不需要收集状态
+                async for stream_chunk in compiled_graph.stream(initial_input):
+                    # 只是让工作流执行完成，不收集状态
+                    pass
+                
+                logger.info("工作流执行完成，准备从数据库获取数据")
+                
+                # 等待1秒确保数据库写入完成
+                import time
+                time.sleep(1)
+                
+                # 从数据库获取最新的日程记录
+                try:
+                    from database.managers.schedule_manager import ScheduleManager
+                    schedule_manager = ScheduleManager()
+                    
+                    # 获取最新的日程记录（按创建时间排序）
+                    recent_schedules = schedule_manager.get_schedules_by_filter({}, limit=1)
+                    
+                    if recent_schedules:
+                        latest_schedule = recent_schedules[0]
+                        actual_schedule_id = latest_schedule['schedule_id']
+                        logger.info(f"从数据库获取到最新日程ID: {actual_schedule_id}")
+                        
+                        # 创建最终状态
+                        final_state = {
+                            'schedule_id': actual_schedule_id,
+                            'config': config,
+                            'database_success': True
+                        }
+                    else:
+                        logger.error("数据库中没有找到新创建的日程记录")
+                        final_state = {'database_success': False}
+                        
+                except Exception as db_error:
+                    logger.error(f"从数据库获取最新记录失败: {db_error}")
+                    final_state = {'database_success': False}
+                
+                if final_state.get('database_success', False):
+                    schedule_id = final_state.get('schedule_id')
+                    logger.info(f"批次 {batch_num} 工作流执行成功，数据库记录ID: {schedule_id}")
+                    
+                    # 直接从数据库获取完整数据构建批次信息
+                    batch_info = self._get_batch_info_from_database(schedule_id)
+                    
+                    if batch_info:
+                        # 更新批次编号
+                        batch_info['batch_number'] = batch_num
+                        # 保存到历史记录
+                        self.batch_history.append(batch_info)
+                        logger.info(f"批次 {batch_num} 完成，从数据库获取了完整数据")
+                        return batch_info
+                    else:
+                        logger.error(f"批次 {batch_num} 从数据库获取数据失败")
+                        return None
+                else:
+                    logger.error(f"批次 {batch_num} 数据库操作失败")
+                    return None
+                
+            except Exception as graph_error:
+                logger.error(f"流式图执行失败: {graph_error}")
+                import traceback
+                logger.error(traceback.format_exc())
                 return None
                 
         except Exception as e:
@@ -285,68 +367,72 @@ class BatchScheduleGenerator:
                 return daily_plan[:100] + "..." if len(daily_plan) > 100 else daily_plan
         return "无特别遗留问题"
     
-    def _save_batch_to_csv(self, batch_info: Dict[str, Any]):
-        """将批次数据按日期行保存到CSV文件"""
+    def _get_batch_info_from_database(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+        """从数据库获取完整的批次信息"""
         try:
-            # 检查文件是否存在，确定是否需要写入表头
-            file_exists = self.csv_file.exists()
+            from database.managers.schedule_manager import ScheduleManager
             
-            # 验证日期是否包含节假日
-            holidays_in_batch = self._check_holidays_in_batch(batch_info)
+            # 创建数据库管理器
+            schedule_manager = ScheduleManager()
             
-            with open(self.csv_file, 'a', newline='', encoding='utf-8-sig') as csvfile:
-                fieldnames = [
-                    '批次编号', '日期', '天气', '地点', '季节', '节假日',
-                    '周期计划', '每日计划', '夜间', '上午', '中午', '下午', '晚上', '涉及角色'
-                ]
-                
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                
-                # 如果是新文件，写入表头
-                if not file_exists:
-                    writer.writeheader()
-                
-                # 逐日写入数据
-                daily_schedules = batch_info.get('daily_schedules', [])
-                weekly_plan = batch_info.get('weekly_plan', '')
-                
-                for day_data in daily_schedules:
-                    # 提取当日的5个时间段故事
-                    time_slots = {slot['slot_name']: slot.get('story_content', '') 
-                                for slot in day_data.get('time_slots', [])}
-                    
-                    # 提取当日涉及的角色
-                    daily_characters = set()
-                    for slot in day_data.get('time_slots', []):
-                        involved_chars = slot.get('involved_characters', [])
-                        if isinstance(involved_chars, list):
-                            daily_characters.update(involved_chars)
-                    
-                    # 确定季节
-                    season = self._get_season_from_date(day_data.get('date', ''))
-                    
-                    # 写入该日数据
-                    writer.writerow({
-                        '批次编号': batch_info['batch_number'],
-                        '日期': day_data.get('date', ''),
-                        '天气': day_data.get('weather', ''),
-                        '地点': self._extract_daily_locations(day_data),
-                        '季节': season,
-                        '节假日': day_data.get('holiday_name', '') if day_data.get('is_holiday', False) else '',
-                        '周期计划': weekly_plan,
-                        '每日计划': day_data.get('daily_plan', ''),
-                        '夜间': time_slots.get('夜间', ''),
-                        '上午': time_slots.get('上午', ''),
-                        '中午': time_slots.get('中午', ''),
-                        '下午': time_slots.get('下午', ''),
-                        '晚上': time_slots.get('晚上', ''),
-                        '涉及角色': ', '.join(sorted(daily_characters))
-                    })
+            # 获取完整的日程数据
+            full_schedule = schedule_manager.get_schedule_by_id(schedule_id)
             
-            logger.info(f"批次 {batch_info['batch_number']} 数据已按日期行保存到 CSV 文件")
+            if not full_schedule:
+                logger.warning(f"数据库中未找到日程: {schedule_id}")
+                return None
+            
+            # 提取每日安排
+            daily_schedules = full_schedule.get('daily_schedules', [])
+            
+            # 构建批次信息
+            batch_info = {
+                'batch_number': len(self.batch_history) + 1,  # 基于当前历史数量
+                'schedule_id': schedule_id,
+                'start_date': full_schedule.get('start_date', ''),
+                'end_date': full_schedule.get('end_date', ''),
+                'total_days': full_schedule.get('total_days', 0),
+                'characters': [],  # 从时间段中提取
+                'locations': [],   # 从时间段中提取
+                'daily_schedules': daily_schedules,
+                'schedule_summary': {},  # 可以从描述中解析
+                'weekly_plan': full_schedule.get('weekly_plan', ''),
+                'key_events': self._extract_key_events(daily_schedules),
+                'emotional_progress': self._extract_emotional_progress(daily_schedules),
+                'pending_issues': self._extract_pending_issues(daily_schedules)
+            }
+            
+            # 从时间段中提取参与的角色和地点
+            characters = set()
+            locations = set()
+            
+            for day in daily_schedules:
+                for slot in day.get('time_slots', []):
+                    assigned_char = slot.get('assigned_character', '')
+                    if assigned_char and assigned_char != '方知衡':
+                        characters.add(assigned_char)
+                    
+                    location = slot.get('location', '')
+                    if location:
+                        locations.add(location)
+            
+            batch_info['characters'] = list(characters)
+            batch_info['locations'] = list(locations)
+            
+            logger.info(f"从数据库成功获取批次信息: {schedule_id}")
+            logger.info(f"  包含 {len(daily_schedules)} 天安排")
+            logger.info(f"  涉及 {len(characters)} 个角色: {', '.join(list(characters)[:3])}...")
+            logger.info(f"  涉及 {len(locations)} 个地点: {', '.join(list(locations)[:3])}...")
+            
+            return batch_info
             
         except Exception as e:
-            logger.error(f"保存批次数据到CSV失败: {e}")
+            logger.error(f"从数据库获取批次信息失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return None
+    
+
     
     def _check_holidays_in_batch(self, batch_info: Dict[str, Any]) -> Dict[str, str]:
         """验证批次中的节假日"""
@@ -390,51 +476,7 @@ class BatchScheduleGenerator:
         except:
             return '未知'
     
-    def _extract_daily_locations(self, day_data: Dict) -> str:
-        """提取当日的主要地点"""
-        locations = set()
-        for slot in day_data.get('time_slots', []):
-            location = slot.get('location', '')
-            if location:
-                locations.add(location)
-        return ', '.join(sorted(locations))
-    
-    def _extract_daily_plans(self, daily_schedules: List[Dict]) -> str:
-        """提取每日计划摘要"""
-        plans = []
-        for day in daily_schedules[:3]:  # 只取前3天作为摘要
-            date = day.get('date', '')
-            plan = day.get('daily_plan', '')
-            if plan:
-                plans.append(f"{date}: {plan[:80]}...")
-        return '; '.join(plans)
-    
-    def _extract_time_slot_stories(self, daily_schedules: List[Dict]) -> str:
-        """提取5个时间段的故事摘要"""
-        stories = []
-        time_slots = ['夜间', '上午', '中午', '下午', '晚上']
-        
-        for day in daily_schedules[:2]:  # 取前2天的故事
-            date = day.get('date', '')
-            for slot in day.get('time_slots', []):
-                slot_name = slot.get('slot_name', '')
-                story = slot.get('story_content', '')
-                if story and slot_name in time_slots:
-                    stories.append(f"{date}-{slot_name}: {story[:60]}...")
-        
-        return '; '.join(stories[:5])  # 限制长度
-    
-    def _extract_character_interactions(self, daily_schedules: List[Dict]) -> str:
-        """提取角色互动详情，只包含角色名称"""
-        characters = set()
-        
-        for day in daily_schedules:
-            for slot in day.get('time_slots', []):
-                involved_chars = slot.get('involved_characters', [])
-                if isinstance(involved_chars, list):
-                    characters.update(involved_chars)
-        
-        return ', '.join(sorted(characters))
+
     
     def _save_detailed_json(self, batch_info: Dict[str, Any]):
         """保存详细的JSON数据（可选）"""
@@ -466,13 +508,6 @@ class BatchScheduleGenerator:
                 batch_info = await self._generate_single_batch(batch_num)
                 
                 if batch_info:
-                    # 立即保存到CSV（增量保存）
-                    self._save_batch_to_csv(batch_info)
-                    logger.info(f"✅ 批次 {batch_num} 已增量保存到CSV")
-                    
-                    # 保存详细JSON（可选）
-                    self._save_detailed_json(batch_info)
-                    
                     # 更新当前日期为下一批次的开始日期（确保日期连续）
                     next_start_date = datetime.strptime(batch_info['end_date'], '%Y-%m-%d') + timedelta(days=1)
                     self.current_date = next_start_date
@@ -480,13 +515,17 @@ class BatchScheduleGenerator:
                     success_count += 1
                     logger.info(f"批次 {batch_num} 完成，下次开始日期: {self.current_date.strftime('%Y-%m-%d')}")
                     
+                    # 数据已经从数据库获取，无需重复操作
+                    
                     # 验证日期连续性
-                    logger.info(f"📅 日期连续性检查: 当前批次结束 {batch_info['end_date']}, 下批次开始 {self.current_date.strftime('%Y-%m-%d')}")
+                    logger.info(f"日期连续性检查: 当前批次结束 {batch_info['end_date']}, 下批次开始 {self.current_date.strftime('%Y-%m-%d')}")
                 else:
                     failed_count += 1
                     logger.error(f"批次 {batch_num} 失败，跳过")
-                    # 即使失败也要推进日期，避免重复
-                    self.current_date += timedelta(days=7)  # 跳过7天
+                    # 即使失败也要推进日期，避免重复 - 使用随机天数确保时间连续
+                    skip_days = random.randint(7, 14)  # 与成功时的随机天数保持一致
+                    self.current_date += timedelta(days=skip_days)
+                    logger.info(f"批次 {batch_num} 失败，推进日期 {skip_days} 天到: {self.current_date.strftime('%Y-%m-%d')}")
                 
                 # 批次间短暂休息，避免API限制
                 await asyncio.sleep(2)
@@ -494,6 +533,10 @@ class BatchScheduleGenerator:
             except Exception as e:
                 logger.error(f"批次 {batch_num} 处理异常: {e}")
                 failed_count += 1
+                # 异常时也要推进日期，避免重复
+                skip_days = random.randint(7, 14)
+                self.current_date += timedelta(days=skip_days)
+                logger.info(f"批次 {batch_num} 异常，推进日期 {skip_days} 天到: {self.current_date.strftime('%Y-%m-%d')}")
                 continue
         
         # 生成总结报告
@@ -502,7 +545,11 @@ class BatchScheduleGenerator:
         logger.info(f"\n批量生成完成!")
         logger.info(f"成功: {success_count} 批次")
         logger.info(f"失败: {failed_count} 批次")
-        logger.info(f"CSV文件: {self.csv_file}")
+        logger.info(f"输出目录: {self.output_dir}")
+        
+        # 确保程序能够正常结束
+        print(f"\n所有批次处理完成，程序即将退出...")
+        return success_count, failed_count
     
     def _generate_summary_report(self, success_count: int, failed_count: int):
         """生成总结报告"""
@@ -546,10 +593,10 @@ async def main():
     
     args = parser.parse_args()
     
-    print(f"🚀 批量日程生成器启动")
-    print(f"📅 开始日期: {args.start_date}")
-    print(f"🔢 批次数量: {args.batch_count}")
-    print(f"📁 输出目录: workspace/batch_schedule_output/")
+    print(f"批量日程生成器启动")
+    print(f"开始日期: {args.start_date}")
+    print(f"批次数量: {args.batch_count}")
+    print(f"输出目录: workspace/batch_schedule_output/")
     
     try:
         generator = BatchScheduleGenerator(
@@ -557,17 +604,21 @@ async def main():
             batch_count=args.batch_count
         )
         
-        await generator.generate_all_batches()
+        success_count, failed_count = await generator.generate_all_batches()
         
-        print(f"✅ 批量生成完成!")
-        print(f"📊 查看结果: {generator.csv_file}")
+        print(f"批量生成完成!")
+        print(f"输出目录: {generator.output_dir}")
+        print(f"成功率: {success_count}/{generator.batch_count} ({success_count/generator.batch_count*100:.1f}%)")
         
     except KeyboardInterrupt:
-        print(f"\n⏹️  用户中断，程序退出")
+        print(f"\n用户中断，程序退出")
     except Exception as e:
-        print(f"❌ 程序执行失败: {e}")
+        print(f"程序执行失败: {e}")
         import traceback
         traceback.print_exc()
+    finally:
+        print(f"\n程序退出")
+        sys.exit(0)
 
 
 if __name__ == "__main__":
