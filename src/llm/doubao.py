@@ -127,7 +127,7 @@ class DoubaoLLM(BaseLLMProvider):
             **kwargs: 其他参数
             
         Yields:
-            Dict: 包含推理过程或最终答案的流式数据
+            Dict: 包含推理过程或最终答案的增量数据
         """
         # 获取DeepSeek R1模型名称
         deepseek_model = os.getenv('DOUBAO_MODEL_DEEPSEEKR1', 'ep-20250221154107-c4qc7')
@@ -182,16 +182,11 @@ class DoubaoLLM(BaseLLMProvider):
                         raise Exception(f"豆包API调用失败: {error_text}")
                     
                     logging.info(f"[DoubaoLLM] 成功建立流式连接，开始接收数据")
-                    # 累积内容用于构建完整结果
-                    accumulated_reasoning = ""
-                    accumulated_content = ""
                     chunk_count = 0
                     
                     # 处理流式响应
                     async for line in response.content:
                         chunk_count += 1
-                        if chunk_count % 100 == 0:
-                            logging.info(f"[DoubaoLLM] 已接收 {chunk_count} 个数据块")
                             
                         line_text = line.decode('utf-8').strip()
                         if not line_text:
@@ -202,16 +197,12 @@ class DoubaoLLM(BaseLLMProvider):
                             
                         if line_text == "[DONE]":
                             logging.info(f"[DoubaoLLM] 流式请求完成，总共接收 {chunk_count} 个数据块")
-                            # 发送最终完整结果
+                            # 发送完成信号
                             yield {
                                 "type": "think_complete",
-                                "reasoning_content": accumulated_reasoning,
-                                "content": accumulated_content,
                                 "metadata": {
                                     "model": deepseek_model,
-                                    "has_reasoning": bool(accumulated_reasoning),
-                                    "reasoning_length": len(accumulated_reasoning),
-                                    "content_length": len(accumulated_content)
+                                    "total_chunks": chunk_count
                                 }
                             }
                             break
@@ -223,24 +214,22 @@ class DoubaoLLM(BaseLLMProvider):
                                 choice = chunk["choices"][0]
                                 delta = choice.get("delta", {})
                                 
-                                # 处理推理内容
+                                # 处理推理内容 - 只返回增量
                                 if delta.get("reasoning_content"):
                                     reasoning_chunk = delta["reasoning_content"]
-                                    accumulated_reasoning += reasoning_chunk
+                                    print(reasoning_chunk, end='', flush=True)
                                     yield {
                                         "type": "reasoning_chunk",
-                                        "content": reasoning_chunk,
-                                        "accumulated_reasoning": accumulated_reasoning
+                                        "content": reasoning_chunk
                                     }
                                 
-                                # 处理最终答案内容
+                                # 处理最终答案内容 - 只返回增量
                                 if delta.get("content"):
                                     content_chunk = delta["content"]
-                                    accumulated_content += content_chunk
+                                    print(content_chunk, end='', flush=True)
                                     yield {
                                         "type": "content_chunk",
-                                        "content": content_chunk,
-                                        "accumulated_content": accumulated_content
+                                        "content": content_chunk
                                     }
                                     
                         except json.JSONDecodeError as e:
@@ -342,12 +331,12 @@ class DoubaoLLM(BaseLLMProvider):
                 )
                 
     async def stream_generate(self,
-                                           messages: List[Message],
-                                           mode: str = "normal",
-                                           interrupt_checker=None,
-                                           timeout: int = None,
-                                           return_dict: bool = False,
-                                           **kwargs):
+                             messages: List[Message],
+                             mode: str = "normal",
+                             interrupt_checker=None,
+                             timeout: int = None,
+                             return_dict: bool = False,
+                             **kwargs):
         """支持中断检查的流式生成
         
         Args:
@@ -375,13 +364,9 @@ class DoubaoLLM(BaseLLMProvider):
         
         # 如果是think模式，使用流式think
         if mode == "think":
-            accumulated_reasoning = ""
-            accumulated_content = ""
-            
             async for result in self._stream_think(messages, **kwargs):
                 if result.get("type") == "reasoning_chunk":
                     reasoning_chunk = result.get("content", "")
-                    accumulated_reasoning += reasoning_chunk
                     
                     if return_dict:
                         # 为工作流返回字典格式，区分think和content
@@ -396,7 +381,6 @@ class DoubaoLLM(BaseLLMProvider):
                 
                 elif result.get("type") == "content_chunk":
                     content_chunk = result.get("content", "")
-                    accumulated_content += content_chunk
                     
                     if return_dict:
                         # 为工作流返回字典格式
@@ -411,18 +395,16 @@ class DoubaoLLM(BaseLLMProvider):
                 
                 elif result.get("type") == "think_complete":
                     if return_dict:
-                        # think完成，发送完整结果
+                        # think完成信号
                         yield {
-                            "think": accumulated_reasoning,
-                            "content": accumulated_content,
-                            "type": "think_complete",
-                            "total_reasoning": accumulated_reasoning,
-                            "total_content": accumulated_content
+                            "think": "",
+                            "content": "",
+                            "type": "think_complete"
                         }
                     break
                 
-                # 中断检查
-                if interrupt_checker and interrupt_checker(accumulated_reasoning + accumulated_content):
+                # 中断检查 - 这里需要调用方自己维护累加内容进行检查
+                if interrupt_checker and interrupt_checker(""):  # 传空字符串，让调用方处理
                     break
             return
             
@@ -463,7 +445,6 @@ class DoubaoLLM(BaseLLMProvider):
                     error_text = await response.text()
                     raise Exception(f"豆包API调用失败: {error_text}")
                     
-                # 累积内容用于中断检查
                 accumulated_content = ""
                 
                 # 处理流式响应
@@ -490,37 +471,51 @@ class DoubaoLLM(BaseLLMProvider):
                                 
                                 # 如果提供了中断检查器，检查是否需要中断
                                 if interrupt_checker and interrupt_checker(accumulated_content):
-                                    # 发送当前chunk后中断
-                                    yield content_chunk
                                     break
                                 
-                                yield content_chunk
-                                
+                                if return_dict:
+                                    yield {
+                                        "think": "",
+                                        "content": content_chunk,
+                                        "type": "content_chunk"
+                                    }
+                                else:
+                                    yield content_chunk
+                                    
                     except json.JSONDecodeError:
                         continue
-                        
-    async def call_llm(self, prompt: str, max_tokens: int = 1000, temperature: float = 0.7) -> tuple[bool, str]:
-        """统一LLM调用接口，用于批处理器"""
-        try:
-            # 将prompt转换为Message格式
-            messages = [Message(role=MessageRole.USER, content=prompt)]
-            
-            # 调用generate方法
-            response = await self.generate(
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature
-            )
-            
-            return True, response.content
-            
-        except Exception as e:
-            return False, str(e)
+                    except Exception as e:
+                        logging.error(f"处理流式响应时出错: {e}")
+                        continue
     
-    def count_tokens(self, text: str) -> int:
-        """估算token数量"""
-        # 中文大约1.5个字符一个token，英文大约4个字符一个token
-        # 这里使用简单的估算
+    def _convert_messages(self, messages: List[Message]) -> List[Dict[str, str]]:
+        """转换消息格式为豆包API所需格式"""
+        converted = []
+        for msg in messages:
+            role = "user" if msg.role == MessageRole.USER else "assistant"
+            if msg.role == MessageRole.SYSTEM:
+                role = "system"
+            
+            converted.append({
+                "role": role,
+                "content": msg.content
+            })
+        
+        return converted
+    
+    def estimate_tokens(self, text: str) -> int:
+        """估算文本的token数量
+        
+        Args:
+            text: 要估算的文本
+            
+        Returns:
+            估算的token数量
+        """
+        if not text:
+            return 0
+        
+        # 简单的token估算：中文字符按1.5计算，英文按4个字符1个token计算
         chinese_count = sum(1 for char in text if '\u4e00' <= char <= '\u9fff')
         english_count = len(text) - chinese_count
         

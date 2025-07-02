@@ -99,9 +99,9 @@ class BatchScheduleGenerator:
             raise
     
     def _get_random_config(self, batch_num: int) -> Dict[str, Any]:
-        """生成随机配置"""
-        # 随机天数 (7-14天)
-        total_days = random.randint(5, 14)
+        """生成随机配置 - 支持新的周期规划模式"""
+        # 随机天数 (现在可以支持更大的范围，因为会自动分成多个周期)
+        total_days = random.randint(20, 50)  # 增加天数范围，让周期规划更有意义
         end_date = self.current_date + timedelta(days=total_days - 1)
         
         # 获取可用角色列表（排除主角方知衡）
@@ -146,6 +146,8 @@ class BatchScheduleGenerator:
             'include_lunar': True,
             'mood_variety': True,
             'location_variety': True,
+            # 启用周期总结功能
+            'enable_cycle_summary': True,
             # 添加上一批次总结信息用于连续性
             'previous_batch_summary': self._get_previous_summary() if batch_num > 1 else ""
         }
@@ -155,7 +157,8 @@ class BatchScheduleGenerator:
     def _get_previous_summary(self) -> str:
         """获取上一批次的总结信息，用于保持连续性"""
         if not self.batch_history:
-            return ""
+            # 尝试从CSV文件读取最近的总结
+            return self._get_latest_cycle_summary_from_csv()
         
         last_batch = self.batch_history[-1]
         summary = f"""
@@ -171,9 +174,44 @@ class BatchScheduleGenerator:
 请确保新的日程与上述情况自然衔接，避免突兀的变化。
 """
         return summary
+
+    def _get_latest_cycle_summary_from_csv(self) -> str:
+        """从CSV文件中获取最新的周期总结"""
+        try:
+            import pandas as pd
+            
+            # 查找最新的CSV文件
+            csv_files = [f for f in os.listdir(self.output_dir) if f.startswith('batch_schedules_') and f.endswith('.csv')]
+            if not csv_files:
+                logger.info("未找到历史批次总结，这是第一个批次或历史文件为空")
+                return ""
+            
+            # 读取最新的CSV文件
+            latest_csv = sorted(csv_files)[-1]
+            csv_path = os.path.join(self.output_dir, latest_csv)
+            
+            df = pd.read_csv(csv_path)
+            if df.empty:
+                logger.info("CSV文件为空，未找到历史批次总结")
+                return ""
+            
+            # 获取最新批次的周期总结（非空的）
+            latest_summaries = df[df['cycle_summary'].notna() & (df['cycle_summary'] != '')]['cycle_summary']
+            if latest_summaries.empty:
+                logger.info("未找到历史批次总结，这是第一个批次或历史文件为空")
+                return ""
+            
+            latest_summary = latest_summaries.iloc[-1]
+            logger.info(f"从CSV文件中找到历史总结，长度: {len(latest_summary)} 字符")
+            return latest_summary
+            
+        except Exception as e:
+            logger.warning(f"读取CSV历史总结失败: {e}")
+            logger.info("未找到历史批次总结，这是第一个批次或历史文件为空")
+            return ""
     
     async def _generate_single_batch(self, batch_num: int) -> Optional[Dict[str, Any]]:
-        """生成单个批次的日程"""
+        """生成单个批次的日程 - 支持新的多周期规划模式"""
         try:
             logger.info(f"开始生成第 {batch_num} 批次日程...")
             
@@ -182,145 +220,92 @@ class BatchScheduleGenerator:
             
             logger.info(f"批次 {batch_num} 配置:")
             logger.info(f"  日期范围: {config['start_date']} - {config['end_date']} ({config['total_days']}天)")
+            logger.info(f"  预计周期数: {(config['total_days'] + 10) // 11} 个周期（每周期7-15天）")
             logger.info(f"  角色数量: {len(config['selected_characters'])}")
             logger.info(f"  地点数量: {len(config['selected_locations'])}")
             logger.info(f"  选择角色: {', '.join(config['selected_characters'])}")
             logger.info(f"  选择地点: {', '.join(config['selected_locations'])}")
             
-            # 创建简化的工作流聊天接口（不需要UI），避免使用emoji符号
+            # 创建简化的工作流聊天接口（豆包已有流式打印，简化日志）
             class SimpleWorkflowChat:
                 def __init__(self):
                     self.current_node = ""
                 
                 async def add_node_message(self, node_name: str, message: str, status: str):
-                    # 移除emoji符号，使用纯文本
-                    clean_message = message.replace('✅', '[成功]').replace('❌', '[失败]').replace('📅', '[日程]').replace('💾', '[保存]')
-                    logger.info(f"[{node_name}] {clean_message}")
+                    # 只打印重要的状态信息
+                    if status in ['success', 'error', 'warning']:
+                        clean_message = message.replace('✅', '[成功]').replace('❌', '[失败]').replace('⚠️', '[警告]')
+                        logger.info(f"[{node_name}] {clean_message}")
                 
                 def _create_workflow_progress(self):
                     return ""
             
             workflow_chat = SimpleWorkflowChat()
             
-            # 执行工作流 - 修复结果收集逻辑
-            logger.info(f"开始执行工作流...")
+            # 执行新的多周期工作流
+            logger.info(f"开始执行多周期工作流...")
             
-            final_state = None
-            final_output = None
+            # 收集所有周期的结果
+            all_cycles_data = []
+            total_daily_schedules = []
             progress_count = 0
             
             async for stream_event in self.workflow.execute_workflow_stream(config, workflow_chat):
                 progress_count += 1
-                logger.info(f"收到工作流事件 {progress_count}: {type(stream_event)}")
                 
                 # 检查是否是最终输出事件
                 if isinstance(stream_event, tuple) and len(stream_event) >= 4:
                     # 元组格式: (html, content, message, is_complete)
                     html, content, message, is_complete = stream_event
-                    logger.info(f"收到UI事件: message='{message}', is_complete={is_complete}")
-                    
-                    # 如果包含成功完成的信息，说明有实际的执行结果
-                    if "执行完成" in message or "生成完成" in message:
-                        logger.info("检测到任务完成信号")
+                    if "周期生成完成" in message or "执行完成" in message:
+                        logger.info(f"检测到周期完成信号: {message}")
                 
-            logger.info(f"工作流UI流执行完成，共收到 {progress_count} 次事件")
+            logger.info(f"多周期工作流执行完成，共收到 {progress_count} 次事件")
             
-            # 使用流式获取最终状态数据
-            logger.info("通过流式调用获取最终数据...")
+            # 等待数据库写入完成
+            logger.info("等待数据库写入完成...")
+            import time
+            time.sleep(2)  # 增加等待时间，确保所有周期都已保存
             
+            # 从数据库获取最新的日程记录（支持多周期）
             try:
-                # 准备相同的输入数据
-                initial_input = {
-                    'characters_data': self.workflow.characters_data,
-                    'locations_data': self.workflow.locations_data,
-                    'stories_data': self.workflow.stories_data,
-                    'protagonist_data': self.workflow.protagonist_data,
-                    'holidays_data': self.workflow.holidays_data,
-                    'config': config,
-                    'protagonist': config.get('protagonist', '方知衡'),
-                    'schedule_type': config.get('schedule_type', 'weekly'),
-                    'start_date': config.get('start_date', ''),
-                    'end_date': config.get('end_date', ''),
-                    'total_days': config.get('total_days', 7),
-                    'selected_characters': config.get('selected_characters', []),
-                    'selected_locations': config.get('selected_locations', []),
-                    'selected_stories': config.get('selected_stories', []),
-                    'time_slots_config': config.get('time_slots_config', self.workflow.current_config['time_slots_config']),
-                    'character_distribution': config.get('character_distribution', 'balanced'),
-                    'story_integration': config.get('story_integration', 'moderate'),
-                    'include_holidays': config.get('include_holidays', True),
-                    'include_lunar': config.get('include_lunar', True),
-                    'workflow_chat': workflow_chat,
-                    'llm': self.workflow.llm
-                }
+                from database.managers.schedule_manager import ScheduleManager
+                schedule_manager = ScheduleManager()
                 
-                # 使用流式执行图获取最终状态
-                if not self.workflow.graph:
-                    await self.workflow.create_schedule_graph()
+                # 获取批次日期范围内的所有日程记录
+                recent_schedules = schedule_manager.get_schedules_by_filter({}, limit=10)
                 
-                compiled_graph = self.workflow.graph.compile()
-                
-                # 简单执行流式图，不需要收集状态
-                async for stream_chunk in compiled_graph.stream(initial_input):
-                    # 只是让工作流执行完成，不收集状态
-                    pass
-                
-                logger.info("工作流执行完成，准备从数据库获取数据")
-                
-                # 等待1秒确保数据库写入完成
-                import time
-                time.sleep(1)
-                
-                # 从数据库获取最新的日程记录
-                try:
-                    from database.managers.schedule_manager import ScheduleManager
-                    schedule_manager = ScheduleManager()
+                # 筛选出当前批次日期范围内的日程
+                batch_schedules = []
+                for schedule in recent_schedules:
+                    schedule_start = schedule.get('start_date', '')
+                    schedule_end = schedule.get('end_date', '')
                     
-                    # 获取最新的日程记录（按创建时间排序）
-                    recent_schedules = schedule_manager.get_schedules_by_filter({}, limit=1)
-                    
-                    if recent_schedules:
-                        latest_schedule = recent_schedules[0]
-                        actual_schedule_id = latest_schedule['schedule_id']
-                        logger.info(f"从数据库获取到最新日程ID: {actual_schedule_id}")
-                        
-                        # 创建最终状态
-                        final_state = {
-                            'schedule_id': actual_schedule_id,
-                            'config': config,
-                            'database_success': True
-                        }
-                    else:
-                        logger.error("数据库中没有找到新创建的日程记录")
-                        final_state = {'database_success': False}
-                        
-                except Exception as db_error:
-                    logger.error(f"从数据库获取最新记录失败: {db_error}")
-                    final_state = {'database_success': False}
+                    # 检查是否在当前批次的日期范围内
+                    if (schedule_start >= config['start_date'] and 
+                        schedule_end <= config['end_date']):
+                        batch_schedules.append(schedule)
                 
-                if final_state.get('database_success', False):
-                    schedule_id = final_state.get('schedule_id')
-                    logger.info(f"批次 {batch_num} 工作流执行成功，数据库记录ID: {schedule_id}")
+                if batch_schedules:
+                    logger.info(f"批次 {batch_num} 找到 {len(batch_schedules)} 个周期的日程记录")
                     
-                    # 直接从数据库获取完整数据构建批次信息
-                    batch_info = self._get_batch_info_from_database(schedule_id)
+                    # 合并所有周期的数据
+                    batch_info = self._merge_multiple_cycles_data(batch_schedules, batch_num, config)
                     
                     if batch_info:
-                        # 更新批次编号
-                        batch_info['batch_number'] = batch_num
                         # 保存到历史记录
                         self.batch_history.append(batch_info)
-                        logger.info(f"批次 {batch_num} 完成，从数据库获取了完整数据")
+                        logger.info(f"批次 {batch_num} 完成，合并了 {len(batch_schedules)} 个周期的数据")
                         return batch_info
                     else:
-                        logger.error(f"批次 {batch_num} 从数据库获取数据失败")
+                        logger.error(f"批次 {batch_num} 合并周期数据失败")
                         return None
                 else:
-                    logger.error(f"批次 {batch_num} 数据库操作失败")
+                    logger.error("数据库中没有找到当前批次的日程记录")
                     return None
-                
-            except Exception as graph_error:
-                logger.error(f"流式图执行失败: {graph_error}")
+                    
+            except Exception as db_error:
+                logger.error(f"批次 {batch_num} 从数据库获取记录失败: {db_error}")
                 import traceback
                 logger.error(traceback.format_exc())
                 return None
@@ -367,6 +352,83 @@ class BatchScheduleGenerator:
                 return daily_plan[:100] + "..." if len(daily_plan) > 100 else daily_plan
         return "无特别遗留问题"
     
+    def _merge_multiple_cycles_data(self, batch_schedules: List[Dict], batch_num: int, config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """合并多个周期的数据为一个批次信息"""
+        try:
+            if not batch_schedules:
+                return None
+            
+            # 合并所有周期的每日安排
+            all_daily_schedules = []
+            all_cycle_summaries = []
+            all_characters = set()
+            all_locations = set()
+            
+            # 找到最早和最晚的日期
+            start_dates = []
+            end_dates = []
+            total_days = 0
+            
+            for schedule in batch_schedules:
+                # 收集日期信息
+                start_dates.append(schedule.get('start_date', ''))
+                end_dates.append(schedule.get('end_date', ''))
+                total_days += schedule.get('total_days', 0)
+                
+                # 合并每日安排
+                daily_schedules = schedule.get('daily_schedules', [])
+                all_daily_schedules.extend(daily_schedules)
+                
+                # 收集周期总结
+                cycle_summary = schedule.get('cycle_summary', '')
+                if cycle_summary:
+                    all_cycle_summaries.append(cycle_summary)
+                
+                # 提取角色和地点
+                for day in daily_schedules:
+                    for slot in day.get('time_slots', []):
+                        chars = slot.get('involved_characters', [])
+                        for char in chars:
+                            if char and char != '方知衡':
+                                all_characters.add(char)
+                        
+                        location = slot.get('location', '')
+                        if location:
+                            all_locations.add(location)
+            
+            # 按日期排序
+            all_daily_schedules.sort(key=lambda x: x.get('date', ''))
+            
+            # 构建批次信息
+            batch_info = {
+                'batch_number': batch_num,
+                'schedule_ids': [s.get('schedule_id', '') for s in batch_schedules],
+                'start_date': min(start_dates) if start_dates else config['start_date'],
+                'end_date': max(end_dates) if end_dates else config['end_date'],
+                'total_days': total_days,
+                'cycles_count': len(batch_schedules),
+                'characters': list(all_characters),
+                'locations': list(all_locations),
+                'daily_schedules': all_daily_schedules,
+                'cycle_summaries': all_cycle_summaries,
+                'key_events': self._extract_key_events(all_daily_schedules),
+                'emotional_progress': self._extract_emotional_progress(all_daily_schedules),
+                'pending_issues': self._extract_pending_issues(all_daily_schedules)
+            }
+            
+            logger.info(f"成功合并批次信息:")
+            logger.info(f"  包含 {len(batch_schedules)} 个周期，{len(all_daily_schedules)} 天安排")
+            logger.info(f"  涉及 {len(all_characters)} 个角色: {', '.join(list(all_characters)[:3])}...")
+            logger.info(f"  涉及 {len(all_locations)} 个地点: {', '.join(list(all_locations)[:3])}...")
+            
+            return batch_info
+            
+        except Exception as e:
+            logger.error(f"合并多周期数据失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return None
+
     def _get_batch_info_from_database(self, schedule_id: str) -> Optional[Dict[str, Any]]:
         """从数据库获取完整的批次信息"""
         try:
