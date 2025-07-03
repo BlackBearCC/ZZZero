@@ -148,6 +148,15 @@ class JokeWorkflow:
         self.graph.add_edge("theme_planning", "joke_generate")
         self.graph.add_edge("joke_generate", "database_save")
         
+        # 新增条件边：如果尚未完成全部批次，则回到笑话生成节点
+        def loop_condition(state):
+            """当尚未完成全部批次时继续循环到 joke_generate，否则结束"""
+            if state.get('generation_complete', False):
+                return "__end__"
+            return "joke_generate"
+        
+        self.graph.add_conditional_edges("database_save", loop_condition)
+        
         # 设置入口点
         self.graph.set_entry_point("theme_planning")
         
@@ -494,7 +503,7 @@ class JokeGenerateNode(BaseNode):
         batch_categories = current_batch['categories']
         focus_trait = current_batch['focus_trait']
         humor_emphasis = current_batch['humor_emphasis']
-        batch_size = input_data.get('batch_size', 50)
+        batch_size = input_data.get('batch_size', 10)
         
         if workflow_chat:
             await workflow_chat.add_node_message(
@@ -967,17 +976,17 @@ async def main():
         
         # 测试配置
         test_config = {
-            'total_target': 10,  # 生成10条笑话测试
-            'batch_size': 500,
+            'total_target': 5000,  # 生成1000条笑话
+            'batch_size': 10,
             'joke_categories': [
                 '哲学日常梗', '科学双关梗', '逻辑生活梗', 
                 '文字游戏梗', '生活科学梗', '反差幽默梗'
             ],
-            'database_enabled': False,  # 禁用数据库功能
+            'database_enabled': False,  # 启用数据库功能
             'csv_output': {
                 'enabled': True,
                 'output_dir': 'workspace/joke_output',
-                'filename': 'test_jokes_output.csv',
+                'filename': 'jokes_batch_output.csv',
                 'encoding': 'utf-8-sig'
             }
         }
