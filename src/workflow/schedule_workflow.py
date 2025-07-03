@@ -745,6 +745,7 @@ class CyclePlanningNode(BaseNode):
       "end_date": "YYYY-MM-DD", 
       "total_days": 7,
       "cycle_theme": "周期主题",
+      "cycle_plan": "第三人称，以方知衡为主体的详细周期计划描述，200-300字，包含这个周期的整体安排、重点目标、主要活动等,注意是计划而不是纲要所以不能有预知能力，只是计划不是实际发生的事情",
       "main_objectives": [
         "目标1",
         "目标2"
@@ -871,6 +872,12 @@ class CyclePlanningNode(BaseNode):
                     'cycle_plans': cycles
                 }
                 
+                # 为后备方案也生成基础的周期计划描述
+                for cycle_plan in cycle_planning_data['cycle_plans']:
+                    cycle_number = cycle_plan.get('cycle_number', 1)
+                    total_days = cycle_plan.get('total_days', 0)
+                    cycle_plan['cycle_plan'] = f"周期{cycle_number}：{protagonist}将在{total_days}天内重点关注个人发展和日常生活的平衡，通过规律的工作学习和适度的社交活动，逐步推进各项目标的实现，保持身心健康和积极的生活状态。"
+                
                 if workflow_chat:
                     await workflow_chat.add_node_message(
                         "周期规划",
@@ -896,6 +903,8 @@ class CyclePlanningNode(BaseNode):
                     "error"
                 )
             raise Exception(f"周期规划失败: {str(e)}")
+    
+
     
     def _extract_json_from_content(self, content: str) -> str:
         """从生成内容中提取JSON部分"""
@@ -1560,6 +1569,7 @@ class ScheduleGenerateNode(BaseNode):
                 'end_date': cycle_end_date,
                 'total_days': cycle_total_days,
                 'cycle_theme': current_cycle_plan,
+                'cycle_plan': current_cycle.get('cycle_plan', f"周期{current_cycle_index + 1}主题：{current_cycle_plan}"),  # 添加详细周期计划
                 'focus_characters': focus_characters,
                 'core_locations': core_locations
             },
@@ -1622,7 +1632,7 @@ class ScheduleGenerateNode(BaseNode):
             
             # 获取周期和批次信息
             cycle_theme = current_cycle.get('cycle_theme', '')
-            cycle_summary = f"周期{cycle_number}主题：{cycle_theme}"  # 简化的周期计划
+            cycle_plan = current_cycle.get('cycle_plan', f"周期{cycle_number}主题：{cycle_theme}")  # 详细的周期计划
             batch_summary = batch_data.get('batch_summary', '')
             
             # 检查文件是否存在，决定是追加还是创建新文件
@@ -1802,7 +1812,7 @@ class ScheduleGenerateNode(BaseNode):
             # 获取周期信息
             cycle_info = schedule_data.get('cycle_info', {})
             cycle_theme = cycle_info.get('cycle_theme', '')
-            cycle_summary = schedule_data.get('cycle_summary', '')
+            cycle_plan = cycle_info.get('cycle_plan', f"周期计划：{cycle_theme}")  # 使用详细的周期计划
             daily_schedules = schedule_data.get('daily_schedules', [])
             
             # 写入CSV文件
@@ -1883,7 +1893,7 @@ class ScheduleGenerateNode(BaseNode):
                         season,                        # 季节
                         weather,                       # 天气
                         cycle_theme,                   # 主题
-                        cycle_summary,                 # 周期计划
+                        cycle_plan,                    # 周期计划
                         day_batch_summary,             # 3天总结
                         daily_plan,                    # 每日计划
                         daily_summary,                 # 每日总结
@@ -2226,9 +2236,9 @@ async def main():
     
     # 命令行参数
     parser = argparse.ArgumentParser(description='日程生成工作流 - 本地批量执行')
-    parser.add_argument('--start-date', default='2025-07-03', help='开始日期 (YYYY-MM-DD)')
+    parser.add_argument('--start-date', default='2025-07-27', help='开始日期 (YYYY-MM-DD)')
     parser.add_argument('--mega-batches', type=int, default=10, help='大批次数量')
-    parser.add_argument('--days-per-batch', type=int, default=20, help='每大批次天数')
+    parser.add_argument('--days-per-batch', type=int, default=35, help='每大批次天数')
     
     args = parser.parse_args()
     
