@@ -745,6 +745,7 @@ class CyclePlanningNode(BaseNode):
       "end_date": "YYYY-MM-DD", 
       "total_days": 7,
       "cycle_theme": "周期主题",
+      "cycle_plan": "第三人称，以方知衡为主体的详细周期计划描述，200-300字，包含这个周期的整体安排、重点目标、主要活动等,注意是计划而不是纲要所以不能有预知能力，只是计划不是实际发生的事情",
       "main_objectives": [
         "目标1",
         "目标2"
@@ -871,6 +872,12 @@ class CyclePlanningNode(BaseNode):
                     'cycle_plans': cycles
                 }
                 
+                # 为后备方案也生成基础的周期计划描述
+                for cycle_plan in cycle_planning_data['cycle_plans']:
+                    cycle_number = cycle_plan.get('cycle_number', 1)
+                    total_days = cycle_plan.get('total_days', 0)
+                    cycle_plan['cycle_plan'] = f"周期{cycle_number}：{protagonist}将在{total_days}天内重点关注个人发展和日常生活的平衡，通过规律的工作学习和适度的社交活动，逐步推进各项目标的实现，保持身心健康和积极的生活状态。"
+                
                 if workflow_chat:
                     await workflow_chat.add_node_message(
                         "周期规划",
@@ -896,6 +903,8 @@ class CyclePlanningNode(BaseNode):
                     "error"
                 )
             raise Exception(f"周期规划失败: {str(e)}")
+    
+
     
     def _extract_json_from_content(self, content: str) -> str:
         """从生成内容中提取JSON部分"""
@@ -1018,11 +1027,11 @@ class ScheduleGenerateNode(BaseNode):
         key_events = current_cycle.get('key_events', [])
         emotional_tone = current_cycle.get('emotional_tone', '')
         
-        # 获取最近4个3天批次的summary作为历史记录
+        # 获取最近4个批次的summary作为历史记录
         recent_batch_summaries = await self._get_recent_batch_summaries(4, cycle_start_date)
         batch_history_context = ""
-        logger.info(f"🔍 尝试获取历史3天总结，日期界限: {cycle_start_date}")
-        logger.info(f"📋 获取到 {len(recent_batch_summaries)} 个历史3天总结:")
+        logger.info(f"🔍 尝试获取历史批次总结，日期界限: {cycle_start_date}")
+        logger.info(f"📋 获取到 {len(recent_batch_summaries)} 个历史批次总结:")
         for i, summary in enumerate(recent_batch_summaries):
             logger.info(f"  📝 总结 {i+1}: {summary[:150]}...")
         if recent_batch_summaries:
@@ -1560,6 +1569,7 @@ class ScheduleGenerateNode(BaseNode):
                 'end_date': cycle_end_date,
                 'total_days': cycle_total_days,
                 'cycle_theme': current_cycle_plan,
+                'cycle_plan': current_cycle.get('cycle_plan', f"周期{current_cycle_index + 1}主题：{current_cycle_plan}"),  # 添加详细周期计划
                 'focus_characters': focus_characters,
                 'core_locations': core_locations
             },
@@ -1616,14 +1626,14 @@ class ScheduleGenerateNode(BaseNode):
             # 定义CSV列头（与batch_schedule_generator.py保持一致）
             csv_headers = [
                 "日期", "星期", "节日信息", "季节", "天气", "主题", 
-                "周期计划", "3天总结", "每日计划", "每日总结", "涉及角色", "角色简介",
+                "周期计划", "批次总结", "每日计划", "每日总结", "涉及角色", "角色简介",
                 "上午", "中午", "下午", "晚上", "夜间"
             ]
             
             # 获取周期和批次信息
             cycle_theme = current_cycle.get('cycle_theme', '')
-            cycle_summary = f"周期{cycle_number}主题：{cycle_theme}"  # 简化的周期计划
-            batch_summary = batch_data.get('batch_summary', '')
+            cycle_plan = current_cycle.get('cycle_plan', f"周期{cycle_number}主题：{cycle_theme}")  # 详细的周期计划
+            batch_summary = batch_data.get('batch_summary', '')  # 使用LLM生成的批次总结
             
             # 检查文件是否存在，决定是追加还是创建新文件
             file_exists = csv_file_path.exists()
@@ -1690,7 +1700,7 @@ class ScheduleGenerateNode(BaseNode):
                         if slot_name in time_slots_data:
                             time_slots_data[slot_name] = slot.get('story_content', '')
                     
-                    # 3天总结：只在第一天显示批次总结，其他天为空
+                    # 批次总结：只在第一天显示批次总结，其他天为空
                     day_batch_summary = ""
                     if day_index == 0:  # 第一天显示批次总结
                         day_batch_summary = batch_summary
@@ -1703,8 +1713,8 @@ class ScheduleGenerateNode(BaseNode):
                         season,                        # 季节
                         weather,                       # 天气
                         cycle_theme,                   # 主题
-                        cycle_summary,                 # 周期计划
-                        day_batch_summary,             # 3天总结
+                        cycle_plan,                    # 周期计划
+                        day_batch_summary,             # 批次总结
                         daily_plan,                    # 每日计划
                         daily_summary,                 # 每日总结
                         ', '.join(daily_involved_characters),  # 涉及角色
@@ -1791,7 +1801,7 @@ class ScheduleGenerateNode(BaseNode):
             # 定义CSV列头
             csv_headers = [
                 "日期", "星期", "节日信息", "季节", "天气", "主题", 
-                "周期计划", "3天总结", "每日计划", "每日总结", "涉及角色", "角色简介",
+                "周期计划", "批次总结", "每日计划", "每日总结", "涉及角色", "角色简介",
                 "上午", "中午", "下午", "晚上", "夜间"
             ]
             
@@ -1802,7 +1812,7 @@ class ScheduleGenerateNode(BaseNode):
             # 获取周期信息
             cycle_info = schedule_data.get('cycle_info', {})
             cycle_theme = cycle_info.get('cycle_theme', '')
-            cycle_summary = schedule_data.get('cycle_summary', '')
+            cycle_plan = cycle_info.get('cycle_plan', f"周期计划：{cycle_theme}")  # 使用详细的周期计划
             daily_schedules = schedule_data.get('daily_schedules', [])
             
             # 写入CSV文件
@@ -1813,17 +1823,8 @@ class ScheduleGenerateNode(BaseNode):
                 if not file_exists:
                     writer.writerow(csv_headers)
                 
-                # 处理3天总结：每3天写一次
-                batch_summary = ""
-                if len(daily_schedules) >= 3:
-                    # 简单总结前3天的主要内容
-                    summary_events = []
-                    for day in daily_schedules[:3]:
-                        for slot in day.get('time_slots', []):
-                            content = slot.get('story_content', '')
-                            if len(content) > 50:  # 选择内容较丰富的事件
-                                summary_events.append(f"{day.get('date', '')} {slot.get('slot_name', '')}: {content[:50]}...")
-                    batch_summary = '; '.join(summary_events[:2])  # 最多2个关键事件
+                # 处理批次总结：从schedule_data中获取，而不是自动生成
+                cycle_summary = schedule_data.get('cycle_summary', '')
                 
                 # 遍历每天的日程数据
                 for day_index, day_data in enumerate(daily_schedules):
@@ -1870,10 +1871,10 @@ class ScheduleGenerateNode(BaseNode):
                         if slot_name in time_slots_data:
                             time_slots_data[slot_name] = slot.get('story_content', '')
                     
-                    # 3天总结：只在每3天的第一天显示，其他天为空
-                    day_batch_summary = ""
-                    if day_index % 3 == 0:  # 每3天的第一天显示总结
-                        day_batch_summary = batch_summary
+                    # 批次总结：只在周期的第一天显示周期总结，其他天为空
+                    day_cycle_summary = ""
+                    if day_index == 0:  # 周期的第一天显示周期总结
+                        day_cycle_summary = cycle_summary
                     
                     # 构建CSV行数据
                     row_data = [
@@ -1883,8 +1884,8 @@ class ScheduleGenerateNode(BaseNode):
                         season,                        # 季节
                         weather,                       # 天气
                         cycle_theme,                   # 主题
-                        cycle_summary,                 # 周期计划
-                        day_batch_summary,             # 3天总结
+                        cycle_plan,                    # 周期计划
+                        day_cycle_summary,             # 批次总结
                         daily_plan,                    # 每日计划
                         daily_summary,                 # 每日总结
                         ', '.join(daily_involved_characters),  # 涉及角色
@@ -1968,7 +1969,7 @@ class ScheduleGenerateNode(BaseNode):
             return '未知'
     
     async def _get_recent_batch_summaries(self, count: int, before_date: str) -> List[str]:
-        """获取最近4个3天批次的summary作为历史记录 - 跨周期跨批次记忆"""
+        """获取最近4个批次的summary作为历史记录 - 跨周期跨批次记忆"""
         try:
             import csv
             import os
@@ -1977,7 +1978,7 @@ class ScheduleGenerateNode(BaseNode):
              
             print(f"🔍 DEBUG: 开始获取历史批次总结，before_date={before_date}")
             
-            # 从CSV文件读取最近的3天总结
+            # 从CSV文件读取最近的批次总结
             csv_file_path = Path("workspace/batch_schedule_output/batch_schedules.csv")
             print(f"🔍 DEBUG: 查找CSV文件: {csv_file_path}")
             logger.info(f"🔍 查找CSV文件: {csv_file_path}")
@@ -1999,7 +2000,7 @@ class ScheduleGenerateNode(BaseNode):
                 print(f"❌ DEBUG: 日期解析失败: {date_error}")
                 return []
             
-            # 读取CSV文件并收集3天总结
+            # 读取CSV文件并收集批次总结
             batch_summaries = []
             unique_summaries = set()  # 避免重复
             
@@ -2010,7 +2011,7 @@ class ScheduleGenerateNode(BaseNode):
                     try:
                         # 获取行数据
                         row_date_str = row.get('日期', '').strip()
-                        batch_summary = row.get('3天总结', '').strip()
+                        batch_summary = row.get('批次总结', '').strip()
                         
                         # 跳过空的日期或总结
                         if not row_date_str or not batch_summary:
@@ -2023,7 +2024,7 @@ class ScheduleGenerateNode(BaseNode):
                         if row_date >= before_dt:
                             continue
                         
-                        # 避免重复的总结（同一个3天批次会有3行相同的总结）
+                        # 避免重复的总结（同一个批次会有多行相同的总结）
                         if batch_summary in unique_summaries:
                             continue
                         
@@ -2044,8 +2045,8 @@ class ScheduleGenerateNode(BaseNode):
             # 提取总结文本
             summary_texts = [item['summary'] for item in recent_summaries]
             
-            print(f"✅ DEBUG: 成功获取 {len(summary_texts)} 个历史3天总结")
-            logger.info(f"✅ 成功获取 {len(summary_texts)} 个历史3天总结")
+            print(f"✅ DEBUG: 成功获取 {len(summary_texts)} 个历史批次总结")
+            logger.info(f"✅ 成功获取 {len(summary_texts)} 个历史批次总结")
             
             # 打印总结预览
             for i, summary in enumerate(summary_texts):
@@ -2226,9 +2227,9 @@ async def main():
     
     # 命令行参数
     parser = argparse.ArgumentParser(description='日程生成工作流 - 本地批量执行')
-    parser.add_argument('--start-date', default='2025-07-03', help='开始日期 (YYYY-MM-DD)')
+    parser.add_argument('--start-date', default='2025-07-27', help='开始日期 (YYYY-MM-DD)')
     parser.add_argument('--mega-batches', type=int, default=10, help='大批次数量')
-    parser.add_argument('--days-per-batch', type=int, default=20, help='每大批次天数')
+    parser.add_argument('--days-per-batch', type=int, default=35, help='每大批次天数')
     
     args = parser.parse_args()
     
