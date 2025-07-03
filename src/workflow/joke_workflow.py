@@ -31,7 +31,6 @@ class JokeWorkflow:
         self.graph = None
 
         self.current_config = {
-
             'batch_size': 50,  # 每批生成的笑话数量
             'total_target': 1000,  # 总目标数量
             'joke_categories': [
@@ -40,21 +39,48 @@ class JokeWorkflow:
             ],
             'difficulty_levels': ['简单', '中等', '复杂'],
             'humor_styles': ['冷幽默', '自嘲', '观察式', '反差萌'],
+            'csv_output': {
+                'enabled': True,
+                'output_dir': 'workspace/joke_output',
+                'filename': 'jokes_batch_output.csv',
+                'encoding': 'utf-8-sig'  # 支持中文的CSV编码
+            },
+            'database_enabled': True,  # 启用数据库功能
             'pg_config': {
                 'host': 'localhost',
                 'port': 5432,
-                'database': 'jokes_db',
+                'database': 'postgres',  # 使用默认的postgres数据库
                 'user': 'postgres',
-                'password': 'password'
+                'password': '12345'  # 你的数据库密码
             }
         }
         
-        # 初始化数据库
-        self._init_database()
+        # 初始化数据库（如果启用）
+        if self.current_config.get('database_enabled', False):
+            self._init_database()
+        else:
+            self.current_config['database_available'] = False
+            logger.info("数据库功能已禁用，将仅使用CSV保存")
     
+    def _test_database_connection(self) -> bool:
+        """测试数据库连接是否可用"""
+        try:
+            pg_config = self.current_config['pg_config']
+            conn = psycopg2.connect(**pg_config)
+            conn.close()
+            return True
+        except Exception as e:
+            logger.warning(f"数据库连接测试失败: {e}")
+            return False
 
     def _init_database(self):
         """初始化PostgreSQL数据库和表结构"""
+        # 先测试连接
+        if not self._test_database_connection():
+            logger.warning("数据库连接失败，将跳过数据库相关操作")
+            self.current_config['database_available'] = False
+            return
+            
         try:
             pg_config = self.current_config['pg_config']
             
@@ -93,6 +119,7 @@ class JokeWorkflow:
             conn.close()
             
             logger.info("数据库表结构初始化完成")
+            self.current_config['database_available'] = True
             
         except Exception as e:
             logger.warning(f"数据库初始化失败，将跳过数据库相关操作: {e}")
@@ -295,6 +322,21 @@ class JokeWorkflow:
         }
         return id_mapping.get(node_name, node_name)
 
+    def enable_database(self, pg_config: Optional[Dict] = None):
+        """手动启用数据库功能"""
+        if pg_config:
+            self.current_config['pg_config'].update(pg_config)
+        
+        self.current_config['database_enabled'] = True
+        self._init_database()
+        
+        if self.current_config.get('database_available', False):
+            logger.info("✅ 数据库功能已成功启用")
+            return True
+        else:
+            logger.warning("⚠️ 数据库启用失败，将继续使用CSV保存")
+            return False
+
 
 class ThemePlanningNode(BaseNode):
     """主题规划节点 - 根据人设特点规划笑话主题和风格"""
@@ -472,11 +514,6 @@ class JokeGenerateNode(BaseNode):
 - **内敛性格**：偏爱巧妙的笑点，不喜欢大吼大叫式的搞笑
 - **冷幽默偏好**：欣赏需要反应一下才明白的笑点
 
-# 本批次创作重点
-- 主题类别：{', '.join(batch_categories)}
-- 重点特征：{focus_trait}
-- 幽默风格：{humor_emphasis}
-
 # 笑话创作原则
 
 ## 笑点要求
@@ -499,7 +536,7 @@ class JokeGenerateNode(BaseNode):
 ## 笑话结构要求
 每条笑话包含：
 - **关键词**：搜索用关键词组，用逗号分隔，包含：主题，适用场合，情境等，方便检索，不要重复笑话内容
-- **笑话内容**：完整的笑话，包含情境和笑点，100-200字
+- **笑话内容**：完整的笑话，包含情境和笑点，100-250字
 
 ## 内容原则
 1. **绿色健康**：内容积极向上，适合所有年龄段
@@ -523,27 +560,6 @@ class JokeGenerateNode(BaseNode):
 3. **语言轻松**：表达自然流畅，不生硬
 4. **适度智慧**：有一点知识背景，但不炫耀
 5. **朗朗上口**：容易记住和转述给别人
-
-
-
-# 笑话示例风格
-
-## 示例1：
-- 关键词: 哲学课堂,师生对话,学费催收,古希腊
-- 笑话内容: 苏格拉底问学生："什么是正义？"学生答："正义就是给每个人应得的东西。"苏格拉底又问："那如果一个疯子借了你的剑，你该还给他吗？"学生沉默，苏格拉底微笑："所以正义还需要智慧——但现在，你能先把我的学费还我吗？"
-
-## 示例2：
-- 关键词: 文学名句,程序员,编程术语,跨界对话
-- 笑话内容: 莎士比亚说："To be or not to be，that's a question."程序员接话："To bug or not to bug，that's a syntax error."
-
-## 示例3：
-- 关键词: 天体物理,双关语,引力定律,科学幽默
-- 笑话内容: 两个黑洞相遇，一个说："我觉得我们之间有引力。"另一个回答："别开玩笑了，我们连光都逃不出去，哪来的'玩笑'？"
-
-## 示例4：
-- 关键词: 情侣对话,物理学家,相对论,理科男
-- 笑话内容: 物理学家对女朋友说："你就像光一样。"女朋友很开心："因为我照亮了你的世界？"物理学家："不，因为时间在你身边会变慢。"
-
 
 # 重要提醒
 1. **关键词要实用**：关键词是为了搜索和分类，要包含主题、场合、情境等，不要重复笑话内容
@@ -679,29 +695,13 @@ class JokeDatabaseSaveNode(BaseNode):
     
     async def execute_stream(self, input_data: Dict[str, Any]):
         """流式执行数据库保存节点"""
-        print("💾 开始保存到PostgreSQL数据库...")
+        print("💾 开始保存笑话数据...")
         
         workflow_chat = input_data.get('workflow_chat')
         generated_jokes = input_data.get('generated_jokes', [])
         pg_config = input_data.get('pg_config', {})
         config = input_data.get('config', {})
-        
-        # 检查数据库是否可用
-        if config.get('database_available', True) == False:
-            if workflow_chat:
-                await workflow_chat.add_node_message(
-                    "数据库保存",
-                    "⚠️ 数据库不可用，跳过保存步骤",
-                    "warning"
-                )
-            
-            output_data = input_data.copy()
-            output_data.update({
-                'save_success': False,
-                'save_message': "数据库不可用，跳过保存"
-            })
-            yield output_data
-            return
+        current_batch_index = input_data.get('current_batch_index', 1)
         
         if not generated_jokes:
             if workflow_chat:
@@ -716,10 +716,108 @@ class JokeDatabaseSaveNode(BaseNode):
         if workflow_chat:
             await workflow_chat.add_node_message(
                 "数据库保存",
-                f"正在将{len(generated_jokes)}条笑话保存到数据库...",
+                f"正在保存第{current_batch_index}批次的{len(generated_jokes)}条笑话...",
                 "progress"
             )
         
+        # 先保存到CSV文件（增量更新）
+        csv_save_result = await self._save_to_csv(generated_jokes, current_batch_index, workflow_chat, config)
+        
+        # 如果数据库可用，再保存到数据库
+        db_save_result = None
+        if config.get('database_enabled', False) and config.get('database_available', True) != False:
+            db_save_result = await self._save_to_database(generated_jokes, pg_config, workflow_chat)
+        else:
+            if workflow_chat:
+                await workflow_chat.add_node_message(
+                    "数据库保存",
+                    "⚠️ 数据库功能已禁用，跳过数据库保存",
+                    "warning"
+                )
+        
+        # 构建最终输出
+        output_data = input_data.copy()
+        output_data.update({
+            'csv_save_result': csv_save_result,
+            'db_save_result': db_save_result,
+            'save_success': csv_save_result.get('success', False) or (db_save_result and db_save_result.get('success', False)),
+            'save_message': self._build_save_message(csv_save_result, db_save_result)
+        })
+        
+        yield output_data
+    
+    async def _save_to_csv(self, generated_jokes: List[Dict], current_batch_index: int, workflow_chat=None, config=None) -> Dict:
+        """保存笑话到CSV文件，支持增量更新"""
+        try:
+            import csv
+            from datetime import datetime
+            
+            # 获取CSV配置
+            csv_config = config.get('csv_output', {}) if config else {}
+            output_dir = csv_config.get('output_dir', 'workspace/joke_output')
+            filename = csv_config.get('filename', 'jokes_batch_output.csv')
+            encoding = csv_config.get('encoding', 'utf-8-sig')
+            
+            # 确保输出目录存在
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # CSV文件路径
+            csv_file = os.path.join(output_dir, filename)
+            
+            # 检查文件是否存在，决定是否写入表头
+            file_exists = os.path.exists(csv_file)
+            
+            # 写入CSV文件（追加模式）
+            with open(csv_file, 'a', newline='', encoding=encoding) as f:
+                fieldnames = ['批次', '关键词', '笑话内容', '生成时间']
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                
+                # 如果文件不存在，先写入表头
+                if not file_exists:
+                    writer.writeheader()
+                
+                # 写入当前批次的笑话
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                for joke in generated_jokes:
+                    writer.writerow({
+                        '批次': f"第{current_batch_index}批",
+                        '关键词': joke.get('关键词', ''),
+                        '笑话内容': joke.get('笑话内容', ''),
+                        '生成时间': timestamp
+                    })
+            
+            if workflow_chat:
+                await workflow_chat.add_node_message(
+                    "CSV保存",
+                    f"✅ 第{current_batch_index}批次{len(generated_jokes)}条笑话已保存到CSV文件",
+                    "success"
+                )
+            
+            logger.info(f"✅ CSV保存完成：第{current_batch_index}批次{len(generated_jokes)}条笑话保存到 {csv_file}")
+            
+            return {
+                'success': True,
+                'count': len(generated_jokes),
+                'file_path': csv_file,
+                'batch_index': current_batch_index
+            }
+            
+        except Exception as e:
+            logger.error(f"CSV保存失败: {e}")
+            if workflow_chat:
+                await workflow_chat.add_node_message(
+                    "CSV保存",
+                    f"❌ CSV保存失败: {str(e)}",
+                    "error"
+                )
+            
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    async def _save_to_database(self, generated_jokes: List[Dict], pg_config: Dict, workflow_chat=None) -> Dict:
+        """保存笑话到PostgreSQL数据库"""
         try:
             # 连接数据库
             conn = psycopg2.connect(**pg_config)
@@ -775,37 +873,48 @@ class JokeDatabaseSaveNode(BaseNode):
             if workflow_chat:
                 await workflow_chat.add_node_message(
                     "数据库保存",
-                    f"✅ 保存完成：{success_count}条成功，{duplicate_count}条重复，{error_count}条失败",
+                    f"✅ 数据库保存完成：{success_count}条成功，{duplicate_count}条重复，{error_count}条失败",
                     "success"
                 )
             
-            output_data = input_data.copy()
-            output_data.update({
-                'save_success': True,
-                'saved_count': success_count,
-                'duplicate_count': duplicate_count,
-                'error_count': error_count,
-                'save_message': f"成功保存{success_count}条笑话到数据库"
-            })
-            
             logger.info(f"✅ 数据库保存完成：{success_count}条成功保存")
-            yield output_data
+            
+            return {
+                'success': True,
+                'success_count': success_count,
+                'duplicate_count': duplicate_count,
+                'error_count': error_count
+            }
             
         except Exception as e:
             logger.error(f"数据库保存失败: {e}")
             if workflow_chat:
                 await workflow_chat.add_node_message(
                     "数据库保存",
-                    f"❌ 保存失败: {str(e)}",
+                    f"❌ 数据库保存失败: {str(e)}",
                     "error"
                 )
             
-            output_data = input_data.copy()
-            output_data.update({
-                'save_success': False,
-                'save_message': f"保存失败：{str(e)}"
-            })
-            yield output_data
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def _build_save_message(self, csv_result: Dict, db_result: Dict) -> str:
+        """构建保存结果消息"""
+        messages = []
+        
+        if csv_result and csv_result.get('success'):
+            messages.append(f"CSV保存成功({csv_result.get('count', 0)}条)")
+        elif csv_result:
+            messages.append(f"CSV保存失败({csv_result.get('error', '未知错误')})")
+        
+        if db_result and db_result.get('success'):
+            messages.append(f"数据库保存成功({db_result.get('success_count', 0)}条)")
+        elif db_result:
+            messages.append(f"数据库保存失败({db_result.get('error', '未知错误')})")
+        
+        return "; ".join(messages) if messages else "保存完成"
 
 
 # 本地测试运行入口
@@ -847,15 +956,30 @@ async def main():
         workflow = JokeWorkflow(llm=llm)
         print("✅ 笑话工作流初始化完成")
         
+        # 尝试启用数据库（使用正确的密码）
+        db_config = {
+            'password': '12345'  # 使用你的数据库密码
+        }
+        if workflow.enable_database(db_config):
+            print("✅ 数据库功能已启用，笑话将同时保存到数据库和CSV")
+        else:
+            print("⚠️ 数据库连接失败，将仅保存到CSV文件")
+        
         # 测试配置
         test_config = {
             'total_target': 10,  # 生成10条笑话测试
-            'batch_size': 10,
+            'batch_size': 500,
             'joke_categories': [
                 '哲学日常梗', '科学双关梗', '逻辑生活梗', 
                 '文字游戏梗', '生活科学梗', '反差幽默梗'
             ],
-            'database_available': False  # 跳过数据库保存
+            'database_enabled': False,  # 禁用数据库功能
+            'csv_output': {
+                'enabled': True,
+                'output_dir': 'workspace/joke_output',
+                'filename': 'test_jokes_output.csv',
+                'encoding': 'utf-8-sig'
+            }
         }
         
         print(f"📊 测试配置: {test_config}")
@@ -904,25 +1028,34 @@ async def main():
                     print(f"内容: {joke.get('笑话内容', 'N/A')}")
                     print("-" * 50)
                 
-                # 保存到本地文件
+                # 显示CSV保存结果
+                csv_result = final_result.get('csv_save_result', {})
+                if csv_result.get('success'):
+                    csv_file = csv_result.get('file_path', '未知')
+                    print(f"\n💾 CSV结果已保存到: {csv_file}")
+                else:
+                    print(f"\n⚠️ CSV保存失败: {csv_result.get('error', '未知错误')}")
+                
+                # 额外保存JSON备份
                 import json
                 from datetime import datetime
                 
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                output_file = f"workspace/local_test_jokes_{timestamp}.json"
+                backup_file = f"workspace/joke_output/backup_jokes_{timestamp}.json"
                 
                 # 确保目录存在
-                os.makedirs(os.path.dirname(output_file), exist_ok=True)
+                os.makedirs(os.path.dirname(backup_file), exist_ok=True)
                 
-                with open(output_file, 'w', encoding='utf-8') as f:
+                with open(backup_file, 'w', encoding='utf-8') as f:
                     json.dump({
                         'config': test_config,
                         'generated_jokes': generated_jokes,
                         'total_count': len(generated_jokes),
-                        'timestamp': timestamp
+                        'timestamp': timestamp,
+                        'csv_save_result': csv_result
                     }, f, ensure_ascii=False, indent=2)
                 
-                print(f"\n💾 结果已保存到: {output_file}")
+                print(f"💾 JSON备份已保存到: {backup_file}")
             
             else:
                 print("⚠️ 没有生成笑话（可能是API密钥无效或网络问题）")

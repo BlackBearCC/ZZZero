@@ -2213,7 +2213,7 @@ async def main():
     parser = argparse.ArgumentParser(description='日程生成工作流 - 本地批量执行')
     parser.add_argument('--start-date', default='2025-07-03', help='开始日期 (YYYY-MM-DD)')
     parser.add_argument('--mega-batches', type=int, default=1, help='大批次数量')
-    parser.add_argument('--days-per-batch', type=int, default=6, help='每大批次天数')
+    parser.add_argument('--days-per-batch', type=int, default=24, help='每大批次天数')
     
     args = parser.parse_args()
     

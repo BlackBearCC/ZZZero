@@ -939,50 +939,6 @@ class BatchProcessor:
             "selected_fields": list(selected_fields)
         }
     
-
-    def save_results_to_csv(self, results: List[Dict[str, Any]], output_path: str = None) -> bool:
-        """保存批量处理结果到CSV文件"""
-        try:
-            import csv
-            from datetime import datetime
-            
-            if not results:
-                logger.warning("没有结果数据需要保存")
-                return False
-            
-            # 确定输出路径
-            if output_path is None:
-                output_dir = Path("workspace/batch_schedule_output")
-                output_dir.mkdir(parents=True, exist_ok=True)
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                output_path = output_dir / f"batch_results_{timestamp}.csv"
-            
-            output_path = Path(output_path)
-            
-            # 获取所有可能的字段名
-            all_fields = set()
-            for result in results:
-                if isinstance(result, dict):
-                    all_fields.update(result.keys())
-            
-            # 写入CSV文件
-            with open(output_path, 'w', newline='', encoding='utf-8') as csvfile:
-                writer = csv.DictWriter(csvfile, fieldnames=sorted(all_fields))
-                writer.writeheader()
-                
-                for result in results:
-                    if isinstance(result, dict):
-                        writer.writerow(result)
-            
-            logger.info(f"✅ 批量处理结果已保存到: {output_path}")
-            logger.info(f"📊 共保存 {len(results)} 条记录")
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ 保存批量处理结果失败: {e}")
-            return False
-
     def get_batch_status(self) -> Dict[str, Any]:
         """获取批处理状态"""
         status = {

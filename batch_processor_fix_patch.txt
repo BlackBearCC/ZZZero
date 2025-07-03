@@ -1,0 +1,69 @@
+
+# 批量处理器保存功能修复补丁
+# 将以下代码添加到相应文件中
+
+# === src/core/batch_processor.py 修复 ===
+def save_results_to_csv(self, results: List[Dict], output_file: str = None) -> str:
+    """保存批量处理结果到CSV文件"""
+    try:
+        import csv
+        import os
+        from datetime import datetime
+        
+        if not output_file:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  
+            output_file = f"workspace/batch_schedule_output/batch_results_{timestamp}.csv"
+        
+        # 确保输出目录存在
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        
+        if not results:
+            logger.warning("没有结果数据需要保存")
+            return output_file
+            
+        # 获取所有字段名
+        fieldnames = set()
+        for result in results:
+            if isinstance(result, dict):
+                fieldnames.update(result.keys())
+        fieldnames = sorted(list(fieldnames))
+        
+        # 写入CSV文件
+        with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            
+            for result in results:
+                if isinstance(result, dict):
+                    writer.writerow(result)
+                    
+        logger.info(f"✅ 批量处理结果已保存到: {output_file}")
+        return output_file
+        
+    except Exception as e:
+        logger.error(f"❌ 保存CSV文件失败: {e}")
+        raise
+
+# === src/workflow/schedule_workflow.py 修复 ===  
+# 在批量处理方法的末尾添加保存调用:
+
+def run_batch_processor(self, config):
+    """运行批量处理器"""
+    try:
+        # ... 现有的批量处理逻辑 ...
+        
+        # 获取处理结果
+        results = self.get_batch_results()  # 根据你的实际方法名调整
+        
+        # 保存结果到CSV
+        if results:
+            from core.batch_processor import BatchProcessor
+            processor = BatchProcessor()
+            output_file = processor.save_results_to_csv(results)
+            logger.info(f"批量处理完成，结果已保存: {output_file}")
+        else:
+            logger.warning("批量处理未产生结果数据")
+            
+    except Exception as e:
+        logger.error(f"批量处理失败: {e}")
+        raise
