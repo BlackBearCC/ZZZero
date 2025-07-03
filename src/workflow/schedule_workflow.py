@@ -707,9 +707,9 @@ class CyclePlanningNode(BaseNode):
 6. **节假日体验**：在节假日中的个人安排和文化体验
 
 ## 周期发展阶段
-1. **适应期**：新环境适应、日常节奏建立、基础社交
-2. **发展期**：工作深入、技能提升、关系深化
-3. **收获期**：成果显现、经验积累、新的规划
+1. **开始期**：日常节奏、基础社交
+2. **发展期**：工作深入、剧情展开、关系深化
+3. **收获期**：周期成果，收回故事
 
 ## 每个周期规划内容
 为每个周期制定：
@@ -745,7 +745,7 @@ class CyclePlanningNode(BaseNode):
       "end_date": "YYYY-MM-DD", 
       "total_days": 7,
       "cycle_theme": "周期主题",
-      "cycle_plan": "第三人称，以方知衡为主体的详细周期计划描述，200-300字，包含这个周期的整体安排、重点目标、主要活动等,注意是计划而不是纲要所以不能有预知能力，只是计划不是实际发生的事情",
+      "cycle_plan": "第三人称，以方知衡为主体的详细周期计划描述，200-300字，包含这个周期的整体安排、重点目标、主要活动等,注意是计划而不是纲要所以不能有预知能力，只是计划不是实际发生的事情，以方知衡计划xxx开始",
       "main_objectives": [
         "目标1",
         "目标2"
@@ -1359,7 +1359,7 @@ class ScheduleGenerateNode(BaseNode):
 禁止输入任何其他内容。
 
 # 输出格式
-请按以下JSON格式输出批次日程安排，禁止输入任何其他内容：
+请按以下JSON格式输出批次日程安排，必须附加markdown标识，禁止输出任何其他内容：
 
 ```json
 {{
@@ -1424,8 +1424,6 @@ class ScheduleGenerateNode(BaseNode):
   "batch_summary": "批次总结：这{batch_days_count}天的重要发展和变化，第三人称以主角为主体，200-300字，重点关注：1. 周期目标的推进情况 2. 重点角色关系的发展 3. 关键事件的进展 4. 情感状态的变化 5. 为下个批次的铺垫",
 }}
 ```
-
-请开始生成这{batch_days_count}天的详细日程安排，确保内容丰富、逻辑连贯、符合角色设定。
 """
                 
                 print(f"🔍 DEBUG: 提示词构建完成，长度: {len(generation_prompt)}")
@@ -1500,20 +1498,6 @@ class ScheduleGenerateNode(BaseNode):
                     'daily_schedules': []
                 }
                 
-                # 为每一天创建基础结构
-                for day_info in batch_dates:
-                    basic_day = {
-                        'date': day_info['date'],
-                        'weekday_name': day_info['weekday_name'],
-                        'weather': '晴朗',
-                        'is_holiday': day_info['is_holiday'],
-                        'holiday_name': day_info['holiday_name'],
-                        'daily_plan': f"{day_info['date']}的基础日程安排",
-                        'daily_summary': f"{day_info['date']}日程完成",
-                        'daily_involved_characters': [],
-                        'time_slots': []
-                    }
-                    batch_data['daily_schedules'].append(basic_day)
                 
                 if workflow_chat:
                     await workflow_chat.add_node_message(
