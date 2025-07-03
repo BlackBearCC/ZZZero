@@ -1,0 +1,21 @@
+{
+  "config": {
+    "total_target": 5,
+    "batch_size": 5,
+    "save_to_database": false,
+    "quality_threshold": 60,
+    "joke_categories": [
+      "学术幽默",
+      "生活日常",
+      "毒奶体质",
+      "网络落伍",
+      "古板认真",
+      "温和吐槽",
+      "理性分析",
+      "意外反差"
+    ]
+  },
+  "generated_jokes": [],
+  "quality_scores": [],
+  "total_jokes": 0
+}

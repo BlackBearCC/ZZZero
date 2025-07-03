@@ -53,12 +53,17 @@ async def test_joke_workflow():
     print("=== 开始测试笑话生成工作流 ===")
     
     try:
-        # 初始化LLM
-        llm_config = {
-            'api_key': 'b633a622-b5d0-4f16-a8a9-616239cf15d1',  # 需要配置实际的API密钥
-            'model': 'ep-20241228203630-nqr7v',
-            'base_url': 'https://ark.cn-beijing.volces.com/api/v3'
-        }
+        # 初始化LLM配置对象
+        from core.types import LLMConfig
+        
+        llm_config = LLMConfig(
+            provider='doubao',  # 添加必需的provider字段
+            api_key='b633a622-b5d0-4f16-a8a9-616239cf15d1',  # 实际API密钥
+            model_name='ep-20241228203630-nqr7v',
+            api_base='https://ark.cn-beijing.volces.com/api/v3',
+            temperature=0.7,
+            max_tokens=4096
+        )
         
         print("初始化豆包LLM...")
         llm = DoubaoLLM(llm_config)

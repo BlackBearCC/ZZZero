@@ -99,10 +99,10 @@ class BatchScheduleGenerator:
             logger.error(f"LLM和工作流初始化失败: {e}")
             raise
     
-    def _get_random_config(self, batch_num: int) -> Dict[str, Any]:
-        """生成随机配置 - 每次生成较短周期，保持灵活性"""
-        # 随机天数 (每次生成30-50天的周期，保持灵活性)
-        total_days = random.randint(30, 50)  # 每个批次30-50天，避免过长周期
+    def _get_random_config(self, mega_batch_num: int) -> Dict[str, Any]:
+        """生成随机配置 - 每次生成大批次（60-120天），工作流内部分周期处理"""
+        # 大批次天数 (每次生成60-120天，工作流内部分成多个周期)
+        total_days = random.randint(60, 120)  # 大批次天数
         end_date = self.current_date + timedelta(days=total_days - 1)
         
         # 获取可用角色列表（排除主角方知衡）
@@ -110,8 +110,8 @@ class BatchScheduleGenerator:
         if '方知衡' in available_characters:
             available_characters.remove('方知衡')
         
-        # 随机选择角色 (2-6)
-        char_count = min(random.randint(2, 6), len(available_characters))
+        # 随机选择角色 (4-8个，因为是大批次)
+        char_count = min(random.randint(4, 8), len(available_characters))
         selected_characters = random.sample(available_characters, char_count)
         
         # 获取可用地点列表
@@ -120,14 +120,14 @@ class BatchScheduleGenerator:
             for loc_name, loc_info in district_info.get("locations", {}).items():
                 available_locations.append(loc_info.get('name', loc_name))
         
-        # 随机选择地点 (3-9个)
-        loc_count = min(random.randint(2, 6), len(available_locations))
+        # 随机选择地点 (5-10个，因为是大批次)
+        loc_count = min(random.randint(5, 10), len(available_locations))
         selected_locations = random.sample(available_locations, loc_count)
         
         # 生成配置
         config = {
             'protagonist': '方知衡',
-            'schedule_type': 'weekly',
+            'schedule_type': 'mega_batch',  # 标记为大批次模式
             'start_date': self.current_date.strftime('%Y-%m-%d'),
             'end_date': end_date.strftime('%Y-%m-%d'),
             'total_days': total_days,
@@ -150,7 +150,7 @@ class BatchScheduleGenerator:
             # 启用周期总结功能
             'enable_cycle_summary': True,
             # 添加上一批次总结信息用于连续性
-            'previous_batch_summary': self._get_previous_summary() if batch_num > 1 else ""
+            'previous_batch_summary': self._get_previous_summary() if mega_batch_num > 1 else ""
         }
         
         return config
