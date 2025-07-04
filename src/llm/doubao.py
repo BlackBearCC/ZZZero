@@ -86,7 +86,7 @@ class DoubaoLLM(BaseLLMProvider):
             data.update(filtered_params)
             
         # 设置较长的超时时间
-        timeout_config = aiohttp.ClientTimeout(total=1800)  # 30分钟超时
+        timeout_config = aiohttp.ClientTimeout(total=1800)
             
         # 发送请求
         async with aiohttp.ClientSession(timeout=timeout_config) as session:
@@ -488,14 +488,37 @@ class DoubaoLLM(BaseLLMProvider):
                         logging.error(f"处理流式响应时出错: {e}")
                         continue
     
-    def _convert_messages(self, messages: List[Message]) -> List[Dict[str, str]]:
-        """转换消息格式为豆包API所需格式"""
+    def _convert_messages(self, messages: List[Message]) -> List[Dict[str, Any]]:
+        """转换消息格式为豆包API所需格式，支持多模态（图片）内容"""
         converted = []
         for msg in messages:
             role = "user" if msg.role == MessageRole.USER else "assistant"
             if msg.role == MessageRole.SYSTEM:
                 role = "system"
             
+            # 检查是否有图片内容（存储在metadata中）
+            if msg.metadata and msg.metadata.get("has_image", False):
+                # 多模态消息格式
+                image_data = msg.metadata.get("image_data", "")
+                image_mime = msg.metadata.get("image_mime", "image/jpeg")
+                
+                if image_data:
+                    # 构建多模态内容
+                    converted.append({
+                        "role": role,
+                        "content": [
+                            {"type": "text", "text": msg.content},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{image_mime};base64,{image_data}"
+                                }
+                            }
+                        ]
+                    })
+                    continue
+            
+            # 普通文本消息
             converted.append({
                 "role": role,
                 "content": msg.content
