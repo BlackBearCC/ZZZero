@@ -1,5 +1,19 @@
+# -*- coding: utf-8 -*-
 """
-ZZZero Agent 主入口
+ZZZero AI Agent Framework 主入口模块
+
+@author leo
+@description ZZZero AI Agent Framework的主启动文件，负责初始化数据库服务和Web应用
+@functions 
+    - main - 主函数，启动整个应用
+    - setup_database - 设置数据库服务
+    - setup_environment - 设置环境变量
+@example 
+    python main.py
+@dependencies 
+    - web.app.AgentApp - Web应用主类
+    - database.db_service - 数据库服务管理
+    - dotenv - 环境变量加载
 """
 import asyncio
 import os
@@ -20,19 +34,73 @@ src_path = current_dir / "src"
 sys.path.insert(0, str(src_path))
 
 from web.app import AgentApp
+from database.db_service import ensure_database_running, get_database_service
 
 
 
 
 
-def main():
+async def setup_database():
+    """设置和启动数据库服务"""
+    try:
+        print("=== 启动数据库服务 ===")
+        
+        # 启动PostgreSQL数据库
+        success = await ensure_database_running()
+        if success:
+            print("✅ PostgreSQL数据库启动成功")
+            
+            # 获取数据库状态
+            db_service = get_database_service()
+            status = await db_service.get_database_status()
+            print(f"📊 数据库状态: {status}")
+            
+            return True
+        else:
+            print("❌ PostgreSQL数据库启动失败")
+            return False
+            
+    except Exception as e:
+        print(f"❌ 数据库服务启动异常: {e}")
+        logging.error(f"数据库服务启动异常: {e}")
+        return False
+
+def setup_environment():
+    """设置环境变量"""
+    # 加载.env文件
+    env_file = Path(".env")
+    if env_file.exists():
+        load_dotenv(env_file)
+        print("✅ 环境变量加载完成")
+    else:
+        print("⚠️  .env文件不存在，使用默认配置")
+    
+    # 设置PostgreSQL连接环境变量（如果未设置）
+    postgres_defaults = {
+        'POSTGRES_HOST': 'localhost',
+        'POSTGRES_PORT': '5432',
+        'POSTGRES_DB': 'zzzero',
+        'POSTGRES_USER': 'zzzero_user',
+        'POSTGRES_PASSWORD': 'zzzero_pass'
+    }
+    
+    for key, default_value in postgres_defaults.items():
+        if not os.getenv(key):
+            os.environ[key] = default_value
+            print(f"🔧 设置默认环境变量: {key}={default_value}")
+
+async def main():
     """主函数"""
     try:
         print("=== ZZZero AI Agent 启动 ===")
         
-        # 加载环境变量
-        load_dotenv()
-        print("✅ 环境变量加载完成")
+        # 设置环境变量
+        setup_environment()
+        
+        # 启动数据库服务
+        db_success = await setup_database()
+        if not db_success:
+            print("⚠️  数据库服务启动失败，但应用将继续启动（降级模式）")
         
         # MCP服务器现在由MCPToolManager在应用初始化时启动
         print("🔧 MCP服务器将在应用初始化时启动...")
@@ -95,4 +163,4 @@ if __name__ == "__main__":
     if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     
-    main() 
+    asyncio.run(main()) 

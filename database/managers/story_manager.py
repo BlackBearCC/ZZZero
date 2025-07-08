@@ -7,31 +7,31 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 
-from .base_manager import DatabaseManager
+from .postgresql_manager import PostgreSQLManager
 
 logger = logging.getLogger(__name__)
 
-class StoryManager(DatabaseManager):
+class StoryManager(PostgreSQLManager):
     """剧情数据库管理器"""
     
-    def __init__(self, db_path: str = "workspace/databases/story.db"):
+    def __init__(self, **kwargs):
         """初始化剧情数据库"""
-        super().__init__(db_path)
+        super().__init__(**kwargs)
     
     def _init_database(self):
         """初始化剧情相关表结构"""
         super()._init_database()
         
-        # 创建剧情主表
+        # 创建剧情主表 (PostgreSQL语法)
         self.create_table_if_not_exists("stories", """(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            story_id TEXT UNIQUE NOT NULL,
-            story_name TEXT NOT NULL,
+            id SERIAL PRIMARY KEY,
+            story_id VARCHAR(100) UNIQUE NOT NULL,
+            story_name VARCHAR(500) NOT NULL,
             story_overview TEXT,       -- 剧情概述（四幕式描述）
-            story_type TEXT DEFAULT 'daily_life',
-            story_length TEXT DEFAULT 'medium',
-            relationship_depth TEXT DEFAULT 'casual',
-            protagonist TEXT DEFAULT '方知衡',
+            story_type VARCHAR(50) DEFAULT 'daily_life',
+            story_length VARCHAR(20) DEFAULT 'medium',
+            relationship_depth VARCHAR(20) DEFAULT 'casual',
+            protagonist VARCHAR(100) DEFAULT '方知衡',
             selected_characters TEXT,  -- JSON格式存储角色列表
             selected_locations TEXT,   -- JSON格式存储地点列表
             story_summary TEXT,        -- JSON格式存储剧情总结
@@ -41,13 +41,13 @@ class StoryManager(DatabaseManager):
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
         
-        # 为现有表添加新字段（如果不存在）
+        # 为现有表添加新字段（如果不存在）- PostgreSQL版本
         try:
-            # 直接使用SQL检查列是否存在
+            # PostgreSQL检查列是否存在
             check_column_sql = """
             SELECT COUNT(*) as column_exists 
-            FROM pragma_table_info('stories') 
-            WHERE name = 'story_overview'
+            FROM information_schema.columns 
+            WHERE table_name = 'stories' AND column_name = 'story_overview'
             """
             
             result = self.execute_query(check_column_sql, fetch_all=False)
@@ -64,14 +64,14 @@ class StoryManager(DatabaseManager):
             logger.warning(f"添加story_overview列失败: {e}")
             pass
         
-        # 创建小节详情表
+        # 创建小节详情表 (PostgreSQL语法)
         self.create_table_if_not_exists("scenes", """(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            story_id TEXT NOT NULL,
-            scene_id TEXT NOT NULL,
-            scene_title TEXT NOT NULL,
+            id SERIAL PRIMARY KEY,
+            story_id VARCHAR(100) NOT NULL,
+            scene_id VARCHAR(100) NOT NULL,
+            scene_title VARCHAR(500) NOT NULL,
             scene_content TEXT NOT NULL,
-            location TEXT,
+            location VARCHAR(200),
             participants TEXT,  -- JSON格式存储参与角色
             scene_order INTEGER DEFAULT 0,
             scene_metadata TEXT,  -- JSON格式存储额外元数据
@@ -81,14 +81,14 @@ class StoryManager(DatabaseManager):
             UNIQUE(story_id, scene_id)
         )""")
         
-        # 创建角色剧情关联表
+        # 创建角色剧情关联表 (PostgreSQL语法)
         self.create_table_if_not_exists("character_stories", """(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            character_name TEXT NOT NULL,
-            story_id TEXT NOT NULL,
-            relationship_type TEXT,
+            id SERIAL PRIMARY KEY,
+            character_name VARCHAR(100) NOT NULL,
+            story_id VARCHAR(100) NOT NULL,
+            relationship_type VARCHAR(50),
             importance_level INTEGER DEFAULT 1,  -- 1-5级重要程度
-            character_role TEXT,  -- 在剧情中的角色定位
+            character_role VARCHAR(100),  -- 在剧情中的角色定位
             interaction_count INTEGER DEFAULT 0,  -- 互动次数
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (story_id) REFERENCES stories(story_id) ON DELETE CASCADE,
