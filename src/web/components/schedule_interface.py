@@ -11,7 +11,7 @@ from typing import Dict, List, Any, Optional, Tuple
 import calendar
 import holidays
 from chinese_calendar import is_holiday, is_workday, get_holiday_detail
-from gradio_calendar import Calendar
+# from gradio_calendar import Calendar  # 移除gradio_calendar依赖
 
 import sys
 import os
@@ -250,17 +250,19 @@ class ScheduleInterface:
                         interactive=True
                     )
                 
-                # 使用日期选择器组件
+                # 使用简单的日期输入框替代Calendar组件
                 with gr.Row():
-                    components['date_picker_start'] = Calendar(
+                    components['date_picker_start'] = gr.Textbox(
                         label="选择开始日期",
-                        value=datetime.now().strftime('%Y-%m-%d'),  # 转换为字符串格式
-                        info="单击选择开始日期"
+                        value=datetime.now().strftime('%Y-%m-%d'),
+                        placeholder="YYYY-MM-DD",
+                        info="输入开始日期 (格式: YYYY-MM-DD)"
                     )
-                    components['date_picker_end'] = Calendar(
+                    components['date_picker_end'] = gr.Textbox(
                         label="选择结束日期", 
                         value=(datetime.now() + timedelta(days=6)).strftime('%Y-%m-%d'),
-                        info="单击选择结束日期"
+                        placeholder="YYYY-MM-DD",
+                        info="输入结束日期 (格式: YYYY-MM-DD)"
                     )
                     
                 # 天数显示

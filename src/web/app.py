@@ -23,7 +23,6 @@ from tools.mcp_tools import MCPToolManager
 from web.components.config_panel import ConfigPanel
 from web.components.chat_interface import ChatInterface
 from web.components.story_interface import StoryInterface
-from web.components.schedule_interface import create_schedule_interface
 from web.components.task_queue_interface import TaskQueueInterface
 from web.handlers.event_handlers import EventHandlers
 from web.handlers.workflow_handlers import WorkflowHandlers

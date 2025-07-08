@@ -680,7 +680,7 @@ class CyclePlanningNode(BaseNode):
 # 主角信息
 {protagonist_data}
 
-{f"# 历史背景信息\\n{previous_summary}\\n" if previous_summary else ''}
+{f"# 历史背景信息{chr(10)}{previous_summary}{chr(10)}" if previous_summary else ''}
 
 # 重要角色（主要互动角色）
 {chr(10).join(important_characters_info)}
@@ -1035,7 +1035,7 @@ class ScheduleGenerateNode(BaseNode):
         for i, summary in enumerate(recent_batch_summaries):
             logger.info(f"  📝 总结 {i+1}: {summary[:150]}...")
         if recent_batch_summaries:
-            batch_history_context = f"## 最近批次历史记录\n{chr(10).join(recent_batch_summaries)}\n"
+            batch_history_context = f"## 最近批次历史记录{chr(10)}{chr(10).join(recent_batch_summaries)}{chr(10)}"
             logger.info(f"✅ 历史记录上下文已构建，长度: {len(batch_history_context)} 字符")
         
         # 🔍 调试：确认代码继续执行
@@ -2266,7 +2266,7 @@ async def main():
         
         # 循环执行大批次
         for mega_batch_num in range(1, args.mega_batches + 1):
-            print(f"\n{'='*80}")
+            print(f"\n{'=' * 80}")
             print(f"🎯 正在执行第 {mega_batch_num}/{args.mega_batches} 个大批次")
             print(f"📅 当前开始日期: {current_date.strftime('%Y-%m-%d')}")
             print(f"{'='*80}")
