@@ -199,8 +199,13 @@ class AgentApp:
                 
                 # Tab 5: 数据库管理
                 with gr.TabItem("📊 数据库管理", id="database_tab"):
-                    from web.components.database_interface import database_interface
-                    database_components = database_interface.create_interface()
+                    from web.components.database_interface import get_database_interface
+                    database_interface = get_database_interface()
+                    if hasattr(database_interface, 'create_interface'):
+                        database_components = database_interface.create_interface()
+                    else:
+                        # 数据库不可用，显示占位符
+                        database_components = gr.Markdown("❌ 数据库功能不可用（数据库连接失败）")
             
             # === 事件绑定 ===
             self._bind_events(config_components, chat_components, story_components, queue_components, app)
