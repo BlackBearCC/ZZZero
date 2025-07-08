@@ -1,34 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
-Docker Compose配置文件 - ZZZero AI Agent Framework
-
-@author leo
-@description 提供PostgreSQL数据库和应用服务的Docker容器编排
-@services 
-    - postgres - PostgreSQL 15数据库服务
-    - zzzero-app - ZZZero应用服务（可选）
-@volumes
-    - postgres_data - PostgreSQL数据持久化
-    - ./workspace - 应用工作空间挂载
-@networks zzzero-network - 内部网络通信
-@ports
-    - 5432:5432 - PostgreSQL数据库端口
-    - 7860:7860 - Gradio Web界面端口
-@environment
-    - POSTGRES_DB=zzzero - 数据库名称
-    - POSTGRES_USER=zzzero_user - 数据库用户
-    - POSTGRES_PASSWORD=zzzero_pass - 数据库密码
-@example
-    # 启动数据库服务
-    docker-compose up -d postgres
-    
-    # 启动完整服务
-    docker-compose up -d
-    
-    # 查看日志
-    docker-compose logs -f postgres
-@dependencies docker, docker-compose
-"""
+# Docker Compose配置文件 - ZZZero AI Agent Framework
+# 提供PostgreSQL、Redis等服务的Docker容器编排
+# 使用示例：
+#   docker compose up -d postgres   # 仅启动数据库
+#   docker compose up -d            # 启动全部服务
 
 version: '3.8'
 
@@ -113,6 +88,3 @@ volumes:
 networks:
   zzzero-network:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16

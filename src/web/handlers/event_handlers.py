@@ -1400,7 +1400,7 @@ class EventHandlers:
             async for chunk in self.app.current_agent.stream_run(message, context_with_history):
                 if chunk.get("type") == "start":
                     # 显示开始思考的提示
-                    assistant_reply["content"] = "🧠 正在思考中..."
+                    assistant_reply["content"] = "🧠 正在思考中...\n"
                     yield new_history, message, gr.update(), "", "", gr.update(interactive=False)
                     
                 elif chunk.get("type") == "text_chunk":
@@ -1408,7 +1408,6 @@ class EventHandlers:
                     chunk_content = chunk.get("content", "")
                     if chunk_content:  # 只有当chunk有内容时才处理
                         full_response += chunk_content  # 累加新的chunk
-                        print(f"[on_stream_chat] 收到chunk: '{chunk_content}', 累计长度: {len(full_response)}")
                         
                         # 直接追加新内容到助手回复中，而不是重新渲染整个内容
                         # 简单追加，避免复杂的高亮处理导致重新渲染

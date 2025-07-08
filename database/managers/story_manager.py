@@ -97,10 +97,10 @@ class StoryManager(PostgreSQLManager):
         
         # 创建剧情标签表（用于分类和搜索）
         self.create_table_if_not_exists("story_tags", """(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            story_id TEXT NOT NULL,
-            tag_name TEXT NOT NULL,
-            tag_category TEXT DEFAULT 'general',  -- 标签分类：theme, mood, genre等
+            id SERIAL PRIMARY KEY,
+            story_id VARCHAR(100) NOT NULL,
+            tag_name VARCHAR(200) NOT NULL,
+            tag_category VARCHAR(50) DEFAULT 'general',  -- 标签分类：theme, mood, genre等
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (story_id) REFERENCES stories(story_id) ON DELETE CASCADE,
             UNIQUE(story_id, tag_name)

@@ -52,7 +52,7 @@ class TextProcessor:
             table_data = parse_table_content(table_content)
             if table_data:
                 tables_data.append(table_data)
-                return f"\n📊 **表格 {len(tables_data)}**\n\n"  # 用占位符替换
+                return f"\n[表格] **表格 {len(tables_data)}**\n\n"  # 用占位符替换
             return match.group(0)
         
         text = re.sub(table_block_pattern, extract_table_block, text, flags=re.MULTILINE)
@@ -65,7 +65,7 @@ class TextProcessor:
             table_data = parse_table_content(table_content)
             if table_data:
                 tables_data.append(table_data)
-                return f"\n📊 **表格 {len(tables_data)}**\n\n"  # 用占位符替换
+                return f"\n[表格] **表格 {len(tables_data)}**\n\n"  # 用占位符替换
             return match.group(0)
         
         text = re.sub(table_pattern, extract_markdown_table, text, flags=re.MULTILINE)
@@ -96,8 +96,8 @@ class TextProcessor:
         cleaned_text = '\n'.join(cleaned_lines)
         
         # 机器人风格特殊处理：将分散在多行的表情符号和状态合并
-        # 例如：将独立成行的 📶 🤖 ✨ 等合并到前一行
-        cleaned_text = re.sub(r'\n([\s]*[🔧✨📶😊🤖⚡🔋💾💻📊🔄⏳❓❌✅💬🎯bzzzt~zzz~])', r' \1', cleaned_text)
+        # 例如：将独立成行的特殊字符等合并到前一行
+        cleaned_text = re.sub(r'\n([\s]*[bzzzt~zzz~])', r' \1', cleaned_text)
         
         # 处理机器人状态行：将类似 "动力核心：98%" 这样的状态行保持紧凑
         cleaned_text = re.sub(r'\n([\s]*[动力核心记忆模块情感模拟器].*?[：:]\s*.*?[%℃])', r' \1', cleaned_text)
@@ -328,10 +328,10 @@ class TextProcessor:
     def format_tool_execution_status(tool_name: str, status: str = "executing") -> str:
         """格式化工具执行状态"""
         status_text = {
-            "executing": f"🔧 正在执行 {tool_name}...",
-            "completed": f"✅ {tool_name} 执行完成",
-            "failed": f"❌ {tool_name} 执行失败"
-        }.get(status, f"⚠️ {tool_name} 状态未知")
+            "executing": f"[执行] 正在执行 {tool_name}...",
+            "completed": f"[成功] {tool_name} 执行完成",
+            "failed": f"[失败] {tool_name} 执行失败"
+        }.get(status, f"[未知] {tool_name} 状态未知")
         
         css_class = {
             "executing": "tool-executing",

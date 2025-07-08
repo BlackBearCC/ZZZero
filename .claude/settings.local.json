@@ -11,7 +11,13 @@
       "Bash(pip3 install:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(git config:*)"
+      "Bash(git config:*)",
+      "Bash(find:*)",
+      "Bash(ls:*)",
+      "Bash(./start_database.bat)",
+      "Bash(cmd:*)",
+      "Bash(./start_database.sh:*)",
+      "Bash(powershell.exe:*)"
     ],
     "deny": []
   }
