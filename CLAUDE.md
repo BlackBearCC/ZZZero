@@ -1,4 +1,6 @@
-# CLAUDE.md - 项目指南
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## 项目概述
 
@@ -107,9 +109,9 @@ ZZZero/
 - **D3.js**: 交互式可视化
 - **Graphviz**: 专业图形绘制
 
-## 环境配置
+## 常用开发命令
 
-### 1. 安装依赖
+### 安装依赖
 ```bash
 # 使用 pip 安装
 pip install -r requirements.txt
@@ -119,7 +121,47 @@ pip install poetry
 poetry install
 ```
 
-### 2. 环境变量配置
+### 启动应用
+```bash
+# 启动主应用 (Web界面)
+python main.py
+
+# 启动数据库服务 (PostgreSQL)
+./start_database.sh    # Linux/macOS
+start_database.bat     # Windows
+```
+
+### 运行示例
+```bash
+# 快速开始示例
+python examples/quick_start.py
+
+# 增强版 StateGraph 演示
+python examples/enhanced_stategraph_demo.py
+
+# Python执行器示例
+python examples/python_executor_example.py --mode demo
+python examples/python_executor_example.py --mode interactive
+```
+
+### 测试和代码质量
+```bash
+# 运行测试
+pytest
+
+# 代码格式化
+black .
+
+# 代码检查
+flake8
+
+# 类型检查
+mypy src/
+```
+
+## 环境配置
+
+### 环境变量配置
 创建 `.env` 文件：
 ```env
 # LLM API 配置
@@ -201,11 +243,35 @@ initial_state = {
 result = await executor.execute(graph, initial_state, {})
 ```
 
-### 3. 启动 Web 界面
-```bash
-python main.py
-```
-访问 http://localhost:7860 使用 ChatGPT 风格的界面。
+## 核心架构
+
+该项目采用模块化分层设计，核心组件包括：
+
+### StateGraph 引擎 (src/core/graph.py)
+- 基于节点的执行引擎，类似 LangGraph 但完全自主实现
+- 支持条件路由、循环控制、并行执行
+- 内置状态管理和错误恢复机制
+
+### 节点系统 (src/nodes/)
+- **BaseNode**: 所有节点的基类，定义执行接口
+- **RouterNode**: 条件路由节点，支持复杂的决策逻辑
+- **ParallelNode**: 并行执行节点，支持多种聚合策略
+- **ReactAgentNode**: ReAct Agent 执行节点
+
+### LLM 抽象层 (src/llm/)
+- 工厂模式支持多种 LLM 提供商
+- 统一的异步接口和流式输出
+- 支持 OpenAI、Anthropic、豆包等
+
+### MCP 工具系统 (mcp/, mcp_servers/)
+- Model Context Protocol 实现
+- 内置多种工具服务器：CSV操作、向量数据库、Python执行器
+- 可扩展的工具生态
+
+### Web 界面 (src/web/)
+- 基于 Gradio 的 ChatGPT 风格界面
+- 支持批量任务处理和实时监控
+- 可视化执行流程和性能指标
 
 ## 核心概念
 
@@ -450,8 +516,46 @@ visualization = visualize_graph(graph, execution_trace=trace)
 
 **注意**: 使用中文和用户交流
 
-## 重要指导原则
+## 重要开发规范 (来自 Cursor 规则)
 
-- 提交代码时不要添加 Claude Code 水印或生成内容标识
-- 保持简洁清晰的提交信息，不包含任何生成工具署名
-- 专注于功能实现，避免添加不必要的标识信息
+### 沟通与语言
+- 沟通语言：始终使用简体中文交流
+- 主动性：在执行任务时，主动思考、规划，并解释步骤和原因
+
+### 架构与设计原则
+- **遵循核心架构**：严格遵守项目既有的模块化、可扩展和分层设计
+- **异步优先**：所有I/O密集型操作必须使用 async/await 实现
+- **类型安全**：所有数据模型和类型定义必须使用 Pydantic
+- **尊重分层**：新功能应放置在正确的目录中：
+  - `src/nodes`: 新增的逻辑节点
+  - `src/agents`: 新增的 Agent 实现  
+  - `src/llm`: 新的 LLM 对接
+  - `mcp_servers`: 新的 MCP 工具服务器
+
+### 代码实现规范
+- **继承基类**：创建新节点、Agent、LLM或解析器时，必须继承 `src/core/base.py` 中的相应基类
+- **使用设计模式**：遵循项目已建立的设计模式（工厂模式、策略模式等）
+- **配置分离**：严禁硬编码API密钥、文件路径等敏感信息，应通过 `.env` 文件管理
+
+### 工作空间与文件管理
+- **统一工作空间**：所有文件操作通过 `workspace/` 目录管理
+- **目录分工**：
+  - `workspace/input/`: 用户输入文件
+  - `workspace/output/`: Agent生成的输出文件
+  - `workspace/vectordb/`: 向量数据库文件
+- **使用工具**：优先使用项目封装的MCP工具进行文件操作
+
+### 文档规范
+- **每个Python文件头部必须包含详细的模块注释**，包括：
+  - 作者信息（@author leo）
+  - 模块功能描述
+  - 主要类和函数的说明
+  - 使用示例
+  - 依赖关系说明
+
+### 提交规范
+- 功能: `feat: 添加新功能描述`
+- 修复: `fix: 修复问题描述`
+- 文档: `docs: 更新文档`
+- 重构: `refactor: 重构代码`
+- 不要添加 Claude Code 水印或生成内容标识
