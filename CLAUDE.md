@@ -448,4 +448,10 @@ visualization = visualize_graph(graph, execution_trace=trace)
 
 ---
 
-**注意**: 本项目推荐使用 Claude 4 Sonnet 模型以获得最佳的推理和生成效果。确保在 `.env` 文件中正确配置 Anthropic API 密钥。
+**注意**: 使用中文和用户交流
+
+## 重要指导原则
+
+- 提交代码时不要添加 Claude Code 水印或生成内容标识
+- 保持简洁清晰的提交信息，不包含任何生成工具署名
+- 专注于功能实现，避免添加不必要的标识信息
