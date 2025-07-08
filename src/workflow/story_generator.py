@@ -72,7 +72,7 @@ class StoryGenerationNode(BaseNode):
         recognition_results = input_data.get('recognition_results', [])
         csv_save_result = input_data.get('csv_save_result', {})
         csv_file_path = csv_save_result.get('file_path', '')
-        batch_size = input_data.get('batch_size', 5)  # 默认每批处理5个图片
+        batch_size = input_data.get('batch_size', 1)  # 默认每批处理5个图片
         
         if not recognition_results:
             # 没有识别结果，无法生成故事
@@ -195,7 +195,7 @@ class StoryGenerationNode(BaseNode):
                 system_prompt = f"""你是一个专业的故事创作助手，擅长根据图片描述和角色人设生成有深度、情节丰富的故事。
 
 请根据提供的图片描述和角色人设，创作一个短篇故事。故事应该围绕主角方知衡展开，并与图片描述中的场景、元素自然融合。
-
+注意这个故事是像亲密的人分享使用的，他应该能触发甜蜜美好的话题
 ## 角色人设
 {self.protagonist_data}  
 
@@ -203,6 +203,7 @@ class StoryGenerationNode(BaseNode):
 标题：{result.get('title', '')}
 详细描述：{result.get('description', '')}
 （这是角色拍下的照片的描述，但不需要交代相机或手机拍摄的过程）
+
 
 请创作一个200字的短篇故事，要求：
 1. 故事必须以方知衡为主角，并与图片描述中的场景和元素自然融合
