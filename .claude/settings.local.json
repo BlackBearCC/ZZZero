@@ -17,7 +17,9 @@
       "Bash(./start_database.bat)",
       "Bash(cmd:*)",
       "Bash(./start_database.sh:*)",
-      "Bash(powershell.exe:*)"
+      "Bash(powershell.exe:*)",
+      "Bash(rm:*)",
+      "Bash(mv:*)"
     ],
     "deny": []
   }

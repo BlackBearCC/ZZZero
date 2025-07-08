@@ -131,17 +131,12 @@ class AgentApp:
             memory_store = SQLiteMemoryStore("workspace/memory.db")
             session_id = str(uuid.uuid4())[:8]  # 生成短会话ID
             
-            # 创建或更新Agent（启用记忆功能）
+            # 创建标准ReactAgent
             self.agent = ReactAgent(
-                llm=self.llm,  # 传递LLM实例作为第一个参数
+                llm=self.llm,
                 tool_manager=self.tool_manager,
                 max_iterations=self.current_config.get('max_iterations', 10),
-                name="智能助手",
-                memory_enabled=True,  # 启用记忆功能
-                memory_store=memory_store,  # 传递记忆存储
-                short_term_limit=3000,  # 短期记忆限制
-                session_id=session_id,  # 会话ID
-                simplified_output=self.current_config.get('simplified_output', True)  # 传递简化输出配置
+                name="ReactAgent助手"
             )
             
             # 同时设置current_agent以兼容其他方法

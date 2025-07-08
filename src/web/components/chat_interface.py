@@ -13,41 +13,63 @@ class ChatInterface:
     
     def create_chat_window(self) -> Dict[str, Any]:
         """创建聊天窗口"""
-        # 聊天历史
-        chatbot = gr.Chatbot(
-            show_label=False,
-            elem_classes=["chat-window"],
-            type="messages",
-            render_markdown=True,
-            sanitize_html=True
-        )
-        
-        # 动态表格显示区域
-        dynamic_table = gr.DataFrame(
-            value=[],
-            headers=None,
-            label="📊 表格数据",
-            interactive=False,
-            wrap=True,
-            visible=False
-        )
-        
-        # 输入区域
         with gr.Row():
-            msg_input = gr.Textbox(
-                placeholder="输入消息...",
-                show_label=False,
-                scale=9,
-                lines=1,
-                max_lines=5
-            )
-            send_btn = gr.Button("发送", variant="primary", scale=1)
+            # 左侧聊天区域
+            with gr.Column(scale=2):
+                # 聊天历史
+                chatbot = gr.Chatbot(
+                    show_label=False,
+                    elem_classes=["chat-window"],
+                    type="messages",
+                    render_markdown=True,
+                    sanitize_html=True
+                )
+                
+                # 动态表格显示区域
+                dynamic_table = gr.DataFrame(
+                    value=[],
+                    headers=None,
+                    label="[表格] 表格数据",
+                    interactive=False,
+                    wrap=True,
+                    visible=False
+                )
+                
+                # 输入区域
+                with gr.Row():
+                    msg_input = gr.Textbox(
+                        placeholder="输入消息...",
+                        show_label=False,
+                        scale=9,
+                        lines=1,
+                        max_lines=5
+                    )
+                    send_btn = gr.Button("发送", variant="primary", scale=1)
+            
+            # 右侧节点信息流面板
+            with gr.Column(scale=1):
+                gr.Markdown("### [信息流] 节点执行详情")
+                info_stream = gr.Textbox(
+                    label="实时信息流",
+                    value="[等待] 等待Agent执行...",
+                    interactive=False,
+                    lines=20,
+                    max_lines=30,
+                    elem_classes=["info-stream"]
+                )
+                
+                with gr.Row():
+                    clear_info_btn = gr.Button("清空信息流", size="sm")
+                    reload_agent_btn = gr.Button("重载Agent", variant="secondary", size="sm")
         
         return {
             "chatbot": chatbot,
             "dynamic_table": dynamic_table,
             "msg_input": msg_input,
-            "send_btn": send_btn
+            "send_btn": send_btn,
+            "info_stream": info_stream,
+            "clear_info_btn": clear_info_btn,
+            "reload_agent_btn": reload_agent_btn
         }
     
     def create_batch_config(self) -> Dict[str, Any]:
