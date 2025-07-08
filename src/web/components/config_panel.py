@@ -115,22 +115,6 @@ class ConfigPanel:
             "refresh_mcp_btn": refresh_mcp_btn
         }
     
-    def create_tools_config(self) -> Dict[str, Any]:
-        """创建传统工具配置组件"""
-        with gr.Accordion("🔧 传统工具配置", open=False):
-            available_tools = gr.CheckboxGroup(
-                choices=[
-                    "web_search",
-                    "calculator", 
-                    "file_reader",
-                    "code_executor",
-                    "database_query"
-                ],
-                value=[],
-                label="启用的传统工具"
-            )
-        
-        return {"available_tools": available_tools}
     
     def create_role_info_section(self) -> Dict[str, Any]:
         """创建角色信息管理界面"""
@@ -356,7 +340,6 @@ class ConfigPanel:
         llm_components = self.create_llm_config()
         agent_components = self.create_agent_config()
         mcp_components = self.create_mcp_server_config()
-        tools_components = self.create_tools_config()
         role_components = self.create_role_info_section()
         memory_components = self.create_memory_config()
         file_components = self.create_file_management()
@@ -367,7 +350,6 @@ class ConfigPanel:
         all_components.update(llm_components)
         all_components.update(agent_components)
         all_components.update(mcp_components)
-        all_components.update(tools_components)
         all_components.update(role_components)
         all_components.update(memory_components)
         all_components.update(file_components)

@@ -220,7 +220,6 @@ class AgentApp:
             config_components.get('agent_type'), 
             config_components.get('max_iterations'), 
             config_components.get('simplified_output'),  # 添加简化输出选项
-            config_components.get('available_tools'), 
             config_components.get('enabled_mcp_servers')
         ]:
             if component:
@@ -233,7 +232,6 @@ class AgentApp:
                         config_components.get('agent_type'), 
                         config_components.get('max_iterations'), 
                         config_components.get('simplified_output'),  # 添加简化输出选项
-                        config_components.get('available_tools'), 
                         config_components.get('enabled_mcp_servers')
                     ],
                     outputs=[]

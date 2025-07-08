@@ -115,7 +115,7 @@ class EventHandlers:
     
     async def on_config_change(self, *args):
         """配置变化时自动应用"""
-        llm_provider, model_name, temperature, agent_type, max_iterations, simplified_output, available_tools, enabled_mcp_servers = args
+        llm_provider, model_name, temperature, agent_type, max_iterations, simplified_output, enabled_mcp_servers = args
         
         # 更新配置
         old_config = self.app.current_config.copy()
@@ -126,7 +126,6 @@ class EventHandlers:
             'agent_type': agent_type,
             'max_iterations': max_iterations,
             'simplified_output': simplified_output,  # 添加简化输出配置
-            'available_tools': available_tools,
             'enabled_mcp_servers': enabled_mcp_servers
         })
         
@@ -136,8 +135,8 @@ class EventHandlers:
             await self.app._update_agent_config()
             logger.info("配置已更改，Agent已更新")
         
-        total_tools = len(available_tools) + len(enabled_mcp_servers)
-        status_text = f"✅ 配置已应用！使用 {llm_provider}/{model_name}，启用 {total_tools} 个工具"
+        total_tools = len(enabled_mcp_servers)
+        status_text = f"✅ 配置已应用！使用 {llm_provider}/{model_name}，启用 {total_tools} 个MCP工具"
         if not config_changed:
             status_text += " (无变化)"
         
