@@ -101,6 +101,12 @@ class PromptsCapability(BaseModel):
     list_changed: bool = False
 
 
+class ClientCapabilities(BaseModel):
+    """客户端能力"""
+    experimental: Optional[Dict[str, Any]] = None
+    sampling: Optional[Dict[str, Any]] = None
+
+
 class ServerCapabilities(BaseModel):
     """服务器能力"""
     resources: Optional[ResourcesCapability] = None
