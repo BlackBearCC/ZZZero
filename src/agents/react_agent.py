@@ -150,41 +150,63 @@ class ReactAgent(BaseAgent):
         
     def _build_react_prompt(self, query: str, available_tools: List[str], 
                            context_history: str = "") -> str:
-        """构建标准React提示词"""
+        """构建标准React提示词 - 强制所有回复从Thought开始"""
         tools_description = ""
         if self.tool_manager and available_tools:
             tools_description = self.tool_manager.get_tools_description()
         
-        prompt = f"""你是一个专业的AI助手，使用标准的ReAct (Reasoning and Acting) 方法来解决问题。
+        prompt = f"""你是一个专业的AI助手，严格使用ReAct (Reasoning and Acting) 方法解决问题。
+
+【重要规则】无论什么问题，你都必须先思考，然后再行动或回答。严禁直接给出答案。
 
 你可以使用以下工具：
 {tools_description if tools_description else "无可用工具"}
 
-请按照以下格式思考和行动：
+严格按照以下格式思考和行动：
 
-Thought: [你的推理思考过程，分析问题并决定下一步行动]
-Action: [选择要执行的行动，格式为 tool_name(param1=value1, param2=value2)]
-Observation: [等待工具执行结果，不要自己编造]
+Thought: [必须先思考！分析问题，制定解决方案，决定下一步行动]
+Action: [如需使用工具，格式为 tool_name(param1=value1, param2=value2)]
+Observation: [工具执行结果，系统自动填充]
 
-继续这个 Thought->Action->Observation 循环，直到你有足够信息给出最终答案。
-如果不需要使用任何工具，直接给出答案。
+继续这个 Thought->Action->Observation 循环，直到获得足够信息。
 
-当你准备给出最终答案时，用以下格式：
-Final Answer: [你的最终答案]
+如果不需要工具也要先思考：
+Thought: [分析问题，基于已有知识进行推理]
+Final Answer: [基于思考给出的最终答案]
+
+【再次强调】任何回复都必须以 "Thought:" 开头，这是不可违背的规则！
 
 当前任务: {query}
 
 {context_history}
 
-现在开始："""
+现在开始，记住必须从Thought开始："""
         return prompt
         
     def _parse_react_response(self, response: str) -> Dict[str, Any]:
-        """解析React格式的响应"""
+        """解析React格式的响应 - 严格验证必须从Thought开始"""
         lines = response.strip().split('\n')
         current_thought = ""
         current_action = None
         final_answer = ""
+        
+        # 检查是否从Thought开始
+        first_meaningful_line = None
+        for line in lines:
+            line = line.strip()
+            if line:
+                first_meaningful_line = line
+                break
+        
+        # 如果不是从Thought开始，强制返回错误
+        if first_meaningful_line and not first_meaningful_line.startswith("Thought:"):
+            return {
+                "thought": "",
+                "action": None,
+                "final_answer": "",
+                "has_final_answer": False,
+                "error": f"错误：必须从Thought开始，但检测到：{first_meaningful_line}"
+            }
         
         for line in lines:
             line = line.strip()
@@ -294,6 +316,17 @@ Final Answer: [你的最终答案]
                 
                 # 解析响应
                 parsed = self._parse_react_response(response_text)
+                
+                # 检查是否有错误（不是从Thought开始）
+                if "error" in parsed:
+                    error_msg = parsed["error"]
+                    self.info_stream.emit("error", "react_agent", error_msg)
+                    
+                    # 重新生成，强制要求从Thought开始
+                    correction_prompt = "请重新回答，必须以'Thought:'开头："
+                    messages.append(Message(role=MessageRole.USER, content=correction_prompt))
+                    react_loop.next_iteration()
+                    continue
                 
                 if parsed["has_final_answer"]:
                     # 得到最终答案
