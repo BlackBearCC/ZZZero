@@ -1,0 +1,90 @@
+# -*- coding: utf-8 -*-
+# Docker Compose配置文件 - ZZZero AI Agent Framework
+# 提供PostgreSQL、Redis等服务的Docker容器编排
+# 使用示例：
+#   docker compose up -d postgres   # 仅启动数据库
+#   docker compose up -d            # 启动全部服务
+
+version: '3.8'
+
+services:
+  # PostgreSQL 数据库服务
+  postgres:
+    image: postgres:15-alpine
+    container_name: zzzero_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: zzzero
+      POSTGRES_USER: zzzero_user
+      POSTGRES_PASSWORD: zzzero_pass
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d  # 初始化脚本
+    networks:
+      - zzzero-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zzzero_user -d zzzero"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Redis 缓存服务（可选，用于会话管理和缓存）
+  redis:
+    image: redis:7-alpine
+    container_name: zzzero_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - zzzero-network
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ZZZero 应用服务（可选，用于容器化部署）
+  # zzzero-app:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: zzzero_app
+  #   restart: unless-stopped
+  #   ports:
+  #     - "7860:7860"
+  #   volumes:
+  #     - ./workspace:/app/workspace
+  #     - ./config:/app/config
+  #   environment:
+  #     - POSTGRES_HOST=postgres
+  #     - POSTGRES_PORT=5432
+  #     - POSTGRES_DB=zzzero
+  #     - POSTGRES_USER=zzzero_user
+  #     - POSTGRES_PASSWORD=zzzero_pass
+  #     - REDIS_URL=redis://redis:6379
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #   networks:
+  #     - zzzero-network
+
+# 数据卷定义
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+# 网络定义
+networks:
+  zzzero-network:
+    driver: bridge
