@@ -115,7 +115,7 @@ class EventHandlers:
     
     async def on_config_change(self, *args):
         """配置变化时自动应用"""
-        llm_provider, model_name, temperature, agent_type, max_iterations, simplified_output, available_tools, enabled_mcp_servers = args
+        llm_provider, model_name, temperature, agent_type, max_iterations, simplified_output, enabled_mcp_servers = args
         
         # 更新配置
         old_config = self.app.current_config.copy()
@@ -126,7 +126,6 @@ class EventHandlers:
             'agent_type': agent_type,
             'max_iterations': max_iterations,
             'simplified_output': simplified_output,  # 添加简化输出配置
-            'available_tools': available_tools,
             'enabled_mcp_servers': enabled_mcp_servers
         })
         
@@ -136,8 +135,8 @@ class EventHandlers:
             await self.app._update_agent_config()
             logger.info("配置已更改，Agent已更新")
         
-        total_tools = len(available_tools) + len(enabled_mcp_servers)
-        status_text = f"✅ 配置已应用！使用 {llm_provider}/{model_name}，启用 {total_tools} 个工具"
+        total_tools = len(enabled_mcp_servers)
+        status_text = f"✅ 配置已应用！使用 {llm_provider}/{model_name}，启用 {total_tools} 个MCP工具"
         if not config_changed:
             status_text += " (无变化)"
         
@@ -1338,14 +1337,34 @@ class EventHandlers:
         except Exception as e:
             return f"<div style='color: red;'>获取世界设定列表失败: {str(e)}</div>"
     
-    async def on_stream_chat(self, message: str, history: List[Dict[str, str]]):
-        """处理流式聊天 - 实现打字机效果"""
+    def reload_agent(self):
+        """重新加载ReactAgent"""
+        try:
+            # 重新创建Agent
+            self.app._create_agent()
+            return f"[配置] ReactAgent已重新加载"
+        except Exception as e:
+            return f"[错误] 重新加载失败: {str(e)}"
+    
+    def clear_info_stream(self):
+        """清空信息流"""
+        # 清空全局信息流
+        from core.base import NodeInfoStream
+        info_stream = NodeInfoStream()
+        info_stream.clear_events()
+        return "[清空] 信息流已清空"
+
+    async def on_stream_chat(self, message: str, history: List[Dict[str, str]], info_stream_content: str = ""):
+        """处理流式聊天 - 实现打字机效果并更新信息流"""
         import gradio as gr
+        
+        # 信息流内容累积
+        current_info_stream = info_stream_content
         
         try:
             # 检查是否有Agent
             if not self.app.current_agent:
-                yield history + [{"role": "assistant", "content": "❌ Agent未初始化，请先配置LLM"}], "", gr.update(value=[], headers=None, visible=False), "", "", gr.update(interactive=True)
+                yield history + [{"role": "assistant", "content": "[错误] Agent未初始化，请先配置LLM"}], "", gr.update(value=[], headers=None, visible=False), "", "", gr.update(interactive=True), current_info_stream
                 return
             
             # 检查是否为空消息
@@ -1400,7 +1419,7 @@ class EventHandlers:
             async for chunk in self.app.current_agent.stream_run(message, context_with_history):
                 if chunk.get("type") == "start":
                     # 显示开始思考的提示
-                    assistant_reply["content"] = "🧠 正在思考中..."
+                    assistant_reply["content"] = "🧠 正在思考中...\n"
                     yield new_history, message, gr.update(), "", "", gr.update(interactive=False)
                     
                 elif chunk.get("type") == "text_chunk":
@@ -1408,7 +1427,6 @@ class EventHandlers:
                     chunk_content = chunk.get("content", "")
                     if chunk_content:  # 只有当chunk有内容时才处理
                         full_response += chunk_content  # 累加新的chunk
-                        print(f"[on_stream_chat] 收到chunk: '{chunk_content}', 累计长度: {len(full_response)}")
                         
                         # 直接追加新内容到助手回复中，而不是重新渲染整个内容
                         # 简单追加，避免复杂的高亮处理导致重新渲染

@@ -18,9 +18,19 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from database import story_manager, character_manager, schedule_manager, database_manager
-
 logger = logging.getLogger(__name__)
+
+# 尝试导入数据库管理器，如果失败则使用空的占位符
+try:
+    from database import story_manager, character_manager, schedule_manager, database_manager
+    DATABASE_AVAILABLE = True
+except Exception as e:
+    logger.warning(f"数据库组件导入失败，将禁用数据库功能: {e}")
+    story_manager = None
+    character_manager = None
+    schedule_manager = None
+    database_manager = None
+    DATABASE_AVAILABLE = False
 
 class DatabaseInterface:
     """数据库管理界面"""
@@ -1046,5 +1056,16 @@ class DatabaseInterface:
             return None
 
 
-# 全局数据库界面实例
-database_interface = DatabaseInterface() 
+# 全局数据库界面实例 - 延迟初始化
+database_interface = None
+
+def get_database_interface():
+    """获取数据库界面实例，延迟初始化"""
+    global database_interface
+    if database_interface is None:
+        if DATABASE_AVAILABLE:
+            database_interface = DatabaseInterface()
+        else:
+            # 创建一个空的占位符界面
+            database_interface = gr.Markdown("❌ 数据库功能不可用（数据库连接失败）")
+    return database_interface 

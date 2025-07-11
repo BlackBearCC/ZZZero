@@ -56,25 +56,62 @@ class ChromaDBManager:
             )
         )
         
-        # 嵌入函数选择
+        # 嵌入函数选择 - 延迟初始化，避免启动时阻塞
         self.embedding_functions = {
             'default': embedding_functions.DefaultEmbeddingFunction(),
-            'sentence_transformers': self._get_sentence_transformer_ef(),
-            'openai': self._get_openai_ef(),
-            'huggingface': self._get_huggingface_ef()
+            'sentence_transformers': None,  # 延迟加载
+            'openai': None,  # 延迟加载
+            'huggingface': None  # 延迟加载
         }
         
         self._collections_cache = {}
+        self._embedding_loading = False  # 标记是否正在加载嵌入模型
         logger.info(f"ChromaDB管理器初始化完成: {data_dir}")
     
-    def _get_sentence_transformer_ef(self):
-        """获取Sentence Transformer嵌入函数（使用BGE中文模型）"""
+    async def _get_sentence_transformer_ef_async(self):
+        """异步获取Sentence Transformer嵌入函数（使用BGE中文模型，优先本地缓存）"""
+        if self._embedding_loading:
+            # 如果正在加载，等待一下
+            await asyncio.sleep(0.1)
+            return self.embedding_functions.get('sentence_transformers')
+            
+        if self.embedding_functions['sentence_transformers'] is not None:
+            return self.embedding_functions['sentence_transformers']
+            
+        self._embedding_loading = True
+        try:
+            # 设置本地缓存目录，避免每次下载
+            cache_dir = os.path.expanduser("~/.cache/huggingface/transformers")
+            os.makedirs(cache_dir, exist_ok=True)
+            
+            logger.info("开始异步加载BGE嵌入模型...")
+            
+            # 在线程池中加载模型，避免阻塞主线程
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                ef = await asyncio.get_event_loop().run_in_executor(
+                    executor, 
+                    self._load_bge_model_sync
+                )
+            
+            self.embedding_functions['sentence_transformers'] = ef
+            logger.info("BGE嵌入模型加载完成")
+            return ef
+            
+        except Exception as e:
+            logger.warning(f"BGE Sentence Transformer加载失败: {e}")
+            return None
+        finally:
+            self._embedding_loading = False
+    
+    def _load_bge_model_sync(self):
+        """同步加载BGE模型（在线程池中运行）"""
         try:
             return embedding_functions.SentenceTransformerEmbeddingFunction(
                 model_name="BAAI/bge-small-zh-v1.5"
             )
         except Exception as e:
-            logger.warning(f"BGE Sentence Transformer不可用，尝试使用默认模型: {e}")
+            logger.warning(f"BGE模型加载失败，尝试使用默认模型: {e}")
             try:
                 # 回退到默认模型
                 return embedding_functions.SentenceTransformerEmbeddingFunction(
@@ -83,6 +120,14 @@ class ChromaDBManager:
             except Exception as e2:
                 logger.warning(f"默认Sentence Transformer也不可用: {e2}")
                 return None
+    
+    def _get_sentence_transformer_ef(self):
+        """获取Sentence Transformer嵌入函数（同步版本，用于兼容）"""
+        if self.embedding_functions['sentence_transformers'] is not None:
+            return self.embedding_functions['sentence_transformers']
+        
+        # 如果没有异步加载，返回默认函数
+        return self.embedding_functions['default']
     
     def _get_openai_ef(self):
         """获取OpenAI嵌入函数"""
@@ -436,6 +481,9 @@ class ChromaDBCRUDServer(StdioMCPServer):
         
         self.db = ChromaDBManager(data_dir)
         self._register_chromadb_tools()
+        
+        # 异步预加载BGE模型，不阻塞初始化
+        asyncio.create_task(self._preload_embeddings())
     
     def _register_chromadb_tools(self):
         """注册ChromaDB操作工具"""
@@ -646,6 +694,15 @@ class ChromaDBCRUDServer(StdioMCPServer):
             )
         )
         self.register_tool(create_embeddings_tool)
+    
+    async def _preload_embeddings(self):
+        """预加载BGE嵌入模型，不阻塞主线程"""
+        try:
+            logger.info("开始后台预加载BGE嵌入模型...")
+            await self.db._get_sentence_transformer_ef_async()
+            logger.info("BGE嵌入模型预加载完成")
+        except Exception as e:
+            logger.warning(f"BGE嵌入模型预加载失败: {e}")
     
     async def _call_tool(self, name: str, arguments: Dict[str, Any], context) -> Dict[str, Any]:
         """处理工具调用"""

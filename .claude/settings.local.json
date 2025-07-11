@@ -4,7 +4,22 @@
       "WebFetch(domain:langchain-ai.github.io)",
       "Bash(python:*)",
       "Bash(pip install:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(mkdir:*)",
+      "Bash(chmod:*)",
+      "Bash(docker:*)",
+      "Bash(pip3 install:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git config:*)",
+      "Bash(find:*)",
+      "Bash(ls:*)",
+      "Bash(./start_database.bat)",
+      "Bash(cmd:*)",
+      "Bash(./start_database.sh:*)",
+      "Bash(powershell.exe:*)",
+      "Bash(rm:*)",
+      "Bash(mv:*)"
     ],
     "deny": []
   }

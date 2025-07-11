@@ -187,27 +187,8 @@ class MCPToolManager:
             tool_key = f"role_info_{tool.name}"
             self.all_available_tools[tool_key] = tool
         
-        # 注册角色扮演数据生成服务器
-        roleplay_config = MCPServerConfig(
-            name="角色扮演数据生成服务器",
-            description="基于AI的角色扮演数据生成服务，支持365天年度日程生成，每天生成5阶段详细安排"
-        )
-        self.servers["roleplay"] = roleplay_config
-        
-        # 注册角色扮演数据生成工具
-        roleplay_tools = [
-            MCPTool("generate_annual_schedule", "生成指定天数的角色年度日程安排，支持1-999天。输出JSON和CSV汇总文件", "roleplay"),
-            MCPTool("get_time_phases", "获取5阶段时间规划信息", "roleplay"),
-            MCPTool("get_generation_history", "获取生成历史记录", "roleplay"),
-            MCPTool("clear_generation_history", "清空生成历史记录", "roleplay"),
-        ]
-        
-        for tool in roleplay_tools:
-            tool_key = f"roleplay_{tool.name}"
-            self.all_available_tools[tool_key] = tool
-        
         # 默认启用所有已注册的服务器
-        self.set_enabled_servers(["csv", "chromadb", "python", "role_info", "roleplay"])
+        self.set_enabled_servers(["csv", "chromadb", "python", "role_info"])
     
     async def initialize(self):
         """初始化工具管理器"""
@@ -290,14 +271,6 @@ class MCPToolManager:
                     logger.error(f"角色信息CRUD服务器启动失败: {e}")
                     return False
                     
-            elif server_id == "roleplay":
-                # 直接导入并实例化角色扮演数据生成服务器
-                try:
-                    from mcp_servers.roleplay_data_server import SimpleRolePlayDataServer
-                    server_instance = SimpleRolePlayDataServer()
-                except Exception as e:
-                    logger.error(f"角色扮演数据生成服务器启动失败: {e}")
-                    return False
             else:
                 logger.error(f"未知服务器类型: {server_id}")
                 return False
@@ -398,79 +371,6 @@ class MCPToolManager:
         """手动定义工具schema（备用方案）"""
         schemas = {}
         
-        if server_id == "roleplay":
-            schemas["roleplay_generate_annual_schedule"] = {
-                "type": "object",
-                "properties": {
-                    "max_days": {
-                        "type": "integer",
-                        "description": "生成的天数，默认3天（演示模式），可设置1-365天",
-                        "minimum": 1,
-                        "maximum": 365,
-                        "default": 3
-                    }
-                },
-                "required": []
-            }
-            
-            schemas["roleplay_get_generation_history"] = {
-                "type": "object",
-                "properties": {
-                    "limit": {
-                        "type": "integer",
-                        "description": "返回的历史记录数量限制，默认20",
-                        "default": 20,
-                        "minimum": 1,
-                        "maximum": 50
-                    }
-                }
-            }
-            
-            schemas["roleplay_search_role_knowledge"] = {
-                "type": "object",
-                "properties": {
-                    "keywords": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "搜索关键词列表，用于在知识库中查找相关信息",
-                        "minItems": 1
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "返回结果数量限制，默认5",
-                        "minimum": 1,
-                        "maximum": 20,
-                        "default": 5
-                    },
-                    "min_score": {
-                        "type": "number",
-                        "description": "最小相似度分数阈值（0-1），低于此分数的结果将被过滤",
-                        "minimum": 0.0,
-                        "maximum": 1.0,
-                        "default": 0.0
-                    }
-                },
-                "required": ["keywords"]
-            }
-            
-            schemas["roleplay_query_role_profile"] = {
-                "type": "object",
-                "properties": {
-                    "include_metadata": {
-                        "type": "boolean",
-                        "description": "是否包含元数据信息（创建时间、更新时间、标签等）",
-                        "default": False
-                    }
-                }
-            }
-            
-            # 无参数工具
-            for tool_name in ["roleplay_clear_generation_history", "roleplay_get_time_phases"]:
-                schemas[tool_name] = {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
         
         return schemas
     
@@ -644,9 +544,6 @@ class MCPToolManager:
         elif server_id == "role_info":
             # 角色信息CRUD服务器无额外依赖（除了可选的ChromaDB）
             return {"status": "ok", "message": "角色信息CRUD服务器可用"}
-        elif server_id == "roleplay":
-            # 角色扮演服务器无额外依赖
-            return {"status": "ok", "message": "角色扮演服务器可用"}
         else:
             return {"status": "unknown", "message": "未知服务器类型"}
 

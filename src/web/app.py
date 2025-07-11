@@ -64,7 +64,7 @@ class AgentApp:
             'max_iterations': 5,
             'simplified_output': True,  # 默认启用简化输出
             'available_tools': [],
-            'enabled_mcp_servers': ['csv', 'chromadb', 'python', 'role_info', 'roleplay'],
+            'enabled_mcp_servers': ['csv', 'chromadb', 'python', 'role_info'],
             'batch_enabled': False,
             'batch_csv_path': None,
             'batch_size': 20,
@@ -120,7 +120,7 @@ class AgentApp:
                 await self.llm.initialize()
             
             # 更新工具管理器的启用服务器（仅在工具管理器存在时）
-            enabled_servers = self.current_config.get('enabled_mcp_servers', ['csv', 'chromadb', 'python', 'role_info', 'roleplay'])  # 默认启用
+            enabled_servers = self.current_config.get('enabled_mcp_servers', ['csv', 'chromadb', 'python', 'role_info'])  # 默认启用
             if self.tool_manager:
                 self.tool_manager.set_enabled_servers(enabled_servers)
             
@@ -131,17 +131,12 @@ class AgentApp:
             memory_store = SQLiteMemoryStore("workspace/memory.db")
             session_id = str(uuid.uuid4())[:8]  # 生成短会话ID
             
-            # 创建或更新Agent（启用记忆功能）
+            # 创建标准ReactAgent
             self.agent = ReactAgent(
-                llm=self.llm,  # 传递LLM实例作为第一个参数
+                llm=self.llm,
                 tool_manager=self.tool_manager,
                 max_iterations=self.current_config.get('max_iterations', 10),
-                name="智能助手",
-                memory_enabled=True,  # 启用记忆功能
-                memory_store=memory_store,  # 传递记忆存储
-                short_term_limit=3000,  # 短期记忆限制
-                session_id=session_id,  # 会话ID
-                simplified_output=self.current_config.get('simplified_output', True)  # 传递简化输出配置
+                name="ReactAgent助手"
             )
             
             # 同时设置current_agent以兼容其他方法
@@ -204,8 +199,13 @@ class AgentApp:
                 
                 # Tab 5: 数据库管理
                 with gr.TabItem("📊 数据库管理", id="database_tab"):
-                    from web.components.database_interface import database_interface
-                    database_components = database_interface.create_interface()
+                    from web.components.database_interface import get_database_interface
+                    database_interface = get_database_interface()
+                    if hasattr(database_interface, 'create_interface'):
+                        database_components = database_interface.create_interface()
+                    else:
+                        # 数据库不可用，显示占位符
+                        database_components = gr.Markdown("❌ 数据库功能不可用（数据库连接失败）")
             
             # === 事件绑定 ===
             self._bind_events(config_components, chat_components, story_components, queue_components, app)
@@ -225,7 +225,6 @@ class AgentApp:
             config_components.get('agent_type'), 
             config_components.get('max_iterations'), 
             config_components.get('simplified_output'),  # 添加简化输出选项
-            config_components.get('available_tools'), 
             config_components.get('enabled_mcp_servers')
         ]:
             if component:
@@ -238,7 +237,6 @@ class AgentApp:
                         config_components.get('agent_type'), 
                         config_components.get('max_iterations'), 
                         config_components.get('simplified_output'),  # 添加简化输出选项
-                        config_components.get('available_tools'), 
                         config_components.get('enabled_mcp_servers')
                     ],
                     outputs=[]
@@ -585,7 +583,7 @@ class AgentApp:
                 label = f"{info['name']} ({server_id})"
                 choices.append((label, server_id))
                 # 默认勾选已启用的服务器，或者如果是注册的服务器就默认启用
-                if info.get('enabled', False) or server_id in ['csv', 'chromadb', 'python', 'role_info', 'roleplay']:
+                if info.get('enabled', False) or server_id in ['csv', 'chromadb', 'python', 'role_info']:
                     default_enabled.append(server_id)
             
             # 演示消息
@@ -693,7 +691,7 @@ class AgentApp:
                 label = f"{info['name']} ({server_id})"
                 choices.append((label, server_id))
                 # 默认勾选已启用的服务器
-                if info.get('enabled', False) or server_id in ['csv', 'chromadb', 'python', 'role_info', 'roleplay']:
+                if info.get('enabled', False) or server_id in ['csv', 'chromadb', 'python', 'role_info']:
                     default_enabled.append(server_id)
             
             return status_html, gr.update(choices=choices, value=default_enabled)

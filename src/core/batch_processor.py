@@ -406,26 +406,9 @@ class ReactAgentTaskExecutor:
         return f"模拟处理结果: 基于 '{task_prompt}' 对数据 {row_data} 的处理完成"
     
     async def _handle_schedule_task(self, task_prompt: str, row_data: Dict[str, Any]) -> str:
-        """处理日程生成任务"""
-        try:
-            # 确保MCP工具管理器已初始化
-            if not hasattr(self.mcp_tool_manager, 'enabled_tools'):
-                await self.mcp_tool_manager.initialize()
-            
-            # 调用角色扮演服务生成日程
-            result = await self.mcp_tool_manager.call_tool(
-                "roleplay_generate_schedule_plan",
-                {"description": task_prompt}
-            )
-            
-            if result.success:
-                content = result.result.get('content', '') if isinstance(result.result, dict) else str(result.result)
-                return f"✅ 日程生成成功:\n{content}"
-            else:
-                return f"❌ 日程生成失败: {result.error}"
-                
-        except Exception as e:
-            return f"❌ 日程生成异常: {str(e)}"
+        """处理日程生成任务（已改为通用任务处理）"""
+        # 角色扮演服务器已移除，使用通用任务处理
+        return await self._handle_general_task(task_prompt, row_data)
     
     async def _handle_general_task(self, task_prompt: str, row_data: Dict[str, Any]) -> str:
         """处理通用任务"""

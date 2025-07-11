@@ -82,6 +82,56 @@ class NodeResult:
         return self.execution_state == ExecutionState.FAILED
 
 
+class NodeInfoStream:
+    """节点信息流系统 - 全局单例模式"""
+    _instance = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance.events = []
+            cls._instance.callbacks = []
+        return cls._instance
+    
+    def emit(self, event_type: str, node_name: str, content: str, metadata: Dict[str, Any] = None):
+        """发射事件到信息流"""
+        event = {
+            "type": event_type,
+            "node_name": node_name,
+            "content": content,
+            "metadata": metadata or {},
+            "timestamp": datetime.now().isoformat()
+        }
+        self.events.append(event)
+        
+        # 通知所有回调（异步处理）
+        for callback in self.callbacks:
+            try:
+                if asyncio.iscoroutinefunction(callback):
+                    asyncio.create_task(callback(event))
+                else:
+                    callback(event)
+            except Exception as e:
+                print(f"[信息流错误] 回调处理失败: {e}")
+    
+    def add_callback(self, callback):
+        """添加事件回调"""
+        self.callbacks.append(callback)
+        
+    def remove_callback(self, callback):
+        """移除事件回调"""
+        if callback in self.callbacks:
+            self.callbacks.remove(callback)
+        
+    def get_events(self) -> List[Dict[str, Any]]:
+        """获取所有事件"""
+        return self.events.copy()
+        
+    def clear_events(self):
+        """清空事件历史"""
+        self.events.clear()
+
+
 class BaseNode(ABC):
     """节点基类 - 集成常用功能的智能节点
     
@@ -91,6 +141,7 @@ class BaseNode(ABC):
     3. 提示构建 (node.build_prompt)
     4. 向量搜索 (node.vector_search)
     5. 状态管理 (基于LangGraph设计)
+    6. 信息流输出 (node.emit_info)
     """
     
     def __init__(self, 
@@ -111,6 +162,13 @@ class BaseNode(ABC):
         self._vector_client = None
         self._parsers = {}
         self._prompt_templates = {}
+        
+        # 信息流系统
+        self.info_stream = NodeInfoStream()
+        
+    def emit_info(self, event_type: str, content: str, metadata: Dict[str, Any] = None):
+        """发射节点信息到信息流"""
+        self.info_stream.emit(event_type, self.name, content, metadata)
         
     @abstractmethod
     async def execute(self, state: Dict[str, Any]) -> Union[Dict[str, Any], Command]:
