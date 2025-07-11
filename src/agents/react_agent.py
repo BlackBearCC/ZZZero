@@ -45,6 +45,7 @@ class ReactLoop:
         self.observations = []
         self.is_complete = False
         self.final_answer = ""
+        self.empty_thought_count = 0  # 追踪空思考次数
         
     def add_thought(self, thought: str) -> None:
         """添加思考过程"""
@@ -150,79 +151,79 @@ class ReactAgent(BaseAgent):
         
     def _build_react_prompt(self, query: str, available_tools: List[str], 
                            context_history: str = "") -> str:
-        """构建标准React提示词 - 强制所有回复从Thought开始"""
+        """构建标准React提示词"""
         tools_description = ""
         if self.tool_manager and available_tools:
             tools_description = self.tool_manager.get_tools_description()
         
-        prompt = f"""你是一个专业的AI助手，严格使用ReAct (Reasoning and Acting) 方法解决问题。
-
-【重要规则】无论什么问题，你都必须先思考，然后再行动或回答。严禁直接给出答案。
+        prompt = f"""你是一个使用ReAct方法的AI助手，需要通过思考-行动-观察的循环来解决问题。
 
 你可以使用以下工具：
 {tools_description if tools_description else "无可用工具"}
 
-严格按照以下格式思考和行动：
+严格按照以下格式进行推理，每个部分都必须有具体内容：
 
-Thought: [必须先思考！分析问题，制定解决方案，决定下一步行动]
-Action: [如需使用工具，格式为 tool_name(param1=value1, param2=value2)]
-Observation: [工具执行结果，系统自动填充]
+示例1 - 简单问题：
+Thought: 用户问的是"你好"，这是一个简单的问候，我可以直接回应。
+Final Answer: 你好！我是AI助手，很高兴为您服务。有什么我可以帮助您的吗？
 
-继续这个 Thought->Action->Observation 循环，直到获得足够信息。
+示例2 - 复杂问题：
+Thought: 用户询问天气信息，我需要使用天气查询工具来获取准确信息。
+Action: get_weather(city="北京")
+Observation: [系统返回天气数据]
+Thought: 根据获取的天气数据，我现在可以给出完整的天气信息。
+Final Answer: 根据最新数据，北京今天...
 
-如果不需要工具也要先思考：
-Thought: [分析问题，基于已有知识进行推理]
-Final Answer: [基于思考给出的最终答案]
-
-【再次强调】任何回复都必须以 "Thought:" 开头，这是不可违背的规则！
+关键要求：
+1. Thought后面必须写具体的思考内容，不能为空
+2. 要么给出Final Answer，要么执行Action
+3. 如果执行Action，必须等待Observation再继续
+4. 每次Thought都要有实质性的分析内容
 
 当前任务: {query}
 
 {context_history}
 
-现在开始，记住必须从Thought开始："""
+现在开始，请写出具体的思考内容："""
         return prompt
         
     def _parse_react_response(self, response: str) -> Dict[str, Any]:
-        """解析React格式的响应 - 严格验证必须从Thought开始"""
+        """解析React格式的响应 - 智能解析，容错性强"""
         lines = response.strip().split('\n')
         current_thought = ""
         current_action = None
         final_answer = ""
         
-        # 检查是否从Thought开始
-        first_meaningful_line = None
-        for line in lines:
-            line = line.strip()
-            if line:
-                first_meaningful_line = line
-                break
-        
-        # 如果不是从Thought开始，强制返回错误
-        if first_meaningful_line and not first_meaningful_line.startswith("Thought:"):
-            return {
-                "thought": "",
-                "action": None,
-                "final_answer": "",
-                "has_final_answer": False,
-                "error": f"错误：必须从Thought开始，但检测到：{first_meaningful_line}"
-            }
+        # 查找第一个有意义的Thought行
+        thought_found = False
         
         for line in lines:
             line = line.strip()
+            if not line:
+                continue
+                
             if line.startswith("Thought:"):
                 current_thought = line[8:].strip()
+                thought_found = True
             elif line.startswith("Action:"):
                 action_text = line[7:].strip()
                 current_action = self._parse_action(action_text)
             elif line.startswith("Final Answer:"):
                 final_answer = line[13:].strip()
+            elif not thought_found and not line.startswith(("Action:", "Observation:", "Final Answer:")):
+                # 如果还没找到Thought行，且这行不是其他关键字，可能是隐含的思考内容
+                current_thought = line
+                thought_found = True
                 
+        # 检查是否有空的思考
+        has_empty_thought = thought_found and not current_thought.strip()
+        
         return {
             "thought": current_thought,
             "action": current_action,
             "final_answer": final_answer,
-            "has_final_answer": bool(final_answer)
+            "has_final_answer": bool(final_answer),
+            "has_empty_thought": has_empty_thought
         }
         
     def _parse_action(self, action_text: str) -> Optional[Dict[str, Any]]:
@@ -317,14 +318,21 @@ Final Answer: [基于思考给出的最终答案]
                 # 解析响应
                 parsed = self._parse_react_response(response_text)
                 
-                # 检查是否有错误（不是从Thought开始）
-                if "error" in parsed:
-                    error_msg = parsed["error"]
-                    self.info_stream.emit("error", "react_agent", error_msg)
+                # 检查是否有空思考
+                if parsed.get("has_empty_thought", False):
+                    react_loop.empty_thought_count += 1
+                    self.info_stream.emit("error", "react_agent", f"检测到空思考（第{react_loop.empty_thought_count}次），重新引导")
                     
-                    # 重新生成，强制要求从Thought开始
-                    correction_prompt = "请重新回答，必须以'Thought:'开头："
-                    messages.append(Message(role=MessageRole.USER, content=correction_prompt))
+                    # 如果空思考次数过多，直接结束
+                    if react_loop.empty_thought_count >= 3:
+                        final_answer = f"抱歉，我在思考您的问题时遇到了困难。您的问题是：{query}。请尝试重新描述问题或提供更多上下文信息。"
+                        react_loop.complete(final_answer)
+                        result.result = final_answer
+                        result.success = True
+                        break
+                    
+                    guidance = f"请重新回答，在'Thought:'后面必须写出具体的思考内容。例如：\nThought: 我需要分析用户的问题：{query}。这个问题需要..."
+                    messages.append(Message(role=MessageRole.USER, content=guidance))
                     react_loop.next_iteration()
                     continue
                 
@@ -356,15 +364,34 @@ Final Answer: [基于思考给出的最终答案]
                     messages.append(Message(role=MessageRole.ASSISTANT, content=response_text))
                     messages.append(Message(role=MessageRole.USER, content=f"Observation: {observation}"))
                 else:
-                    # 没有动作，可能需要更多思考
-                    if not parsed["thought"]:
-                        break
+                    # 没有动作但有思考，继续下一轮
+                    if parsed["thought"]:
+                        messages.append(Message(role=MessageRole.ASSISTANT, content=response_text))
+                    else:
+                        # 既没有动作也没有思考，可能需要引导
+                        guidance = "请继续思考问题并确定下一步行动，或者给出最终答案。"
+                        messages.append(Message(role=MessageRole.ASSISTANT, content=response_text))
+                        messages.append(Message(role=MessageRole.USER, content=guidance))
                         
                 react_loop.next_iteration()
                 
-            # 如果循环结束但没有最终答案
+            # 如果循环结束但没有最终答案，尝试生成总结
             if not react_loop.is_complete:
-                final_answer = "基于以上分析，我无法得出确定的结论。请提供更多信息或重新描述问题。"
+                if react_loop.thoughts:
+                    # 基于已有思考生成总结
+                    summary_prompt = "根据以上的思考过程，请提供一个总结性的答案。如果无法得出确定结论，请说明原因并建议下一步行动。"
+                    messages.append(Message(role=MessageRole.USER, content=summary_prompt))
+                    
+                    try:
+                        summary_response = await self.llm.generate(messages, system_prompt="请基于之前的思考过程提供一个清晰的总结答案。")
+                        summary_text = summary_response.content if hasattr(summary_response, 'content') else str(summary_response)
+                        final_answer = summary_text.strip()
+                    except Exception as e:
+                        final_answer = f"思考过程中遇到问题: {str(e)}。建议重新描述问题或提供更多信息。"
+                else:
+                    # 没有任何思考过程
+                    final_answer = "未能开始有效的思考过程。请检查问题描述或提供更明确的指导。"
+                    
                 react_loop.complete(final_answer)
                 result.result = final_answer
                 result.success = True
@@ -460,6 +487,29 @@ Final Answer: [基于思考给出的最终答案]
                 
                 # 解析响应
                 parsed = self._parse_react_response(thought_content)
+                
+                # 检查是否有空思考
+                if parsed.get("has_empty_thought", False):
+                    react_loop.empty_thought_count += 1
+                    yield {
+                        "type": "text_chunk",
+                        "content": f"\n❌ 检测到空思考（第{react_loop.empty_thought_count}次）",
+                        "task_id": task_id
+                    }
+                    
+                    # 如果空思考次数过多，直接结束
+                    if react_loop.empty_thought_count >= 3:
+                        final_answer = f"抱歉，我在思考您的问题时遇到了困难。请尝试重新描述问题或提供更多上下文信息。"
+                        yield {
+                            "type": "text_chunk",
+                            "content": f"\n\n**Final Answer**: {final_answer}",
+                            "task_id": task_id
+                        }
+                        react_loop.complete(final_answer)
+                        break
+                    
+                    react_loop.next_iteration()
+                    continue
                 
                 if parsed["has_final_answer"]:
                     # 得到最终答案
