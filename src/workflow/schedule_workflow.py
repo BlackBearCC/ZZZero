@@ -706,11 +706,6 @@ class CyclePlanningNode(BaseNode):
 
 6. **节假日体验**：在节假日中的个人安排和文化体验
 
-## 周期发展阶段
-1. **开始期**：日常节奏、基础社交
-2. **发展期**：工作深入、剧情展开、关系深化
-3. **收获期**：周期成果，收回故事
-
 ## 每个周期规划内容
 为每个周期制定：
 - **周期主题**：这个周期的核心主题和重点
@@ -721,8 +716,6 @@ class CyclePlanningNode(BaseNode):
 - **关键事件**：预计会发生的重要事件
 - **情感基调**：整个周期的情感发展方向
 - **衔接要点**：与前后周期的连接点
-
-
 
 # 输出格式
 请按以下JSON格式输出周期规划，禁止输出任何其他内容：
@@ -907,25 +900,97 @@ class CyclePlanningNode(BaseNode):
 
     
     def _extract_json_from_content(self, content: str) -> str:
-        """从生成内容中提取JSON部分"""
+        """从生成内容中提取JSON部分 - 增强版JSON提取"""
         import re
+        import json
         
-        # 查找```json...```代码块
+        logger.info(f"🔍 开始提取JSON，原始内容长度: {len(content)}")
+        
+        # 方法1: 优先查找```json...```代码块
         json_pattern = r'```json\s*(.*?)\s*```'
         matches = re.findall(json_pattern, content, re.DOTALL | re.IGNORECASE)
         
-        if matches:
-            return matches[0].strip()
+        for match in matches:
+            extracted_json = match.strip()
+            if self._is_valid_json(extracted_json):
+                logger.info(f"✅ 从```json```代码块提取有效JSON，长度: {len(extracted_json)}")
+                return extracted_json
         
-        # 如果没有代码块，尝试查找以{开头}结尾的内容
-        json_pattern2 = r'\{.*\}'
-        matches2 = re.findall(json_pattern2, content, re.DOTALL)
+        # 方法2: 查找```...```代码块（不一定标注json）
+        code_pattern = r'```[a-zA-Z]*\s*(.*?)\s*```'
+        code_matches = re.findall(code_pattern, content, re.DOTALL | re.IGNORECASE)
         
-        if matches2:
-            return matches2[0].strip()
+        for match in code_matches:
+            extracted = match.strip()
+            if extracted.startswith('{') and self._is_valid_json(extracted):
+                logger.info(f"✅ 从代码块提取有效JSON，长度: {len(extracted)}")
+                return extracted
         
-        # 如果都没找到，返回原内容
+        # 方法3: 使用括号匹配计数提取完整JSON
+        def extract_complete_json(text):
+            start_pos = text.find('{')
+            if start_pos == -1:
+                return None
+            
+            brace_count = 0
+            in_string = False
+            escape_next = False
+            
+            for i, char in enumerate(text[start_pos:], start_pos):
+                if escape_next:
+                    escape_next = False
+                    continue
+                    
+                if char == '\\' and in_string:
+                    escape_next = True
+                    continue
+                    
+                if char == '"' and not escape_next:
+                    in_string = not in_string
+                    continue
+                    
+                if not in_string:
+                    if char == '{':
+                        brace_count += 1
+                    elif char == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            return text[start_pos:i+1]
+            
+            return None
+        
+        complete_json = extract_complete_json(content)
+        if complete_json and self._is_valid_json(complete_json):
+            logger.info(f"✅ 使用括号匹配提取有效JSON，长度: {len(complete_json)}")
+            return complete_json.strip()
+        
+        # 方法4: 多重正则匹配后验证
+        json_patterns = [
+            r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}',  # 简单嵌套
+            r'\{.*?\}',  # 贪婪匹配
+            r'\{.*\}'    # 最贪婪匹配
+        ]
+        
+        for pattern in json_patterns:
+            matches = re.findall(pattern, content, re.DOTALL)
+            if matches:
+                # 按长度排序，优先尝试最长的匹配
+                sorted_matches = sorted(matches, key=len, reverse=True)
+                for match in sorted_matches:
+                    if self._is_valid_json(match):
+                        logger.info(f"✅ 正则模式匹配到有效JSON，长度: {len(match)}")
+                        return match.strip()
+        
+        logger.warning("❌ 所有方法都未能提取有效JSON，返回原内容")
         return content.strip()
+    
+    def _is_valid_json(self, json_str: str) -> bool:
+        """验证JSON字符串是否有效"""
+        try:
+            json.loads(json_str)
+            return True
+        except (json.JSONDecodeError, ValueError):
+            return False
 
 
 class ScheduleGenerateNode(BaseNode):
@@ -1335,15 +1400,14 @@ class ScheduleGenerateNode(BaseNode):
    - involved_characters：每个时间段都要明确列出涉及的角色名称列表
    - batch_summary：必须包含这{batch_days_count}天的阶段性总结
 
-3. **故事质量要求**：
-   - 每个时间段的story_content必须丰富详实，像小说片段一样生动
-   - 各时间段的故事必须是独立完整的，能够被单独提取和理解
-   - 角色对话要符合各自的性格特点，有真实感
-   - 增加随机事件：意外发现、巧遇等云枢市生活细节
-   - 情节要有起伏，包含工作压力、小确幸、意外惊喜等真实元素
+   3. **日程内容要求**：
+   - 每个时间段的schedule_content必须简洁明确，重点记录实际活动
+   - 各时间段内容独立完整，明确记录时间地点人员活动目的
+   - 内容真实具体，避免虚构情节和不必要的描述
+   - 可包含日常生活的真实元素：工作安排、社交活动、生活琐事、工作压力、小确幸、意外惊喜等真实元素
    - 禁止有任何男女恋爱元素
-   - 严禁涉及天文、星空、宇宙等主题，主角是普通人，过普通的都市生活
-   - 重点体现云枢市的生活气息：美食、购物、娱乐、社交、文化等
+   - 严禁涉及天文、星空、宇宙等主题，重点体现普通都市生活
+   - 体现云枢市的生活节奏：工作、用餐、社交、休闲、节日活动等日常安排
 
 4. **角色处理要求**：
    - 重点角色要多安排，体现周期主题
@@ -1355,6 +1419,7 @@ class ScheduleGenerateNode(BaseNode):
    - 确保JSON格式完全正确，可以被程序解析
    - 每个字段都要填写完整，不能为空
    - 关注batch_summary字段，它是本批次的重要总结
+   - 输出的内容中禁止包含""和\，人物对话直接用:衔接即可
 
 禁止输入任何其他内容。
 
@@ -1388,31 +1453,31 @@ class ScheduleGenerateNode(BaseNode):
         {{
           "slot_name": "夜间",
           "location": "具体地点",
-          "story_content": "详细的第三人称故事描述，方知衡为主体，像小说片段一样生动，环境，事件，剧情描述为主，少量对话，200-300字。内容必须独立完整，描述清楚前因后果，即使单独阅读也能理解。",
+          "schedule_content": "具体的日程安排记录：时间+具体地点+参与人员+具体活动+目的，涉及的实体的细节。简洁明确，80-200字。",
           "involved_characters": ["角色名1", "角色名2"]
         }},
         {{
           "slot_name": "上午",
           "location": "具体地点",
-          "story_content": "详细的第三人称故事描述，方知衡为主体，像小说片段一样生动，环境，事件，剧情描述为主，少量对话，200-300字。内容必须独立完整，描述清楚前因后果，即使单独阅读也能理解。",
+          "schedule_content": "具体的日程安排记录：早晨需要符合主角饮食习惯的饮食细节，时间+具体地点+参与人员+具体活动+目的，涉及的实体的细节。简洁明确，80-200字。",
           "involved_characters": ["角色名1", "角色名2"]
         }},
         {{
           "slot_name": "中午",
           "location": "具体地点",
-          "story_content": "详细的第三人称故事描述，方知衡为主体，像小说片段一样生动，环境，事件，剧情描述为主，少量对话，200-300字。内容必须独立完整，描述清楚前因后果，即使单独阅读也能理解。",
+          "schedule_content": "具体的日程安排记录：符合主角饮食习惯的饮食细节，时间+具体地点+参与人员+具体活动+目的，涉及的实体的细节。简洁明确，80-200字。",
           "involved_characters": ["角色名1", "小动物名等"]
         }},
         {{
           "slot_name": "下午",
           "location": "具体地点",
-          "story_content": "详细的第三人称故事描述，方知衡为主体，像小说片段一样生动，环境，事件，剧情描述为主，少量对话，200-300字。内容必须独立完整，描述清楚前因后果，即使单独阅读也能理解。",
+          "schedule_content": "具体的日程安排记录：时间+具体地点+参与人员+具体活动+目的，涉及的实体的细节。简洁明确，80-200字。",
           "involved_characters": ["角色名1", "角色名2"]
         }},
         {{
           "slot_name": "晚上",
           "location": "具体地点",
-          "story_content": "详细的第三人称故事描述，方知衡为主体，像小说片段一样生动，环境，事件，剧情描述为主，少量对话，200-300字。内容必须独立完整，描述清楚前因后果，即使单独阅读也能理解。",
+          "schedule_content": "具体的日程安排记录：符合主角饮食习惯的饮食细节，时间+具体地点+参与人员+具体活动+目的，涉及的实体的细节。简洁明确，80-200字。",
           "involved_characters": ["角色名1", "角色名2"]
         }}
       ],
@@ -1421,7 +1486,7 @@ class ScheduleGenerateNode(BaseNode):
     }},
     // ... 其他日期
   ],
-  "batch_summary": "批次总结：这{batch_days_count}天的重要发展和变化，第三人称以主角为主体，200-300字，重点关注：1. 周期目标的推进情况 2. 重点角色关系的发展 3. 关键事件的进展 4. 情感状态的变化 5. 为下个批次的铺垫",
+  "batch_summary": "这{batch_days_count}天的重要发展总结，包含目标推进和关系变化，150-200字",
 }}
 ```
 """
@@ -2098,10 +2163,10 @@ class ScheduleGenerateNode(BaseNode):
 1. 周期主题的体现和目标达成情况
 2. 重点角色关系的发展变化
 3. 主要活动和重要事件
-4. 方知衡的成长和变化
+4. 方知衡的饮食细节
 5. 为下个周期的铺垫
 
-要求：简洁明了，突出重点，300字以内。
+要求：简洁明了，突出重点，400字以内。
 """
             
             # 调用LLM生成总结（豆包自带打印）
@@ -2128,6 +2193,8 @@ class ScheduleGenerateNode(BaseNode):
     def _extract_json_from_content(self, content: str) -> str:
         """从生成内容中提取JSON部分 - 修复完整JSON提取"""
         import re
+        import json
+
         
         logger.info(f"🔍 开始提取JSON，原始内容长度: {len(content)}")
         
@@ -2135,16 +2202,23 @@ class ScheduleGenerateNode(BaseNode):
         json_pattern = r'```json\s*(.*?)\s*```'
         matches = re.findall(json_pattern, content, re.DOTALL | re.IGNORECASE)
         
-        if matches:
-            extracted_json = matches[0].strip()
-            logger.info(f"✅ 从```json```代码块提取JSON，长度: {len(extracted_json)}")
-            # 🔍 调试：打印提取的JSON的开头和结尾
-            logger.info(f"📝 提取的JSON开头200字符: {extracted_json[:200]}...")
-            logger.info(f"📝 提取的JSON结尾200字符: ...{extracted_json[-200:]}")
-            return extracted_json
+        for match in matches:
+            extracted_json = match.strip()
+            if self._is_valid_json(extracted_json):
+                logger.info(f"✅ 从```json```代码块提取有效JSON，长度: {len(extracted_json)}")
+                return extracted_json
+
+        # 方法2: 查找```...```代码块（不一定标注json）
+        code_pattern = r'```[a-zA-Z]*\s*(.*?)\s*```'
+        code_matches = re.findall(code_pattern, content, re.DOTALL | re.IGNORECASE)
         
-        # 如果没有代码块，使用改进的JSON匹配
-        # 查找完整的JSON对象，使用括号匹配计数
+        for match in code_matches:
+            extracted = match.strip()
+            if extracted.startswith('{') and self._is_valid_json(extracted):
+                logger.info(f"✅ 从代码块提取有效JSON，长度: {len(extracted)}")
+                return extracted
+        
+        # 方法3: 使用括号匹配计数提取完整JSON
         def extract_complete_json(text):
             start_pos = text.find('{')
             if start_pos == -1:
@@ -2178,23 +2252,34 @@ class ScheduleGenerateNode(BaseNode):
             return None
         
         complete_json = extract_complete_json(content)
-        if complete_json:
-            logger.info(f"✅ 使用括号匹配提取完整JSON，长度: {len(complete_json)}")
-            return complete_json.strip()
+        if complete_json and self._is_valid_json(complete_json):
+            logger.info(f"✅ 使用括号匹配提取有效JSON，长度: {len(complete_json)}")
+            return complete_json.strip()       
+        # 方法4: 多重正则匹配后验证
+        json_patterns = [
+            r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}',  # 简单嵌套
+            r'\{.*?\}',  # 贪婪匹配
+            r'\{.*\}'    # 最贪婪匹配
+        ]
         
-        # 最后尝试简单的{}匹配（作为后备）
-        json_pattern2 = r'\{.*\}'
-        matches2 = re.findall(json_pattern2, content, re.DOTALL)
-        
-        if matches2:
-            # 选择最长的匹配（通常是完整的JSON）
-            longest_match = max(matches2, key=len)
-            logger.info(f"⚠️ 使用简单正则匹配JSON，长度: {len(longest_match)}")
-            return longest_match.strip()
-        
-        logger.warning("❌ 未能提取JSON，返回原内容")
-        return content.strip()
+        for pattern in json_patterns:
+            matches = re.findall(pattern, content, re.DOTALL)
+            if matches:
+                # 按长度排序，优先尝试最长的匹配
+                sorted_matches = sorted(matches, key=len, reverse=True)
+                for match in sorted_matches:
+                    if self._is_valid_json(match):
+                        logger.info(f"✅ 正则模式匹配到有效JSON，长度: {len(match)}")
+                        return match.strip()
+        logger.warning("❌ 所有方法都未能提取有效JSON，返回原内容")
 
+    def _is_valid_json(self, json_str: str) -> bool:
+        """验证JSON字符串是否有效"""
+        try:
+            json.loads(json_str)
+            return True
+        except (json.JSONDecodeError, ValueError):
+            return False
 # 数据库保存节点已删除，改为在batch_schedule_generator.py中直接保存CSV
 
 
@@ -2211,9 +2296,9 @@ async def main():
     
     # 命令行参数
     parser = argparse.ArgumentParser(description='日程生成工作流 - 本地批量执行')
-    parser.add_argument('--start-date', default='2025-07-03', help='开始日期 (YYYY-MM-DD)')
+    parser.add_argument('--start-date', default='2025-07-14', help='开始日期 (YYYY-MM-DD)')
     parser.add_argument('--mega-batches', type=int, default=1, help='大批次数量')
-    parser.add_argument('--days-per-batch', type=int, default=6, help='每大批次天数')
+    parser.add_argument('--days-per-batch', type=int, default=9, help='每大批次天数')
     
     args = parser.parse_args()
     
