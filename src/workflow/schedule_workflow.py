@@ -1747,7 +1747,7 @@ class ScheduleGenerateNode(BaseNode):
                     for slot in time_slots:
                         slot_name = slot.get('slot_name', '')
                         if slot_name in time_slots_data:
-                            time_slots_data[slot_name] = slot.get('story_content', '')
+                            time_slots_data[slot_name] = slot.get('schedule_content', '')
                     
                     # 批次总结：只在第一天显示批次总结，其他天为空
                     day_batch_summary = ""
@@ -1918,7 +1918,7 @@ class ScheduleGenerateNode(BaseNode):
                     for slot in time_slots:
                         slot_name = slot.get('slot_name', '')
                         if slot_name in time_slots_data:
-                            time_slots_data[slot_name] = slot.get('story_content', '')
+                            time_slots_data[slot_name] = slot.get('schedule_content', '')
                     
                     # 批次总结：只在周期的第一天显示周期总结，其他天为空
                     day_cycle_summary = ""
@@ -2297,7 +2297,7 @@ async def main():
     # 命令行参数
     parser = argparse.ArgumentParser(description='日程生成工作流 - 本地批量执行')
     parser.add_argument('--start-date', default='2025-07-14', help='开始日期 (YYYY-MM-DD)')
-    parser.add_argument('--mega-batches', type=int, default=1, help='大批次数量')
+    parser.add_argument('--mega-batches', type=int, default=2, help='大批次数量')
     parser.add_argument('--days-per-batch', type=int, default=9, help='每大批次天数')
     
     args = parser.parse_args()

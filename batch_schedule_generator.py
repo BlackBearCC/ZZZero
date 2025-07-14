@@ -656,7 +656,7 @@ class BatchScheduleGenerator:
                     for slot in time_slots:
                         slot_name = slot.get('slot_name', '')
                         if slot_name in time_slots_data:
-                            time_slots_data[slot_name] = slot.get('story_content', '')
+                            time_slots_data[slot_name] = slot.get('schedule_content', '')
                     
                     # 3天总结：只在每3天的第一天显示LLM生成的batch_summary，其他天为空
                     day_batch_summary = ""
