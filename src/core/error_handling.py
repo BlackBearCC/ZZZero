@@ -245,6 +245,8 @@ class ErrorHandler:
                                 *args, **kwargs) -> Any:
         """带重试的执行函数"""
         
+        print(f"[ErrorHandler] 开始执行节点: {node_name}")
+        
         retry_policy = self.retry_policies.get(node_name, self.default_retry_policy)
         circuit_breaker = self.circuit_breakers.get(node_name)
         
@@ -252,17 +254,25 @@ class ErrorHandler:
         
         for attempt in range(retry_policy.max_retries + 1):
             try:
+                print(f"[ErrorHandler] 节点 {node_name} 尝试第 {attempt + 1} 次执行")
+                
                 # 使用断路器（如果存在）
                 if circuit_breaker:
-                    return await circuit_breaker.call(func, *args, **kwargs)
+                    result = await circuit_breaker.call(func, state, *args, **kwargs)
                 else:
                     if asyncio.iscoroutinefunction(func):
-                        return await func(*args, **kwargs)
+                        result = await func(state, *args, **kwargs)
                     else:
-                        return func(*args, **kwargs)
+                        result = func(state, *args, **kwargs)
+                
+                print(f"[ErrorHandler] 节点 {node_name} 执行成功")
+                return result
                         
             except Exception as error:
                 last_error = error
+                print(f"[ErrorHandler] 节点 {node_name} 第 {attempt + 1} 次尝试失败: {error}")
+                import traceback
+                traceback.print_exc()
                 
                 # 处理错误
                 action = await self.handle_error(
@@ -271,6 +281,8 @@ class ErrorHandler:
                     attempt=attempt,
                     state=state
                 )
+                
+                print(f"[ErrorHandler] 错误处理决策: {action}")
                 
                 if action == ErrorAction.RETRY:
                     continue
@@ -287,6 +299,7 @@ class ErrorHandler:
                     raise error
         
         # 所有重试都失败
+        print(f"[ErrorHandler] 节点 {node_name} 所有重试都失败，最后错误: {last_error}")
         if last_error:
             raise last_error
     

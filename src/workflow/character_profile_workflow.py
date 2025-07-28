@@ -15,13 +15,27 @@ import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from core.graph import StateGraph
+# 加载环境变量
+from dotenv import load_dotenv
+load_dotenv()
+
+from core.graph import StateGraph, CompiledStateGraph
 from core.base import BaseNode
 from llm.base import LLMFactory
-from core.types import LLMConfig, TaskResult, Message, MessageRole
+from core.types import LLMConfig, TaskResult, Message, MessageRole, NodeType
 from tools.knowledge_base_manager import GlobalKnowledgeBase
 from tools.mcp_tools import MCPToolManager
 
+# 配置日志 - 强制输出到标准输出
+import sys
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),  # 强制使用标准输出
+    ],
+    force=True  # 强制重新配置日志
+)
 logger = logging.getLogger(__name__)
 
 class CharacterProfileGeneratorNode(BaseNode):
@@ -31,7 +45,8 @@ class CharacterProfileGeneratorNode(BaseNode):
                  name: str = "character_profile_generator",
                  llm_config: Optional[LLMConfig] = None,
                  knowledge_base: Optional[GlobalKnowledgeBase] = None):
-        super().__init__(name, llm_config)
+        super().__init__(name=name, node_type=NodeType.CUSTOM, stream=True)
+        self.llm_config = llm_config
         self.knowledge_base = knowledge_base
         self.profile_template = {}
         self._load_profile_template()
@@ -64,60 +79,152 @@ class CharacterProfileGeneratorNode(BaseNode):
             logger.error(f"加载人物资料模板失败: {e}")
     
     async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """执行角色资料生成"""
+        """执行角色资料生成 - 非流式版本"""
+        final_result = None
+        async for result in self.execute_stream(state):
+            final_result = result
+        return final_result or {"success": False, "error": "执行失败"}
+    
+    async def execute_stream(self, state: Dict[str, Any]):
+        """流式执行角色资料生成"""
         try:
+            print(f"[CharacterProfileGeneratorNode] ===== 开始执行 execute_stream =====")
+            print(f"[CharacterProfileGeneratorNode] 输入状态键: {list(state.keys())}")
+            logger.info("===== CharacterProfileGeneratorNode 开始执行 =====")
+            logger.info(f"输入状态键: {list(state.keys())}")
+        
+            print(f"[CharacterProfileGeneratorNode] 尝试获取输入参数...")
             # 获取输入参数
             character_name = state.get('character_name', '')
             basic_info = state.get('basic_info', '')
             selected_categories = state.get('selected_categories', [])
             selected_collections = state.get('selected_collections', [])
             
+            # 从输入状态中获取LLM对象（与日程工作流保持一致）
+            llm = state.get('llm')
+            workflow_chat = state.get('workflow_chat')
+            
+            print(f"[CharacterProfileGeneratorNode] 参数解析完成:")
+            print(f"  - character_name: {character_name}")
+            print(f"  - basic_info: {basic_info}")
+            print(f"  - selected_categories: {selected_categories}")
+            print(f"  - llm: {llm}")
+            
+            logger.info(f"开始执行角色资料生成 - 角色: {character_name}")
+        except Exception as init_error:
+            error_msg = f"初始化阶段失败: {str(init_error)}"
+            print(f"[CharacterProfileGeneratorNode] 严重错误 - 初始化失败: {init_error}")
+            logger.error(error_msg)
+            import traceback
+            traceback.print_exc()
+            # 确保即使初始化失败也有输出
+            yield {
+                'success': False,
+                'error': error_msg
+            }
+            return
+            
+        try:
+            
             if not character_name or not basic_info:
-                return {
+                error_msg = '缺少必要参数：角色名称和基础信息'
+                print(f"[CharacterProfileGeneratorNode] 错误: {error_msg}")
+                logger.error(error_msg)
+                yield {
                     'success': False,
-                    'error': '缺少必要参数：角色名称和基础信息'
+                    'error': error_msg
                 }
+                return
             
             # 如果未指定类别，使用所有类别
             if not selected_categories:
                 selected_categories = list(self.profile_template.keys())
             
+            print(f"[CharacterProfileGeneratorNode] 将生成类别: {selected_categories}")
+            logger.info(f"将生成类别: {selected_categories}")
+            
             # 生成角色资料
             generated_profile = {}
             
-            for category in selected_categories:
+            for i, category in enumerate(selected_categories):
                 if category not in self.profile_template:
+                    print(f"[CharacterProfileGeneratorNode] 警告: 未知类别: {category}")
                     logger.warning(f"未知类别: {category}")
                     continue
                 
+                print(f"[CharacterProfileGeneratorNode] 正在生成类别 {i+1}/{len(selected_categories)}: {category}")
                 logger.info(f"正在生成类别: {category}")
-                category_data = await self._generate_category_data(
-                    character_name, basic_info, category, selected_collections
-                )
-                generated_profile[category] = category_data
+                
+                try:
+                    logger.info(f"开始生成类别数据: {category}")
+                    category_data = await self._generate_category_data(
+                        character_name, basic_info, category, selected_collections, llm
+                    )
+                    generated_profile[category] = category_data
+                    print(f"[CharacterProfileGeneratorNode] 类别 {category} 生成完成")
+                    logger.info(f"类别 {category} 生成完成: {category_data}")
+                    
+                    # 流式输出中间进度
+                    yield {
+                        'success': False,  # 还未完全完成
+                        'progress': f"已完成 {i+1}/{len(selected_categories)} 个类别",
+                        'generated_profile': generated_profile.copy(),
+                        'character_name': character_name
+                    }
+                    
+                except Exception as e:
+                    error_msg = f"生成类别 {category} 失败: {str(e)}"
+                    print(f"[CharacterProfileGeneratorNode] 错误: {error_msg}")
+                    logger.error(error_msg)
+                    logger.exception(f"类别 {category} 详细错误:")
+                    import traceback
+                    traceback.print_exc()
+                    generated_profile[category] = {"错误": error_msg}
             
             # 保存生成的资料
+            print(f"[CharacterProfileGeneratorNode] 开始保存角色资料")
             output_file = await self._save_profile(character_name, generated_profile)
             
-            return {
+            # 最终结果
+            final_result = {
                 'success': True,
                 'generated_profile': generated_profile,
                 'output_file': output_file,
                 'character_name': character_name
             }
             
+            print(f"[CharacterProfileGeneratorNode] 角色资料生成完成: {output_file}")
+            print(f"[CharacterProfileGeneratorNode] ===== 正常结束 execute_stream =====")
+            logger.info(f"角色资料生成完成: {output_file}")
+            yield final_result
+            
         except Exception as e:
-            logger.error(f"角色资料生成失败: {e}")
-            return {
+            error_msg = f"角色资料生成失败: {str(e)}"
+            print(f"[CharacterProfileGeneratorNode] 严重错误: {error_msg}")
+            print(f"[CharacterProfileGeneratorNode] ===== 异常结束 execute_stream =====")
+            logger.error(error_msg)
+            logger.exception("详细错误信息:")
+            import traceback
+            traceback.print_exc()
+            print(f"=== 节点执行异常 ===")
+            print(f"错误类型: {type(e).__name__}")
+            print(f"错误信息: {str(e)}")
+            print(f"错误堆栈:")
+            traceback.print_exc()
+            print(f"========================")
+            
+            # 确保即使出错也有输出
+            yield {
                 'success': False,
-                'error': str(e)
+                'error': error_msg
             }
     
     async def _generate_category_data(self, 
                                     character_name: str, 
                                     basic_info: str, 
                                     category: str,
-                                    selected_collections: List[str]) -> Dict[str, Any]:
+                                    selected_collections: List[str],
+                                    llm = None) -> Dict[str, Any]:
         """生成特定类别的角色数据"""
         category_items = self.profile_template.get(category, [])
         if not category_items:
@@ -136,12 +243,54 @@ class CharacterProfileGeneratorNode(BaseNode):
         )
         
         # 调用LLM生成
-        if self.llm:
-            response = await self.llm.agenerate(prompt)
-            return self._parse_generation_response(response, category_items)
+        if llm:
+            try:
+                print(f"[CharacterProfileGeneratorNode] 开始调用 LLM 生成，提示词长度: {len(prompt)} 字符")
+                logger.info(f"准备调用LLM生成，提示长度: {len(prompt)} 字符")
+                from core.types import Message, MessageRole
+                message = Message(role=MessageRole.USER, content=prompt)
+                print(f"[CharacterProfileGeneratorNode] 消息对象创建成功: {message}")
+                logger.info(f"消息对象创建成功: {message}")
+                
+                # 先检查LLM是否初始化
+                if not hasattr(llm, 'config') or not llm.config:
+                    raise ValueError("LLM配置未正确初始化")
+                
+                print(f"[CharacterProfileGeneratorNode] LLM配置: {llm.config}")
+                logger.info(f"LLM配置: {llm.config}")
+                
+                # 尝试初始化LLM（如果需要）
+                if hasattr(llm, 'initialize'):
+                    await llm.initialize()
+                    print("[CharacterProfileGeneratorNode] LLM初始化完成")
+                    logger.info("LLM初始化完成")
+                
+                print("[CharacterProfileGeneratorNode] 开始调用LLM.generate()...")
+                logger.info("开始调用LLM.generate()...")
+                response = await llm.generate([message])
+                print(f"[CharacterProfileGeneratorNode] LLM响应成功，内容长度: {len(response.content) if hasattr(response, 'content') else 'N/A'}")
+                logger.info(f"LLM响应成功，内容长度: {len(response.content) if hasattr(response, 'content') else 'N/A'}")
+                
+                parsed_result = self._parse_generation_response(response.content, category_items)
+                print(f"[CharacterProfileGeneratorNode] 解析结果: {parsed_result}")
+                logger.info(f"解析结果: {parsed_result}")
+                return parsed_result
+                
+            except Exception as e:
+                print(f"[CharacterProfileGeneratorNode] LLM生成失败: {e}")
+                logger.error(f"LLM生成失败: {e}")
+                logger.exception("LLM生成详细错误信息:")
+                import traceback
+                traceback.print_exc()
+                return {"错误": f"LLM调用失败: {str(e)}"}
         else:
-            logger.warning("LLM未配置，返回空结果")
-            return {}
+            print("[CharacterProfileGeneratorNode] LLM未配置，返回模拟结果")
+            logger.warning("LLM未配置，返回模拟结果")
+            # 返回模拟数据用于测试
+            mock_result = {}
+            for item in category_items:
+                mock_result[item['item']] = f"模拟数据 - {item['notes']}"
+            return mock_result
     
     async def _gather_knowledge_context(self, 
                                       character_name: str, 
@@ -327,10 +476,14 @@ class CharacterProfileWorkflow:
         self.knowledge_base = GlobalKnowledgeBase(workspace_dir)
         self.mcp_tools = MCPToolManager()
         self.graph = None
+        self.history_file = Path(workspace_dir) / "character_profile_history.json"
         
         # 加载可用的知识集合
         self.available_collections = []
         self._load_available_collections()
+        
+        # 加载历史记录
+        self.history_records = self._load_history()
     
     def _load_available_collections(self):
         """加载可用的知识集合"""
@@ -340,37 +493,92 @@ class CharacterProfileWorkflow:
         except Exception as e:
             logger.error(f"加载知识集合失败: {e}")
     
-    async def setup_graph(self) -> StateGraph:
+    def _load_history(self) -> List[Dict[str, Any]]:
+        """加载角色资料历史记录"""
+        try:
+            if self.history_file.exists():
+                with open(self.history_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    # 保持最多10条记录
+                    return data[-10:] if len(data) > 10 else data
+            return []
+        except Exception as e:
+            logger.error(f"加载历史记录失败: {e}")
+            return []
+    
+    def _save_history(self, record: Dict[str, Any]):
+        """保存角色资料历史记录"""
+        try:
+            # 添加新记录
+            self.history_records.append(record)
+            
+            # 保持最多10条记录
+            if len(self.history_records) > 10:
+                self.history_records = self.history_records[-10:]
+            
+            # 确保目录存在
+            self.history_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            # 保存到文件
+            with open(self.history_file, 'w', encoding='utf-8') as f:
+                json.dump(self.history_records, f, ensure_ascii=False, indent=2)
+                
+            logger.info(f"已保存历史记录，当前共{len(self.history_records)}条")
+        except Exception as e:
+            logger.error(f"保存历史记录失败: {e}")
+    
+    def get_history_records(self) -> List[Dict[str, Any]]:
+        """获取历史记录"""
+        return self.history_records.copy()
+    
+    def get_history_by_name(self, character_name: str) -> List[Dict[str, Any]]:
+        """根据角色名称获取历史记录"""
+        return [record for record in self.history_records 
+                if record.get('character_name', '').strip() == character_name.strip()]
+    
+    async def setup_graph(self) -> 'CompiledStateGraph':
         """设置工作流图"""
         if self.graph:
+            print("[CharacterProfileWorkflow] 使用已存在的工作流图")
+            logger.info("使用已存在的工作流图")
             return self.graph
         
-        # 创建LLM实例
-        llm = None
-        if self.llm_config:
-            llm = LLMFactory.create(self.llm_config)
+        print("[CharacterProfileWorkflow] 开始创建工作流图...")
+        logger.info("开始创建工作流图...")
         
-        # 创建节点
+        # 创建节点（不需要传递LLM配置）
         generator_node = CharacterProfileGeneratorNode(
-            llm_config=self.llm_config,
             knowledge_base=self.knowledge_base
         )
         
-        # 如果LLM配置可用，为节点设置LLM
-        if llm:
-            generator_node.llm = llm
+        print(f"[CharacterProfileWorkflow] 角色资料生成节点创建完成: {generator_node}")
+        logger.info(f"角色资料生成节点创建完成: {generator_node}")
         
         # 创建图
-        self.graph = StateGraph()
-        self.graph.add_node("generate_profile", generator_node)
-        self.graph.set_entry_point("generate_profile")
+        graph = StateGraph()
+        graph.add_node("generate_profile", generator_node)
+        graph.set_entry_point("generate_profile")
+        
+        print("[CharacterProfileWorkflow] StateGraph 节点和入口点设置完成")
+        logger.info("StateGraph 节点和入口点设置完成")
         
         # 添加条件边来处理结束
         def end_condition(state: Dict[str, Any]) -> str:
             # 生成完成后结束
+            print("[CharacterProfileWorkflow] 执行结束条件判断")
+            logger.info("执行结束条件判断")
             return "END"
         
-        self.graph.add_conditional_edges("generate_profile", end_condition)
+        graph.add_conditional_edges("generate_profile", end_condition)
+        
+        print("[CharacterProfileWorkflow] 条件边设置完成，开始编译图...")
+        logger.info("条件边设置完成，开始编译图...")
+        
+        # 编译图
+        self.graph = graph.compile()
+        
+        print(f"[CharacterProfileWorkflow] 工作流图编译完成: {self.graph}")
+        logger.info(f"工作流图编译完成: {self.graph}")
         
         return self.graph
     
@@ -392,24 +600,62 @@ class CharacterProfileWorkflow:
             生成结果
         """
         try:
+            print(f"[CharacterProfileWorkflow] ===== 开始生成角色资料 =====")
+            print(f"[CharacterProfileWorkflow] 角色名称: {character_name}")
+            print(f"[CharacterProfileWorkflow] 基础信息长度: {len(basic_info) if basic_info else 0}")
+            print(f"[CharacterProfileWorkflow] 选中类别: {selected_categories}")
+            print(f"[CharacterProfileWorkflow] 选中知识集合: {selected_collections}")
+            
+            logger.info("===== 开始生成角色资料 =====")
+            logger.info(f"角色名称: {character_name}")
+            logger.info(f"基础信息长度: {len(basic_info) if basic_info else 0}")
+            logger.info(f"选中类别: {selected_categories}")
+            logger.info(f"选中知识集合: {selected_collections}")
+            
             # 设置工作流图
-            graph = await self.setup_graph()
+            print("[CharacterProfileWorkflow] 正在设置工作流图...")
+            logger.info("正在设置工作流图...")
+            compiled_graph = await self.setup_graph()
+            
+            # 创建LLM实例（如果配置可用）
+            llm = None
+            if self.llm_config:
+                print(f"[CharacterProfileWorkflow] 创建LLM实例，配置: {self.llm_config}")
+                logger.info(f"创建LLM实例，配置: {self.llm_config}")
+                llm = LLMFactory.create(self.llm_config)
+                print(f"[CharacterProfileWorkflow] LLM实例创建完成: {llm}")
+                logger.info(f"LLM实例创建完成: {llm}")
+            else:
+                print("[CharacterProfileWorkflow] 警告: 未提供LLM配置")
+                logger.warning("未提供LLM配置")
             
             # 准备输入状态
             initial_state = {
                 'character_name': character_name,
                 'basic_info': basic_info,
                 'selected_categories': selected_categories or [],
-                'selected_collections': selected_collections or []
+                'selected_collections': selected_collections or [],
+                'llm': llm  # 传递LLM对象到状态中
             }
             
+            print(f"[CharacterProfileWorkflow] 准备执行工作流，初始状态键: {list(initial_state.keys())}")
+            logger.info(f"准备执行工作流，初始状态键: {list(initial_state.keys())}")
+            
             # 执行工作流
-            result = await graph.ainvoke(initial_state)
+            print("[CharacterProfileWorkflow] 开始执行compiled_graph.invoke()...")
+            logger.info("开始执行compiled_graph.invoke()...")
+            result = await compiled_graph.invoke(initial_state)
+            
+            print(f"[CharacterProfileWorkflow] 工作流执行完成，结果键: {list(result.keys()) if isinstance(result, dict) else type(result)}")
+            logger.info(f"工作流执行完成，结果键: {list(result.keys()) if isinstance(result, dict) else type(result)}")
             
             return result
             
         except Exception as e:
+            print(f"[CharacterProfileWorkflow] 角色资料生成工作流执行失败: {e}")
             logger.error(f"角色资料生成工作流执行失败: {e}")
+            import traceback
+            traceback.print_exc()
             return {
                 'success': False,
                 'error': str(e)
@@ -518,25 +764,28 @@ class CharacterProfileWorkflow:
         """获取可用的资料类别"""
         try:
             # 从人物资料需求表格中读取类别
-            categories = []
+            categories = set()
             template_file = Path("workspace/input/主角人物资料需求表格.csv")
             if template_file.exists():
                 import csv
                 with open(template_file, 'r', encoding='utf-8') as f:
                     reader = csv.DictReader(f)
-                    headers = reader.fieldnames
-                    if headers and len(headers) > 1:
-                        # 跳过第一列（通常是字段名），获取类别列
-                        categories = [h for h in headers[1:] if h and h.strip()]
+                    for row in reader:
+                        category = row.get('类别', '').strip()
+                        if category:
+                            categories.add(category)
+            
+            # 转换为列表并排序
+            categories_list = sorted(list(categories))
             
             # 如果没有从CSV读取到，使用默认类别
-            if not categories:
-                categories = [
+            if not categories_list:
+                categories_list = [
                     "基本信息", "外貌特征", "性格特征", "背景故事", 
                     "技能能力", "人际关系", "个人物品", "行为习惯"
                 ]
             
-            return categories
+            return categories_list
         except Exception as e:
             logger.error(f"获取资料类别失败: {e}")
             return ["基本信息", "外貌特征", "性格特征", "背景故事"]
@@ -550,78 +799,6 @@ class CharacterProfileWorkflow:
             logger.error(f"获取知识集合失败: {e}")
             return []
     
-    async def generate_character_profile(self,
-                                       character_name: str,
-                                       basic_info: str,
-                                       selected_categories: List[str],
-                                       selected_collections: List[str]) -> Dict[str, Any]:
-        """生成角色资料"""
-        try:
-            # 准备输入数据
-            input_data = {
-                'character_name': character_name,
-                'basic_info': basic_info,
-                'selected_categories': selected_categories,
-                'selected_collections': selected_collections,
-                'knowledge_context': "",
-                'generated_profile': {}
-            }
-            
-            # 如果选择了知识库，先获取相关知识
-            if selected_collections:
-                try:
-                    knowledge_context = []
-                    for collection_name in selected_collections:
-                        # 使用角色名称和基础信息进行查询
-                        query_text = f"{character_name} {basic_info}"
-                        results = await self.knowledge_base.query_documents(
-                            collection_name=collection_name,
-                            query_text=query_text,
-                            n_results=3
-                        )
-                        
-                        if results:
-                            for result in results:
-                                knowledge_context.append(f"[{collection_name}] {result['document']}")
-                    
-                    input_data['knowledge_context'] = "\n\n".join(knowledge_context)
-                    logger.info(f"获取到知识上下文，共{len(knowledge_context)}条")
-                    
-                except Exception as e:
-                    logger.warning(f"获取知识上下文失败: {e}")
-                    input_data['knowledge_context'] = ""
-            
-            # 执行工作流
-            result = await self.run(input_data)
-            
-            if result.success:
-                # 保存结果到文件
-                output_dir = Path("workspace/output")
-                output_dir.mkdir(exist_ok=True)
-                
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                output_file = output_dir / f"character_profile_{character_name}_{timestamp}.json"
-                
-                with open(output_file, 'w', encoding='utf-8') as f:
-                    json.dump(result.data, ensure_ascii=False, indent=2)
-                
-                return {
-                    'success': True,
-                    'generated_profile': result.data.get('generated_profile', {}),
-                    'output_file': str(output_file)
-                }
-            else:
-                return {
-                    'success': False,
-                    'error': result.error or "生成失败"
-                }
-                
-        except Exception as e:
-            logger.error(f"生成角色资料失败: {e}")
-            return {
-                'success': False,
-                'error': str(e)
-            }
     
     async def batch_generate_profiles(self,
                                     profiles_data: List[Dict[str, Any]],

@@ -18,6 +18,10 @@ ZZZero AI Agent Framework 主入口模块
 import asyncio
 import os
 import sys
+
+# 加载环境变量
+from dotenv import load_dotenv
+load_dotenv()
 import logging
 from pathlib import Path
 from dotenv import load_dotenv

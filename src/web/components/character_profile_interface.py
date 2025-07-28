@@ -87,6 +87,30 @@ class CharacterProfileInterface:
         with gr.Column():
             gr.Markdown("### ⚙️ 生成配置")
             
+            # 历史记录选择
+            with gr.Group():
+                gr.Markdown("#### 📚 历史记录")
+                components['history_dropdown'] = gr.Dropdown(
+                    label="选择历史记录",
+                    choices=self._get_history_choices(),
+                    value=None,
+                    interactive=True,
+                    info="选择之前的角色配置"
+                )
+                
+                with gr.Row():
+                    components['load_history'] = gr.Button(
+                        "载入选中记录",
+                        size="sm",
+                        variant="secondary"
+                    )
+                    
+                    components['refresh_history'] = gr.Button(
+                        "刷新历史",
+                        size="sm",
+                        variant="secondary"
+                    )
+            
             # 角色基本信息
             with gr.Group():
                 gr.Markdown("#### 角色信息")
@@ -148,7 +172,7 @@ class CharacterProfileInterface:
                 
                 components['model_name'] = gr.Textbox(
                     label="模型名称",
-                    value="ep-20241217203540-vqsmc",
+                    value="ep-20250221154410-vh78x",
                     interactive=True
                 )
                 
@@ -275,6 +299,24 @@ class CharacterProfileInterface:
     def _bind_events(self, components: Dict[str, Any]):
         """绑定界面事件"""
         
+        # 刷新历史记录按钮
+        components['refresh_history'].click(
+            fn=self._refresh_history,
+            outputs=components['history_dropdown']
+        )
+        
+        # 载入历史记录按钮
+        components['load_history'].click(
+            fn=self._load_history_record,
+            inputs=components['history_dropdown'],
+            outputs=[
+                components['character_name'],
+                components['basic_info'],
+                components['category_selector'],
+                components['knowledge_selector']
+            ]
+        )
+        
         # 全选类别按钮
         components['select_all_categories'].click(
             fn=lambda: gr.update(value=self.available_categories),
@@ -332,6 +374,80 @@ class CharacterProfileInterface:
             ]
         )
     
+    def _get_history_choices(self) -> List[str]:
+        """获取历史记录选择项"""
+        try:
+            history_records = self.workflow.get_history_records()
+            choices = []
+            for i, record in enumerate(reversed(history_records)):  # 最新的在前
+                character_name = record.get('character_name', '未知角色')[:20]
+                created_at = record.get('created_at', '')
+                if created_at:
+                    try:
+                        dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                        time_str = dt.strftime('%m-%d %H:%M')
+                    except:
+                        time_str = created_at[:16]
+                else:
+                    time_str = '未知时间'
+                
+                choice = f"{character_name} ({time_str})"
+                choices.append(choice)
+            
+            return choices
+        except Exception as e:
+            logger.error(f"获取历史记录选择项失败: {e}")
+            return []
+    
+    def _refresh_history(self):
+        """刷新历史记录下拉列表"""
+        try:
+            choices = self._get_history_choices()
+            return gr.update(choices=choices, value=None)
+        except Exception as e:
+            logger.error(f"刷新历史记录失败: {e}")
+            return gr.update()
+    
+    def _load_history_record(self, selected_choice: str):
+        """载入选中的历史记录"""
+        try:
+            if not selected_choice:
+                return "", "", [], []
+            
+            # 获取历史记录
+            history_records = self.workflow.get_history_records()
+            if not history_records:
+                return "", "", [], []
+            
+            # 从选择项中提取索引（反向索引，因为显示时是最新的在前）
+            choices = self._get_history_choices()
+            if selected_choice not in choices:
+                return "", "", [], []
+            
+            choice_index = choices.index(selected_choice)
+            record_index = len(history_records) - 1 - choice_index  # 反向索引
+            
+            if 0 <= record_index < len(history_records):
+                record = history_records[record_index]
+                
+                character_name = record.get('character_name', '')
+                basic_info = record.get('basic_info', '')
+                selected_categories = record.get('selected_categories', [])
+                selected_collections = record.get('selected_collections', [])
+                
+                return (
+                    character_name,
+                    basic_info,
+                    selected_categories,
+                    selected_collections
+                )
+            else:
+                return "", "", [], []
+                
+        except Exception as e:
+            logger.error(f"载入历史记录失败: {e}")
+            return "", "", [], []
+    
     def _refresh_collections(self):
         """刷新知识集合列表"""
         try:
@@ -365,10 +481,30 @@ class CharacterProfileInterface:
             # 更新状态
             status_update = "**状态:** 🔄 正在生成角色资料..."
             
-            # 创建LLM配置
+            # 创建LLM配置 - 添加API密钥
+            import os
+            api_key = os.getenv('ARK_API_KEY') or os.getenv('DOUBAO_API_KEY')
+            if not api_key:
+                return (
+                    "**状态:** ❌ 缺少API密钥配置，请检查.env文件中的DOUBAO_API_KEY或ARK_API_KEY",
+                    "请先配置API密钥",
+                    {},
+                    None,
+                    ""
+                )
+            
+            # 根据提供商设置API base URL
+            api_base = None
+            if llm_provider == "doubao":
+                api_base = os.getenv('DOUBAO_BASE_URL', 'https://ark.cn-beijing.volces.com/api/v3')
+            elif llm_provider == "openai":
+                api_base = os.getenv('OPENAI_BASE_URL', 'https://api.openai.com/v1')
+            
             llm_config = LLMConfig(
                 provider=llm_provider,
                 model_name=model_name,
+                api_key=api_key,
+                api_base=api_base,
                 temperature=temperature,
                 max_tokens=int(max_tokens)
             )
@@ -473,10 +609,27 @@ class CharacterProfileInterface:
                     f"**状态:** ❌ JSON格式错误: {str(e)}"
                 )
             
-            # 创建LLM配置
+            # 创建LLM配置 - 添加API密钥
+            import os
+            api_key = os.getenv('ARK_API_KEY') or os.getenv('DOUBAO_API_KEY')
+            if not api_key:
+                return (
+                    gr.update(visible=False),
+                    "**状态:** ❌ 缺少API密钥配置，请检查.env文件中的DOUBAO_API_KEY或ARK_API_KEY"
+                )
+            
+            # 根据提供商设置API base URL
+            api_base = None
+            if llm_provider == "doubao":
+                api_base = os.getenv('DOUBAO_BASE_URL', 'https://ark.cn-beijing.volces.com/api/v3')
+            elif llm_provider == "openai":
+                api_base = os.getenv('OPENAI_BASE_URL', 'https://api.openai.com/v1')
+            
             llm_config = LLMConfig(
                 provider=llm_provider,
                 model_name=model_name,
+                api_key=api_key,
+                api_base=api_base,
                 temperature=temperature,
                 max_tokens=int(max_tokens)
             )

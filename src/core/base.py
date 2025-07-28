@@ -216,6 +216,7 @@ class BaseNode(ABC):
     
     async def run(self, state: Dict[str, Any]) -> NodeResult:
         """执行节点并返回结果"""
+        print(f"[BaseNode.run] 开始执行节点: {self.name}, stream={self.stream}")
         result = NodeResult(
             node_name=self.name,
             node_type=self.node_type,
@@ -226,16 +227,38 @@ class BaseNode(ABC):
         try:
             # 执行前钩子
             state = await self.pre_execute(state)
+            print(f"[BaseNode.run] 执行前钩子完成，节点: {self.name}")
             
             # 如果支持流式执行，使用流式执行并取最后结果
             if self.stream:
+                print(f"[BaseNode.run] 开始流式执行节点: {self.name}")
                 last_output = None
-                async for output in self.execute_stream(state):
-                    last_output = output
-                output = last_output
+                count = 0
+                try:
+                    async for output in self.execute_stream(state):
+                        print(f"[BaseNode.run] 流式输出 {count+1}: {type(output)}")
+                        last_output = output
+                        count += 1
+                    print(f"[BaseNode.run] 流式执行完成，节点: {self.name}, 总输出: {count}次")
+                except Exception as stream_error:
+                    print(f"[BaseNode.run] 流式执行异常，节点: {self.name}, 错误: {stream_error}")
+                    import traceback
+                    traceback.print_exc()
+                    # 重新抛出异常让外层处理
+                    raise stream_error
+                
+                if last_output is None:
+                    print(f"[BaseNode.run] 警告: 流式执行未产生任何输出，节点: {self.name}")
+                    output = {"success": False, "error": "节点执行未产生输出"}
+                else:
+                    output = last_output
             else:
+                print(f"[BaseNode.run] 开始非流式执行节点: {self.name}")
                 # 执行核心逻辑
                 output = await self.execute(state)
+                print(f"[BaseNode.run] 非流式执行完成，节点: {self.name}")
+            
+            print(f"[BaseNode.run] 准备处理输出结果，节点: {self.name}, 输出类型: {type(output)}")
             
             # 处理返回结果
             if isinstance(output, Command):
@@ -252,11 +275,31 @@ class BaseNode(ABC):
             result.execution_state = ExecutionState.SUCCESS
             
         except Exception as e:
+            print(f"[BaseNode.run] 节点执行异常: {self.name}, 错误: {e}")
             result.execution_state = ExecutionState.FAILED
             result.error = str(e)
             
+            # 添加详细错误日志
+            import logging
+            import traceback
+            logger = logging.getLogger(f"{__name__}.{self.name}")
+            logger.error(f"节点 {self.name} 执行失败: {e}")
+            logger.exception("节点执行异常详情:")
+            
+            # 控制台输出详细错误
+            print(f"=== 节点 {self.name} 执行失败 ===")
+            print(f"错误类型: {type(e).__name__}")
+            print(f"错误信息: {str(e)}")
+            print(f"错误堆栈:")
+            traceback.print_exc()
+            print(f"========================")
+            
+            # 重新抛出异常，让错误处理器可以捕获
+            raise e
+            
         finally:
             result.end_time = datetime.now()
+            print(f"[BaseNode.run] 节点执行结束: {self.name}, 状态: {result.execution_state}")
             
         return result
     
