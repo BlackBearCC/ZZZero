@@ -197,7 +197,19 @@ class AgentApp:
                 with gr.TabItem("🔄 任务队列", id="queue_tab"):
                     queue_components = self.task_queue_interface.create_interface()
                 
-                # Tab 5: 数据库管理
+                # Tab 5: 角色资料生成
+                with gr.TabItem("🎭 角色资料", id="character_profile_tab"):
+                    from web.components.character_profile_interface import CharacterProfileInterface
+                    character_profile_interface = CharacterProfileInterface()
+                    character_profile_components = character_profile_interface.create_character_profile_interface()
+                
+                # Tab 6: 知识库管理
+                with gr.TabItem("📚 知识库", id="knowledge_base_tab"):
+                    from web.components.knowledge_base_interface import KnowledgeBaseInterface
+                    knowledge_base_interface = KnowledgeBaseInterface()
+                    knowledge_base_components = knowledge_base_interface.create_knowledge_base_interface()
+                
+                # Tab 7: 数据库管理
                 with gr.TabItem("📊 数据库管理", id="database_tab"):
                     from web.components.database_interface import get_database_interface
                     database_interface = get_database_interface()

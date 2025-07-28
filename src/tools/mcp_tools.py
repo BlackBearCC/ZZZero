@@ -187,8 +187,31 @@ class MCPToolManager:
             tool_key = f"role_info_{tool.name}"
             self.all_available_tools[tool_key] = tool
         
+        # 注册全局知识库服务器
+        knowledge_config = MCPServerConfig(
+            name="全局知识库服务器",
+            description="全局向量知识库管理，支持多集合管理和文本分割"
+        )
+        self.servers["knowledge"] = knowledge_config
+        
+        # 注册全局知识库工具
+        knowledge_tools = [
+            MCPTool("create_knowledge_collection", "创建知识集合", "knowledge"),
+            MCPTool("add_knowledge_documents", "添加知识文档", "knowledge"),
+            MCPTool("query_knowledge_documents", "查询知识文档", "knowledge"),
+            MCPTool("list_knowledge_collections", "列出知识集合", "knowledge"),
+            MCPTool("get_knowledge_collection_info", "获取集合信息", "knowledge"),
+            MCPTool("delete_knowledge_collection", "删除知识集合", "knowledge"),
+            MCPTool("import_knowledge_from_file", "从文件导入知识", "knowledge"),
+            MCPTool("split_knowledge_text", "分割知识文本", "knowledge"),
+        ]
+        
+        for tool in knowledge_tools:
+            tool_key = f"knowledge_{tool.name}"
+            self.all_available_tools[tool_key] = tool
+        
         # 默认启用所有已注册的服务器
-        self.set_enabled_servers(["csv", "chromadb", "python", "role_info"])
+        self.set_enabled_servers(["csv", "chromadb", "python", "role_info", "knowledge"])
     
     async def initialize(self):
         """初始化工具管理器"""
@@ -269,6 +292,15 @@ class MCPToolManager:
                     server_instance = RoleInfoCRUDServer("./workspace")
                 except Exception as e:
                     logger.error(f"角色信息CRUD服务器启动失败: {e}")
+                    return False
+                    
+            elif server_id == "knowledge":
+                # 直接导入并实例化知识库服务器
+                try:
+                    from mcp_servers.knowledge_base_server import KnowledgeBaseServer
+                    server_instance = KnowledgeBaseServer("./workspace")
+                except Exception as e:
+                    logger.error(f"知识库服务器启动失败: {e}")
                     return False
                     
             else:

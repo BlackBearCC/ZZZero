@@ -3,10 +3,10 @@
 数据库服务管理模块
 
 @author leo
-@description 管理PostgreSQL数据库服务的启动、停止和健康检查
+@description 管理SQLite数据库服务的启动、停止和健康检查
 @classes DatabaseService - 数据库服务管理器
 @functions 
-    - start_database - 启动PostgreSQL数据库服务
+    - start_database - 启动SQLite数据库服务
     - stop_database - 停止数据库服务
     - is_database_running - 检查数据库是否运行
     - wait_for_database - 等待数据库就绪
@@ -16,15 +16,14 @@
     await db_service.start_database()
     if await db_service.wait_for_database():
         print("数据库已就绪")
-@dependencies docker, asyncio, psycopg2, subprocess
+@dependencies sqlite3, asyncio, pathlib
 """
 
 import asyncio
-import subprocess
 import logging
 import os
 import time
-import psycopg2
+import sqlite3
 from typing import Dict, Any, Optional
 from pathlib import Path
 
@@ -33,74 +32,34 @@ logger = logging.getLogger(__name__)
 class DatabaseService:
     """数据库服务管理器"""
     
-    def __init__(self, 
-                 compose_file: str = "docker-compose.yml",
-                 service_name: str = "postgres"):
+    def __init__(self, db_path: str = None):
         """
         初始化数据库服务管理器
         
         Args:
-            compose_file: Docker Compose文件路径
-            service_name: 数据库服务名称
+            db_path: SQLite数据库文件路径
         """
-        self.compose_file = Path(compose_file)
-        self.service_name = service_name
-        
         # 数据库连接配置
-        self.db_config = {
-            'host': os.getenv('POSTGRES_HOST', 'localhost'),
-            'port': int(os.getenv('POSTGRES_PORT', '5432')),
-            'database': os.getenv('POSTGRES_DB', 'zzzero'),
-            'user': os.getenv('POSTGRES_USER', 'zzzero_user'),
-            'password': os.getenv('POSTGRES_PASSWORD', 'zzzero_pass')
-        }
+        self.db_path = db_path or os.getenv('SQLITE_DB_PATH', './workspace/database/zzzero.db')
+        
+        # 确保数据库目录存在
+        self.db_dir = Path(self.db_path).parent
+        self.db_dir.mkdir(parents=True, exist_ok=True)
         
         self.max_wait_time = 60  # 最大等待时间（秒）
         self.check_interval = 2   # 检查间隔（秒）
     
     async def start_database(self) -> bool:
-        """启动PostgreSQL数据库服务"""
+        """启动SQLite数据库服务"""
         try:
-            logger.info("启动PostgreSQL数据库服务...")
+            logger.info("初始化SQLite数据库服务...")
             
-            # 检查Docker和docker-compose是否可用
-            if not await self._check_docker_available():
-                logger.warning("Docker或docker-compose不可用，尝试连接现有数据库...")
-                # 如果Docker不可用，尝试连接现有的PostgreSQL实例
-                if await self._test_database_connection():
-                    logger.info("连接到现有PostgreSQL实例成功")
-                    return True
-                else:
-                    logger.error("无法连接到PostgreSQL数据库，请确保PostgreSQL服务运行在 localhost:5432")
-                    return False
-            
-            # 检查compose文件是否存在
-            if not self.compose_file.exists():
-                logger.error(f"Docker Compose文件不存在: {self.compose_file}")
-                return False
-            
-            # 启动数据库服务
-            cmd = f"docker-compose -f {self.compose_file} up -d {self.service_name}"
-            process = await asyncio.create_subprocess_shell(
-                cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            
-            stdout, stderr = await process.communicate()
-            
-            if process.returncode != 0:
-                logger.error(f"启动数据库服务失败: {stderr.decode()}")
-                return False
-            
-            logger.info(f"数据库服务启动命令执行成功: {stdout.decode()}")
-            
-            # 等待数据库就绪
-            if await self.wait_for_database():
-                logger.info("PostgreSQL数据库服务启动成功并已就绪")
+            # SQLite不需要单独启动服务，只需要确保文件可以访问
+            if await self._test_database_connection():
+                logger.info("SQLite数据库服务已就绪")
                 return True
             else:
-                logger.error("数据库服务启动超时")
+                logger.error("无法访问SQLite数据库文件")
                 return False
                 
         except Exception as e:
@@ -110,22 +69,7 @@ class DatabaseService:
     async def stop_database(self) -> bool:
         """停止数据库服务"""
         try:
-            logger.info("停止PostgreSQL数据库服务...")
-            
-            cmd = f"docker-compose -f {self.compose_file} stop {self.service_name}"
-            process = await asyncio.create_subprocess_shell(
-                cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            
-            stdout, stderr = await process.communicate()
-            
-            if process.returncode != 0:
-                logger.error(f"停止数据库服务失败: {stderr.decode()}")
-                return False
-            
-            logger.info("PostgreSQL数据库服务已停止")
+            logger.info("SQLite数据库无需停止服务")
             return True
             
         except Exception as e:
@@ -135,19 +79,6 @@ class DatabaseService:
     async def is_database_running(self) -> bool:
         """检查数据库是否运行"""
         try:
-            # 检查Docker容器状态
-            cmd = f"docker-compose -f {self.compose_file} ps -q {self.service_name}"
-            process = await asyncio.create_subprocess_shell(
-                cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            
-            stdout, stderr = await process.communicate()
-            
-            if process.returncode != 0 or not stdout.strip():
-                return False
-            
             # 检查数据库连接
             return await self._test_database_connection()
             
@@ -180,40 +111,32 @@ class DatabaseService:
             status = {
                 'running': False,
                 'connected': False,
-                'container_status': 'unknown',
+                'database_path': self.db_path,
+                'database_exists': False,
+                'database_size': None,
                 'connection_info': None,
                 'error': None
             }
             
-            # 检查容器状态
-            cmd = f"docker-compose -f {self.compose_file} ps {self.service_name}"
-            process = await asyncio.create_subprocess_shell(
-                cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
+            # 检查数据库文件是否存在
+            status['database_exists'] = Path(self.db_path).exists()
             
-            stdout, stderr = await process.communicate()
-            
-            if process.returncode == 0 and stdout:
-                container_info = stdout.decode().strip()
-                if "Up" in container_info:
-                    status['running'] = True
-                    status['container_status'] = 'running'
-                elif "Exit" in container_info:
-                    status['container_status'] = 'stopped'
-                else:
-                    status['container_status'] = 'unknown'
+            # 获取数据库文件大小
+            if status['database_exists']:
+                try:
+                    file_size = os.path.getsize(self.db_path)
+                    status['database_size'] = f"{file_size / 1024 / 1024:.2f} MB"
+                except:
+                    status['database_size'] = "未知"
             
             # 检查数据库连接
             status['connected'] = await self._test_database_connection()
+            status['running'] = status['connected']
             
             if status['connected']:
                 status['connection_info'] = {
-                    'host': self.db_config['host'],
-                    'port': self.db_config['port'],
-                    'database': self.db_config['database'],
-                    'user': self.db_config['user']
+                    'database_path': self.db_path,
+                    'database_type': 'SQLite'
                 }
             
             return status
@@ -223,43 +146,12 @@ class DatabaseService:
             return {
                 'running': False,
                 'connected': False,
-                'container_status': 'error',
+                'database_path': self.db_path,
+                'database_exists': False,
+                'database_size': None,
                 'connection_info': None,
                 'error': str(e)
             }
-    
-    async def _check_docker_available(self) -> bool:
-        """检查Docker和docker-compose是否可用"""
-        try:
-            # 检查docker
-            process = await asyncio.create_subprocess_shell(
-                "docker --version",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            await process.communicate()
-            
-            if process.returncode != 0:
-                logger.error("Docker不可用")
-                return False
-            
-            # 检查docker-compose
-            process = await asyncio.create_subprocess_shell(
-                "docker-compose --version",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            await process.communicate()
-            
-            if process.returncode != 0:
-                logger.error("docker-compose不可用")
-                return False
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"检查Docker可用性异常: {e}")
-            return False
     
     async def _test_database_connection(self) -> bool:
         """测试数据库连接"""
@@ -269,14 +161,13 @@ class DatabaseService:
             
             def test_sync_connection():
                 try:
-                    conn = psycopg2.connect(
-                        host=self.db_config['host'],
-                        port=self.db_config['port'],
-                        database=self.db_config['database'],
-                        user=self.db_config['user'],
-                        password=self.db_config['password'],
-                        connect_timeout=5
+                    conn = sqlite3.connect(
+                        self.db_path,
+                        timeout=5
                     )
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT 1")
+                    cursor.close()
                     conn.close()
                     return True
                 except:
@@ -292,14 +183,14 @@ class DatabaseService:
     
     def get_connection_string(self) -> str:
         """获取数据库连接字符串"""
-        return (
-            f"postgresql://{self.db_config['user']}:{self.db_config['password']}"
-            f"@{self.db_config['host']}:{self.db_config['port']}/{self.db_config['database']}"
-        )
+        return f"sqlite:///{self.db_path}"
     
     def get_connection_dict(self) -> Dict[str, Any]:
         """获取数据库连接配置字典"""
-        return self.db_config.copy()
+        return {
+            'database_path': self.db_path,
+            'database_type': 'SQLite'
+        }
 
 # 全局数据库服务实例
 _db_service = None

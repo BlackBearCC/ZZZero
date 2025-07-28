@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **ZZZero AI Agent Framework** 是一个基于节点编排的智能代理框架，采用 StateGraph 设计理念，支持多种 Agent 范式、MCP 工具集成和批量任务处理。
 
 ### 重要工作指南
-
+- 不使用复杂变量名，保持变量名通用易用无需特别适用_精确细分
 - 永远使用中文交流
 - 所有I/O密集型操作必须使用 async/await 实现
 - 所有数据模型必须使用 Pydantic 进行类型定义
@@ -167,7 +167,7 @@ ARK_API_KEY=your_doubao_key
 ANTHROPIC_API_KEY=your_anthropic_key
 
 # 数据库配置
-DATABASE_URL=postgresql://user:pass@localhost/dbname
+SQLITE_DB_PATH=./workspace/database/zzzero.db
 
 # MCP服务器配置
 MCP_SERVER_URL=http://localhost:3000

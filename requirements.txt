@@ -30,9 +30,7 @@ numpy>=1.24.0
 pandas>=2.0.0
 sqlalchemy>=2.0.0
 
-# PostgreSQL数据库
-psycopg2-binary>=2.9.0
-asyncpg>=0.28.0
+# SQLite数据库 (内置于Python)
 
 # 工具
 rich>=13.0.0

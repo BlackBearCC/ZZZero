@@ -1,68 +1,104 @@
 @echo off
 REM -*- coding: utf-8 -*-
-REM PostgreSQL数据库启动脚本 (Windows)
+REM SQLite数据库初始化脚本 (Windows)
 REM @author leo
-REM @description 在Windows环境下启动PostgreSQL数据库服务
+REM @description 在Windows环境下初始化SQLite数据库
 REM @usage 双击运行或在命令行执行 start_database.bat
 
 echo ==============================================
 echo    ZZZero AI Agent Framework
-echo    PostgreSQL Database Startup Script
+echo    SQLite Database Initialization Script
 echo ==============================================
 echo.
 
-REM 检查Docker是否安装
-docker --version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo ERROR: Docker is not installed or not in PATH
-    echo Please install Docker Desktop first
-    echo Download from: https://www.docker.com/products/docker-desktop
-    pause
-    exit /b 1
-)
+REM 设置数据库路径
+set DATABASE_DIR=.\workspace\database
+set DATABASE_FILE=%DATABASE_DIR%\zzzero.db
+set INIT_SQL=.\database\init\01-init-database.sql
 
-REM 检查docker-compose是否可用
-docker-compose --version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo ERROR: docker-compose is not available
-    echo Please ensure Docker Desktop is running
-    pause
-    exit /b 1
-)
-
-echo ✅ Docker environment check passed
+echo 🔧 Initializing SQLite database...
 echo.
 
-REM 启动PostgreSQL数据库
-echo 🚀 Starting PostgreSQL database...
-docker-compose up -d postgres
+REM 创建数据库目录
+if not exist "%DATABASE_DIR%" (
+    echo 📁 Creating database directory: %DATABASE_DIR%
+    mkdir "%DATABASE_DIR%"
+)
 
-if %errorlevel% equ 0 (
-    echo ✅ PostgreSQL database started successfully
-    echo.
-    echo Database connection details:
-    echo - Host: localhost
-    echo - Port: 5432
-    echo - Database: zzzero
-    echo - Username: zzzero_user
-    echo - Password: zzzero_pass
-    echo.
-    echo 📊 You can check database status with:
-    echo    docker-compose ps
-    echo.
-    echo 📝 View database logs with:
-    echo    docker-compose logs -f postgres
-    echo.
-    echo 🛑 Stop database with:
-    echo    docker-compose stop postgres
+REM 检查是否有SQLite3可执行文件（通常Python内置）
+python -c "import sqlite3; print('SQLite3 available')" >nul 2>&1
+if %errorlevel% neq 0 (
+    echo ERROR: Python with SQLite3 support is required
+    echo Please install Python from: https://www.python.org/downloads/
+    pause
+    exit /b 1
+)
+
+echo ✅ SQLite3 environment check passed
+echo.
+
+REM 初始化数据库
+if exist "%INIT_SQL%" (
+    echo 🚀 Initializing database from: %INIT_SQL%
+    
+    REM 使用Python执行SQL初始化脚本
+    python -c "
+import sqlite3
+import sys
+
+try:
+    # 连接到数据库
+    conn = sqlite3.connect('%DATABASE_FILE%')
+    
+    # 读取并执行SQL脚本
+    with open('%INIT_SQL%', 'r', encoding='utf-8') as f:
+        sql_script = f.read()
+    
+    conn.executescript(sql_script)
+    conn.commit()
+    conn.close()
+    
+    print('✅ SQLite database initialized successfully')
+except Exception as e:
+    print(f'❌ Failed to initialize database: {e}')
+    sys.exit(1)
+"
+    
+    if %errorlevel% equ 0 (
+        echo.
+        echo Database details:
+        echo - Type: SQLite
+        echo - Path: %DATABASE_FILE%
+        
+        REM 获取文件大小
+        for %%A in ("%DATABASE_FILE%") do echo - Size: %%~zA bytes
+        echo.
+        
+        echo 📊 Database tables:
+        python -c "
+import sqlite3
+conn = sqlite3.connect('%DATABASE_FILE%')
+cursor = conn.cursor()
+cursor.execute(\"SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%%' ORDER BY name\")
+tables = cursor.fetchall()
+for table in tables:
+    print(f'  - {table[0]}')
+conn.close()
+"
+        echo.
+        
+        echo 🔍 You can inspect the database with:
+        echo    python -c "import sqlite3; conn=sqlite3.connect('%DATABASE_FILE%'); # your queries here"
+        echo.
+        echo 📝 Or use any SQLite GUI tool to open: %DATABASE_FILE%
+        echo.
+        
+        echo 🎉 Database initialization completed!
+    ) else (
+        echo ❌ Failed to initialize SQLite database
+    )
 ) else (
-    echo ❌ Failed to start PostgreSQL database
-    echo.
-    echo Troubleshooting tips:
-    echo 1. Make sure Docker Desktop is running
-    echo 2. Check if port 5432 is already in use
-    echo 3. Verify docker-compose.yml file exists
-    echo 4. Check Docker logs for more details
+    echo ❌ ERROR: Database initialization script not found: %INIT_SQL%
 )
 
 echo.

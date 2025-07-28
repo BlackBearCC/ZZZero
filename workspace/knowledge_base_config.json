@@ -1,0 +1,24 @@
+{
+  "collections": {
+    "character_knowledge": {
+      "name": "character_knowledge",
+      "description": "角色相关知识库",
+      "document_count": 3,
+      "created_at": "2025-07-28T13:37:43.698000",
+      "metadata": {
+        "type": "character",
+        "version": "1.0",
+        "description": "角色相关知识库",
+        "created_at": "2025-07-28T13:37:43.683977"
+      }
+    },
+    "muzhao_corpus": {
+      "name": "muzhao_corpus",
+      "description": "穆昭角色语料库",
+      "document_count": 20,
+      "created_at": "2025-07-28T13:37:44.433298",
+      "metadata": {}
+    }
+  },
+  "updated_at": "2025-07-28T13:37:44.986869"
+}

@@ -7,11 +7,11 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 
-from .postgresql_manager import PostgreSQLManager
+from .sqlite_manager import SQLiteManager
 
 logger = logging.getLogger(__name__)
 
-class StoryManager(PostgreSQLManager):
+class StoryManager(SQLiteManager):
     """剧情数据库管理器"""
     
     def __init__(self, **kwargs):
@@ -22,9 +22,9 @@ class StoryManager(PostgreSQLManager):
         """初始化剧情相关表结构"""
         super()._init_database()
         
-        # 创建剧情主表 (PostgreSQL语法)
+        # 创建剧情主表 (SQLite语法)
         self.create_table_if_not_exists("stories", """(
-            id SERIAL PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             story_id VARCHAR(100) UNIQUE NOT NULL,
             story_name VARCHAR(500) NOT NULL,
             story_overview TEXT,       -- 剧情概述（四幕式描述）
@@ -37,21 +37,15 @@ class StoryManager(PostgreSQLManager):
             story_summary TEXT,        -- JSON格式存储剧情总结
             main_conflict TEXT,
             emotional_development TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )""")
         
-        # 为现有表添加新字段（如果不存在）- PostgreSQL版本
+        # 为现有表添加新字段（如果不存在）- SQLite版本
         try:
-            # PostgreSQL检查列是否存在
-            check_column_sql = """
-            SELECT COUNT(*) as column_exists 
-            FROM information_schema.columns 
-            WHERE table_name = 'stories' AND column_name = 'story_overview'
-            """
-            
-            result = self.execute_query(check_column_sql, fetch_all=False)
-            column_exists = result and result.get('column_exists', 0) > 0
+            # SQLite检查列是否存在
+            schema = self.get_table_schema('stories')
+            column_exists = any(col['column_name'] == 'story_overview' for col in schema)
             
             if not column_exists:
                 self.execute_query("ALTER TABLE stories ADD COLUMN story_overview TEXT")
@@ -64,9 +58,9 @@ class StoryManager(PostgreSQLManager):
             logger.warning(f"添加story_overview列失败: {e}")
             pass
         
-        # 创建小节详情表 (PostgreSQL语法)
+        # 创建小节详情表 (SQLite语法)
         self.create_table_if_not_exists("scenes", """(
-            id SERIAL PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             story_id VARCHAR(100) NOT NULL,
             scene_id VARCHAR(100) NOT NULL,
             scene_title VARCHAR(500) NOT NULL,
@@ -75,33 +69,33 @@ class StoryManager(PostgreSQLManager):
             participants TEXT,  -- JSON格式存储参与角色
             scene_order INTEGER DEFAULT 0,
             scene_metadata TEXT,  -- JSON格式存储额外元数据
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (story_id) REFERENCES stories(story_id) ON DELETE CASCADE,
             UNIQUE(story_id, scene_id)
         )""")
         
-        # 创建角色剧情关联表 (PostgreSQL语法)
+        # 创建角色剧情关联表 (SQLite语法)
         self.create_table_if_not_exists("character_stories", """(
-            id SERIAL PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             character_name VARCHAR(100) NOT NULL,
             story_id VARCHAR(100) NOT NULL,
             relationship_type VARCHAR(50),
             importance_level INTEGER DEFAULT 1,  -- 1-5级重要程度
             character_role VARCHAR(100),  -- 在剧情中的角色定位
             interaction_count INTEGER DEFAULT 0,  -- 互动次数
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (story_id) REFERENCES stories(story_id) ON DELETE CASCADE,
             UNIQUE(character_name, story_id)
         )""")
         
         # 创建剧情标签表（用于分类和搜索）
         self.create_table_if_not_exists("story_tags", """(
-            id SERIAL PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             story_id VARCHAR(100) NOT NULL,
             tag_name VARCHAR(200) NOT NULL,
             tag_category VARCHAR(50) DEFAULT 'general',  -- 标签分类：theme, mood, genre等
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (story_id) REFERENCES stories(story_id) ON DELETE CASCADE,
             UNIQUE(story_id, tag_name)
         )""")

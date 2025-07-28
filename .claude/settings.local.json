@@ -19,7 +19,8 @@
       "Bash(./start_database.sh:*)",
       "Bash(powershell.exe:*)",
       "Bash(rm:*)",
-      "Bash(mv:*)"
+      "Bash(mv:*)",
+      "Bash(sqlite3:*)"
     ],
     "deny": []
   }
