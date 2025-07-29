@@ -158,7 +158,7 @@ class EventHandlers:
                     gr.update(visible=False), 
                     "<div>批处理器未初始化</div>", 
                     gr.update(value=[], headers=None),
-                    gr.update(choices=[], value=[])
+                    self._safe_checkbox_update(choices=[], value=[])  # 使用安全方法
                 )
             
             if enabled and csv_file:
@@ -207,7 +207,7 @@ class EventHandlers:
                                 row_data.append(str(cell_value))
                             preview_data.append(row_data)
                     
-                    # 生成字段选择选项
+                    # 生成字段选择选项 - 确保default_selected不会是None
                     field_choices = []
                     default_selected = []
                     for col in columns:
@@ -215,6 +215,10 @@ class EventHandlers:
                         choice_label = f"{col} ({col_type})"
                         field_choices.append((choice_label, col))
                         default_selected.append(col)  # 默认全选
+                    
+                    # 确保default_selected不为空，至少是空列表
+                    if not default_selected:
+                        default_selected = []
                     
                     status_html = f"""
                     <div style='color: green; padding: 10px; border: 1px solid #4CAF50; border-radius: 4px; background-color: #f1f8e9;'>
@@ -232,7 +236,7 @@ class EventHandlers:
                         gr.update(visible=True), 
                         csv_info_html, 
                         gr.update(value=preview_data, headers=columns),
-                        gr.update(choices=field_choices, value=default_selected)
+                        self._safe_checkbox_update(choices=field_choices, value=default_selected)
                     )
                 else:
                     status_html = f"""
@@ -247,7 +251,7 @@ class EventHandlers:
                         gr.update(visible=False), 
                         "<div>CSV解析失败</div>", 
                         gr.update(value=[], headers=None),
-                        gr.update(choices=[], value=[])
+                        self._safe_checkbox_update(choices=[], value=[])  # 确保value是空列表
                     )
                     
             elif enabled and not csv_file:
@@ -262,7 +266,7 @@ class EventHandlers:
                     gr.update(visible=False), 
                     "<div>等待CSV文件...</div>", 
                     gr.update(value=[], headers=None),
-                    gr.update(choices=[], value=[])
+                    self._safe_checkbox_update(choices=[], value=[])  # 确保value是空列表
                 )
             else:
                 # 关闭批处理模式
@@ -283,7 +287,7 @@ class EventHandlers:
                     gr.update(visible=False), 
                     "<div>批处理模式已关闭</div>", 
                     gr.update(value=[], headers=None),
-                    gr.update(choices=[], value=[])
+                    self._safe_checkbox_update(choices=[], value=[])  # 确保value是空列表
                 )
                 
         except Exception as e:
@@ -298,12 +302,16 @@ class EventHandlers:
                 gr.update(visible=False), 
                 f"<div>错误: {str(e)}</div>", 
                 gr.update(value=[], headers=None),
-                gr.update(choices=[], value=[])
+                self._safe_checkbox_update(choices=[], value=[])  # 确保value是空列表
             )
     
     async def on_fields_update(self, selected_fields):
         """更新字段选择"""
         try:
+            # 防护：确保selected_fields不是None
+            if selected_fields is None:
+                selected_fields = []
+            
             if not self.app.batch_processor:
                 return "<div style='color: red;'>❌ 批处理器未初始化</div>"
             
@@ -1556,3 +1564,21 @@ class EventHandlers:
             ]
             
             yield error_history, "", gr.update(value=[], headers=None, visible=False), f"错误: {str(e)}", "", gr.update(interactive=True) 
+
+    def _safe_checkbox_value(self, value):
+        """确保CheckboxGroup的value参数安全（不能是None）"""
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return value
+        # 如果是其他类型，尝试转换为列表
+        try:
+            return list(value) if value else []
+        except (TypeError, ValueError):
+            return []
+    
+    def _safe_checkbox_update(self, choices=None, value=None, **kwargs):
+        """安全创建CheckboxGroup的gr.update，确保choices和value都不会是None"""
+        safe_choices = choices if choices is not None else []
+        safe_value = self._safe_checkbox_value(value)
+        return gr.update(choices=safe_choices, value=safe_value, **kwargs) 

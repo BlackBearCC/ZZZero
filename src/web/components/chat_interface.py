@@ -117,7 +117,7 @@ class ChatInterface:
                 
                 csv_fields_selection = gr.CheckboxGroup(
                     choices=[],
-                    value=[],
+                    value=[],  # 确保初始值是空列表
                     label="选择要在批处理中使用的字段（勾选需要的字段）",
                     interactive=True
                 )

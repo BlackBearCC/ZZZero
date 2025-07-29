@@ -88,7 +88,7 @@ class FileSaveError(ProfileGenerationError):
     pass
 
 class ProfileGeneratorNode(BaseNode):
-    """角色资料生成节点"""
+    """角色资料生成节点 - 仅支持流式调用"""
     
     def __init__(self, 
                  name: str = "profile_generator",
@@ -98,6 +98,12 @@ class ProfileGeneratorNode(BaseNode):
         self.llm_config = llm_config
         self.kb = kb
         self.template = {}
+        
+        # 发射节点初始化信息
+        self.emit_info("init", f"角色资料生成节点已初始化", {
+            "has_kb": bool(kb),
+            "has_llm_config": bool(llm_config)
+        })
     
     async def _load_template(self):
         """加载人物资料需求模板"""
@@ -147,52 +153,131 @@ class ProfileGeneratorNode(BaseNode):
             raise TemplateLoadError(f"加载人物资料模板失败: {e}") from e
     
     async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """执行角色资料生成"""
+        """执行角色资料生成 - 调用流式方法获取最终结果"""
         final_result = None
         async for result in self.execute_stream(state):
             final_result = result
         return final_result or {"success": False, "error": "执行失败"}
     
     async def execute_stream(self, state: Dict[str, Any]):
-        """流式执行角色资料生成"""
+        """流式执行角色资料生成节点"""
         try:
-            # 加载模板和参数
+            # 加载模板
             await self._load_template()
-            name = state.get('character_name', '')
-            info = state.get('basic_info', '')
-            categories = state.get('selected_categories', []) or list(self.template.keys())
-            collections = state.get('selected_collections', [])
-            llm = state.get('llm')
+            
+            request = state.get("request", {})
+            llm = state.get("llm")
+            
+            name = request.get("name", "")
+            info = request.get("info", "")
+            categories = request.get("categories", [])
+            collections = request.get("collections", [])
+            
+            self.emit_info("start", f"开始生成角色 {name} 的资料", {
+                "name": name,
+                "categories_count": len(categories),
+                "collections_count": len(collections),
+                "has_llm": bool(llm)
+            })
             
             if not name or not info:
-                yield {"success": False, "error": "缺少必要参数：角色名称和基础信息"}
+                error_msg = "缺少必要参数：角色名称和基础信息"
+                self.emit_info("error", error_msg, {"missing": ["name" if not name else None, "info" if not info else None]})
+                yield {"success": False, "error": error_msg}
                 return
             
-            # 生成角色资料
+            # 生成角色资料 - 逐个条目生成
             profile = {}
-            for i, category in enumerate(categories):
-                if category not in self.template:
-                    continue
-                    
-                try:
-                    data = await self._generate_category_data(name, info, category, collections, llm)
-                    profile[category] = data
-                    
-                    # 流式输出进度
-                    yield {
-                        "success": False,
-                        "progress": f"已完成 {i+1}/{len(categories)} 个类别",
-                        "profile": profile.copy(),
-                        "name": name
-                    }
-                except Exception as e:
-                    profile[category] = {"错误": str(e)}
+            total_items = 0
+            completed_items = 0
             
-            # 保存和返回最终结果
+            # 先计算总条目数
+            for category in categories:
+                if category in self.template:
+                    total_items += len(self.template[category])
+            
+            for category_idx, category in enumerate(categories):
+                if category not in self.template:
+                    self.emit_info("skip", f"跳过未知类别: {category}", {"category": category})
+                    continue
+                
+                items = self.template[category]
+                profile[category] = {}
+                
+                self.emit_info("category_start", f"开始生成类别: {category}", {
+                    "category": category,
+                    "items_count": len(items),
+                    "progress": f"类别 {category_idx+1}/{len(categories)}"
+                })
+                
+                # 逐个生成条目
+                for item_idx, item in enumerate(items):
+                    try:
+                        self.emit_info("item_start", f"开始生成条目: {item.item}", {
+                            "category": category,
+                            "item": item.item,
+                            "progress": f"条目 {completed_items+1}/{total_items}"
+                        })
+                        
+                        # 生成单个条目
+                        item_content = await self._generate_single_item(
+                            name, info, category, item, collections, llm
+                        )
+                        
+                        profile[category][item.item] = item_content
+                        completed_items += 1
+                        
+                        self.emit_info("item_complete", f"完成条目: {item.item}", {
+                            "category": category,
+                            "item": item.item,
+                            "content_length": len(item_content),
+                            "progress": f"条目 {completed_items}/{total_items}"
+                        })
+                        
+                        # 流式输出进度
+                        yield {
+                            "success": False,
+                            "progress": f"已完成 {completed_items}/{total_items} 个条目",
+                            "profile": profile.copy(),
+                            "name": name,
+                            "current_category": category,
+                            "current_item": item.item,
+                            "completed_items": completed_items,
+                            "total_items": total_items
+                        }
+                        
+                    except Exception as e:
+                        error_msg = f"生成条目 {item.item} 失败: {str(e)}"
+                        self.emit_info("item_error", error_msg, {
+                            "category": category,
+                            "item": item.item,
+                            "error": str(e)
+                        })
+                        profile[category][item.item] = f"生成失败: {str(e)}"
+                        completed_items += 1
+                
+                self.emit_info("category_complete", f"完成类别: {category}", {
+                    "category": category,
+                    "items_generated": len(profile[category]),
+                    "progress": f"类别 {category_idx+1}/{len(categories)}"
+                })
+            
+            # 保存结果
+            self.emit_info("saving", "开始保存角色资料", {"profile_categories": len(profile)})
             try:
                 output_file = await self._save_profile(name, profile)
-            except Exception:
+                self.emit_info("save_success", f"角色资料保存成功: {output_file}", {"file": output_file})
+            except Exception as e:
+                self.emit_info("save_error", f"保存失败: {str(e)}", {"error": str(e)})
                 output_file = ""
+            
+            # 发射完成信息
+            self.emit_info("complete", "角色资料生成完成", {
+                "categories_generated": len(profile),
+                "items_generated": completed_items,
+                "output_file": output_file,
+                "success": True
+            })
             
             yield {
                 "success": True,
@@ -202,44 +287,285 @@ class ProfileGeneratorNode(BaseNode):
             }
             
         except Exception as e:
-            yield {"success": False, "error": str(e)}
+            error_msg = f"角色资料生成失败: {str(e)}"
+            self.emit_info("fatal_error", error_msg, {"error": str(e)})
+            yield {"success": False, "error": error_msg}
     
+    async def _generate_single_item(self, 
+                                   name: str, 
+                                   info: str, 
+                                   category: str, 
+                                   item: ProfileItem, 
+                                   collections: List[str], 
+                                   llm=None) -> str:
+        """生成单个条目的内容 - 使用优化的提示词结构"""
+        
+        # 设置LLM
+        if llm:
+            self.set_llm(llm)
+        
+        if not self.llm:
+            raise LLMGenerationError("LLM未配置，无法生成角色资料")
+        
+        # 收集上下文
+        context = ""
+        if self.kb and collections:
+            context = await self._gather_item_context(name, info, category, item, collections)
+        
+        # 构建系统提示词（固定部分）
+        system_prompt = """你是一个专业的角色设定生成专家，专门负责为角色生成详细的背景资料。你的任务是根据提供的基础信息和参考资料，生成具体、详细、符合逻辑的角色资料。
+
+## 生成规则
+1. 生成的内容要具体、详细，不能为空或过于简略
+2. 内容要符合角色的整体设定和背景
+3. 充分利用参考资料中的信息，但要合理融合到角色设定中
+4. 保持内容的逻辑一致性和可信度
+5. 摈弃游戏化或特殊资料的参考，专注于现实化的角色塑造
+6. 只生成所要求的具体条目内容，不要添加额外的格式或字段
+7. 直接输出条目内容，不需要JSON格式包装
+
+## 输出要求
+- 直接输出条目的详细内容
+- 内容应该是完整的描述性文本
+- 不要使用列表、表格等格式
+- 确保内容丰富且有深度"""
+
+        # 构建用户提示词（动态部分）
+        user_prompt = f"""请为角色"{name}"生成"{item.item}"这个条目的详细内容。
+
+## 角色基础信息
+{info}
+
+## 所属类别
+{category}
+
+## 条目要求
+- 条目名称：{item.item}"""
+
+        if item.content:
+            user_prompt += f"\n- 条目说明：{item.content}"
+        
+        if item.keywords:
+            user_prompt += f"\n- 关键词：{item.keywords}"
+        
+        if item.notes:
+            user_prompt += f"\n- 备注：{item.notes}"
+
+        if context:
+            user_prompt += f"""
+
+## 参考资料
+{context}"""
+        else:
+            user_prompt += """
+
+## 参考资料
+无额外参考资料"""
+
+        user_prompt += """
+
+请开始生成该条目的详细内容："""
+        
+        self.emit_info("llm_start", f"开始LLM生成条目: {item.item}", {
+            "category": category,
+            "item": item.item,
+            "system_prompt_length": len(system_prompt),
+            "user_prompt_length": len(user_prompt),
+            "llm_type": type(self.llm).__name__
+        })
+        
+        # 使用优化的提示词结构调用LLM
+        final_content = ""
+        think_content = ""
+        
+        # 构建消息列表
+        from core.types import Message, MessageRole
+        messages = [
+            Message(role=MessageRole.SYSTEM, content=system_prompt),
+            Message(role=MessageRole.USER, content=user_prompt)
+        ]
+        
+        # 直接调用LLM的stream_generate方法
+        chunk_count = 0
+        async for chunk_data in self.llm.stream_generate(
+            messages, 
+            mode="think",
+            return_dict=True
+        ):
+            chunk_count += 1
+            
+            think_part = chunk_data.get("think", "")
+            content_part = chunk_data.get("content", "")
+            
+            think_content += think_part
+            final_content += content_part
+            
+            # 发射LLM流式输出信息
+            if content_part:
+                self.emit_info("llm_streaming", f"LLM生成中: {item.item}", {
+                    "category": category,
+                    "item": item.item,
+                    "chunk_count": chunk_count,
+                    "current_content": content_part,
+                    "accumulated_content": final_content,
+                    "think_content": think_content,
+                    "content_length": len(final_content)
+                })
+        
+        self.emit_info("llm_complete", f"LLM生成完成: {item.item}", {
+            "category": category,
+            "item": item.item,
+            "response_length": len(final_content)
+        })
+        
+        # 清理并返回内容
+        cleaned_content = final_content.strip()
+        if not cleaned_content:
+            raise LLMGenerationError(f"LLM未生成有效内容")
+        
+        return cleaned_content
+
+    async def _gather_item_context(self, 
+                                  name: str, 
+                                  info: str, 
+                                  category: str, 
+                                  item: ProfileItem,
+                                  collections: List[str]) -> str:
+        """为单个条目收集相关上下文信息"""
+        if not self.kb:
+            return ""
+        
+        # 构建更精确的查询文本
+        queries = [
+            f"{name} {item.item}",
+            f"{name} {category} {item.item}",
+            f"{item.item} {category}",
+        ]
+        
+        # 如果有关键词，添加关键词查询
+        if item.keywords:
+            queries.append(f"{name} {item.keywords}")
+            queries.append(f"{item.keywords} {category}")
+        
+        # 如果有具体说明，添加说明查询
+        if item.content:
+            queries.append(f"{name} {item.content}")
+        
+        context_list = []
+        
+        for collection in collections:
+            for query in queries:
+                try:
+                    results = await self.kb.query_documents(
+                        collection_name=collection, query_text=query, n_results=2
+                    )
+                    for result in results:
+                        context_list.append(f"来源：{collection}\n内容：{result['document']}\n")
+                except Exception:
+                    continue
+        
+        return "\n---\n".join(context_list) if context_list else ""
+
+    # 保留原有的方法但标记为已废弃
     async def _generate_category_data(self, name: str, info: str, category: str, collections: List[str], llm=None) -> Dict[str, Any]:
-        """生成特定类别的角色数据"""
+        """生成特定类别的角色数据 - 已废弃，请使用_generate_single_item"""
         items = self.template.get(category, [])
         if not items:
+            self.emit_info("category_empty", f"类别 {category} 没有定义条目", {"category": category})
             return {}
         
-        # 构建知识库上下文
+        # 设置LLM
+        if llm:
+            self.set_llm(llm)
+        
+        if not self.llm:
+            raise LLMGenerationError("LLM未配置，无法生成角色资料")
+        
+        
         context = ""
         if self.kb and collections:
             context = await self._gather_context(name, info, category, collections)
+            
+        # 使用钩子函数构建提示
+        prompt_template = """
+请为角色"{name}"生成详细的"{category}"类别资料。该资料将用于剧情设计时人物资料的补足。
+
+## 角色基础信息
+{info}
+
+## 需要生成的类别：{category}
+## 具体条目要求：
+{items_desc}
+
+## 参考资料
+{context}
+
+## 输出格式要求
+必须严格按照以下JSON格式输出：
+```json
+{{
+    "条目1": "详细内容...",
+    ...
+}}
+```
+
+请开始生成："""
         
-        # 构建生成提示
-        system_content, user_content = self._build_prompt(name, info, category, items, context)
+        # 构建条目说明
+        items_desc = []
+        for item in items:
+            desc = f"- 条目：{item.item}"
+            if item.content:
+                desc += f"\n  内容：{item.content}"
+            if item.keywords:
+                desc += f"\n  关键词：{item.keywords}"
+            items_desc.append(desc)
         
-        # 调用LLM生成
-        if not llm:
-            raise LLMGenerationError("LLM未配置，无法生成角色资料")
+        # 使用钩子函数构建提示
+        prompt = self.prompt(prompt_template, 
+                           name=name, 
+                           info=info, 
+                           category=category,
+                           items_desc="\n".join(items_desc),
+                           context=context if context else "无额外参考资料")
         
-        if not hasattr(llm, 'config') or not llm.config:
-            raise LLMGenerationError("LLM配置未正确初始化")
+        self.emit_info("llm_start", f"开始LLM生成 {category} 类别数据", {
+            "prompt_length": len(prompt),
+            "llm_type": type(self.llm).__name__
+        })
         
-        # 尝试初始化LLM（如果需要）
-        if hasattr(llm, 'initialize'):
-            await llm.initialize()
+        # 使用钩子函数调用LLM
+        final_content = ""
+        think_content = ""
+        async for chunk in self.astream(prompt, mode="think"):
+            think_content = chunk["think"]
+            final_content = chunk["content"]
+            
+            # 发射LLM流式输出信息 - 传递实际生成的内容
+            if chunk["current_content"]:
+                self.emit_info("llm_streaming", f"LLM生成中", {
+                    "category": category,
+                    "chunk_count": chunk["chunk_count"],
+                    "current_content": chunk["current_content"],  # 当前chunk的内容
+                    "accumulated_content": final_content,  # 累积的内容
+                    "think_content": think_content,  # 思考过程
+                    "content_length": len(final_content)
+                })
         
-        from core.types import Message, MessageRole
-        messages = [
-            Message(role=MessageRole.SYSTEM, content=system_content),
-            Message(role=MessageRole.USER, content=user_content)
-        ]
+        self.emit_info("llm_complete", f"LLM生成完成", {
+            "category": category,
+            "response_length": len(final_content)
+        })
         
-        response = await llm.generate(messages)
-        if not response or not hasattr(response, 'content'):
-            raise LLMGenerationError("LLM返回空响应或格式错误")
+        # 使用钩子函数解析响应
+        result = self.parse(final_content, format_type="json")
         
-        return self._parse_response(response.content, items)
+        self.emit_info("parse_complete", f"响应解析完成", {
+            "category": category,
+            "parsed_keys": list(result.keys()) if isinstance(result, dict) else []
+        })
+        
+        return result
     
     async def _gather_context(self, 
                                       name: str, 
@@ -284,20 +610,18 @@ class ProfileGeneratorNode(BaseNode):
         system_content = """你是一个专业的角色设定生成专家，专门负责为角色生成详细的背景资料。你的任务是根据提供的基础信息和参考资料，生成具体、详细、符合逻辑的角色资料。
 
 ## 生成规则
-1. 每个条目都要有具体、详细的内容，不能为空
+1. 每个条目都要有具体、详细的内容，不能为空，内容清晰明确，不需要抽象的无意义的词汇修饰
 2. 内容要符合角色的整体设定和背景
-3. 充分利用参考资料中的信息，但要合理融合到角色设定中
+3. 充分参考参考资料中的信息，但以当前任务为主，不需要强制融合
 4. 保持内容的逻辑一致性和可信度
-5. 摈弃游戏化或特殊资料的参考，专注于现实化的角色塑造
-6. 输出格式为JSON，字段名使用中文
+5. 摈弃游戏化或特殊资料的参考，过滤女主相关内容，专注于现实化的角色塑造，让他更像生活在现实世界的人
+6. 输出格式为JSON，字段名使用中文，内容不包含任何符号，不超过300字
 
 ## 输出格式要求
 必须严格按照以下JSON格式输出：
 ```json
 {
-    "条目1": "详细内容...",
-    "条目2": "详细内容...",
-    ...
+    "条目名": "详细内容...",
 }
 ```"""
 
@@ -602,12 +926,14 @@ class ProfileWorkflow:
                 print("[ProfileWorkflow] 警告: 未提供LLM配置")
                 logger.warning("未提供LLM配置")
             
-            # 准备输入状态
+            # 准备输入状态 - 使用新的request结构
             initial_state = {
-                'character_name': character_name,
-                'basic_info': basic_info,
-                'selected_categories': selected_categories or [],
-                'selected_collections': selected_collections or [],
+                'request': {
+                    'name': character_name,
+                    'info': basic_info,
+                    'categories': selected_categories or [],
+                    'collections': selected_collections or []
+                },
                 'llm': llm  # 传递LLM对象到状态中
             }
             
@@ -615,20 +941,19 @@ class ProfileWorkflow:
             logger.info(f"准备执行工作流，初始状态键: {list(initial_state.keys())}")
             
             # 执行工作流
-            print("[ProfileWorkflow] 开始执行compiled_graph.invoke()...")
-            logger.info("开始执行compiled_graph.invoke()...")
-            result = await compiled_graph.invoke(initial_state)
+            print("[ProfileWorkflow] 开始执行工作流图...")
+            logger.info("开始执行工作流图...")
+            result = await compiled_graph.ainvoke(initial_state)
             
-            print(f"[ProfileWorkflow] 工作流执行完成，结果键: {list(result.keys()) if isinstance(result, dict) else type(result)}")
-            logger.info(f"工作流执行完成，结果键: {list(result.keys()) if isinstance(result, dict) else type(result)}")
+            print(f"[ProfileWorkflow] 工作流执行完成，结果类型: {type(result)}")
+            logger.info(f"工作流执行完成，结果类型: {type(result)}")
             
             return result
             
         except Exception as e:
-            print(f"[ProfileWorkflow] 角色资料生成工作流执行失败: {e}")
-            logger.error(f"角色资料生成工作流执行失败: {e}")
-            import traceback
-            traceback.print_exc()
+            error_msg = f"角色资料生成失败: {str(e)}"
+            print(f"[ProfileWorkflow] 错误: {error_msg}")
+            logger.error(error_msg, exc_info=True)
             return {
                 'success': False,
                 'error': str(e)
@@ -660,12 +985,14 @@ class ProfileWorkflow:
             if self.llm_config:
                 llm = LLMFactory.create(self.llm_config)
             
-            # 准备输入状态
+            # 准备输入状态 - 使用新的request结构
             initial_state = {
-                'character_name': character_name,
-                'basic_info': basic_info,
-                'selected_categories': selected_categories or [],
-                'selected_collections': selected_collections or [],
+                'request': {
+                    'name': character_name,
+                    'info': basic_info,
+                    'categories': selected_categories or [],
+                    'collections': selected_collections or []
+                },
                 'llm': llm
             }
             
@@ -674,7 +1001,6 @@ class ProfileWorkflow:
                 yield result
                 
         except Exception as e:
-            logger.error(f"角色资料生成工作流流式执行失败: {e}")
             yield {
                 'success': False,
                 'error': str(e)

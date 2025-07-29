@@ -7,6 +7,7 @@ import logging
 from typing import List, Dict, Any, Optional, Tuple
 import json
 from datetime import datetime
+from flask import Flask
 
 import sys
 import os
@@ -40,6 +41,19 @@ HTML_HEAD = """
 
 # 配置日志
 logger = logging.getLogger(__name__)
+
+# 添加monkey patch来修复CheckboxGroup的None值问题
+original_preprocess = gr.components.CheckboxGroup.preprocess
+
+def safe_preprocess(self, payload):
+    """安全的CheckboxGroup预处理，防止None值错误"""
+    if payload is None:
+        payload = []
+    elif not isinstance(payload, (list, tuple)):
+        payload = []
+    return original_preprocess(self, payload)
+
+gr.components.CheckboxGroup.preprocess = safe_preprocess
 
 class AgentApp:
     """Agent应用界面（重构版）"""
@@ -157,7 +171,7 @@ class AgentApp:
             error_msg = f"更新Agent配置失败: {e}"
             logger.error(error_msg)
             return error_msg
-            
+    
     def create_interface(self) -> gr.Blocks:
         """创建Gradio界面（重构版）"""
         with gr.Blocks(title=self.title, theme=gr.themes.Soft(), head=HTML_HEAD) as app:
@@ -200,8 +214,8 @@ class AgentApp:
                 # Tab 5: 角色资料生成
                 with gr.TabItem("🎭 角色资料", id="character_profile_tab"):
                     from web.components.character_profile_interface import CharacterProfileInterface
-                    character_profile_interface = CharacterProfileInterface()
-                    character_profile_components = character_profile_interface.create_character_profile_interface()
+                    self.character_profile_interface = CharacterProfileInterface(self.llm_factory)
+                    character_profile_components = self.character_profile_interface.create_character_profile_interface()
                 
                 # Tab 6: 知识库管理
                 with gr.TabItem("📚 知识库", id="knowledge_base_tab"):
@@ -220,14 +234,14 @@ class AgentApp:
                         database_components = gr.Markdown("❌ 数据库功能不可用（数据库连接失败）")
             
             # === 事件绑定 ===
-            self._bind_events(config_components, chat_components, story_components, queue_components, app)
+            self._bind_events(config_components, chat_components, story_components, queue_components, character_profile_components, app)
             
             # 添加自定义CSS
             app.css = get_custom_css()
             
         return app
     
-    def _bind_events(self, config_components: Dict[str, Any], chat_components: Dict[str, Any], story_components: Dict[str, Any], queue_components: gr.Blocks, app):
+    def _bind_events(self, config_components: Dict[str, Any], chat_components: Dict[str, Any], story_components: Dict[str, Any], queue_components: gr.Blocks, character_profile_components: gr.Blocks, app):
         """绑定所有事件处理器"""
         # 配置变化事件
         for component in [
@@ -533,6 +547,11 @@ class AgentApp:
                 inputs=[story_components['location_selector']],
                 outputs=[story_components.get('locations_preview')]
             )
+
+        # === 角色资料界面事件绑定 ===
+        if hasattr(self, 'character_profile_interface') and self.character_profile_interface:
+            # 调用角色资料界面的事件绑定方法
+            self.character_profile_interface._bind_events(character_profile_components)
 
         # 页面加载事件
         app.load(

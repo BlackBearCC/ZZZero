@@ -6,6 +6,9 @@ from typing import Dict, List, Any, Optional, Union, AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime
 import asyncio
+import sqlite3
+import json
+import os
 from enum import Enum
 
 from .types import (
@@ -131,18 +134,69 @@ class BaseNode(ABC):
                  description: Optional[str] = None,
                  llm: Optional['BaseLLMProvider'] = None,
                  stream: bool = True,
+                 enable_recording: bool = True,
                  **kwargs):
         self.name = name
         self.node_type = node_type
         self.description = description
         self.stream = stream
+        self.enable_recording = enable_recording
         self.config = kwargs
         self.llm = llm
         self.info_stream = NodeInfoStream()
         
+        # 记录相关属性
+        self._execution_start_time = None
+        self._execution_input_data = None
+        self._execution_output_data = None
+        self._node_results = []
+        self._graph_name = None
+        
+    def set_graph_context(self, graph_name: str, input_data: Dict[str, Any]):
+        """设置图执行上下文"""
+        self._graph_name = graph_name
+        self._execution_input_data = input_data.copy()
+        self._execution_start_time = datetime.now()
+        
+    def add_node_result(self, result_data: Dict[str, Any]):
+        """添加节点执行结果"""
+        self._node_results.append({
+            "node_name": self.name,
+            "timestamp": datetime.now().isoformat(),
+            "result": result_data
+        })
+        
+    def _record_execution(self, output_data: Dict[str, Any], success: bool = True, error_message: str = None):
+        """记录执行结果到SQLite"""
+        if not self.enable_recording or not self._graph_name:
+            return
+            
+        try:
+            recorder = get_graph_recorder()
+            recorder.record_execution(
+                graph_name=self._graph_name,
+                input_data=self._execution_input_data or {},
+                output_result=output_data,
+                node_results=self._node_results,
+                start_time=self._execution_start_time or datetime.now(),
+                end_time=datetime.now(),
+                success=success,
+                error_message=error_message
+            )
+        except Exception as e:
+            print(f"[BaseNode] 记录执行结果失败: {e}")
+        
     def emit_info(self, event_type: str, content: str, metadata: Dict[str, Any] = None):
         """发射节点信息到信息流"""
         self.info_stream.emit(event_type, self.name, content, metadata)
+        
+        # 如果是重要事件，记录到节点结果中
+        if event_type in ["start", "complete", "error", "fatal_error"]:
+            self.add_node_result({
+                "event_type": event_type,
+                "content": content,
+                "metadata": metadata or {}
+            })
         
     @abstractmethod
     async def execute(self, state: Dict[str, Any]) -> Union[Dict[str, Any], Command]:
@@ -152,6 +206,10 @@ class BaseNode(ABC):
     async def run(self, state: Dict[str, Any]) -> NodeResult:
         """运行节点并返回NodeResult"""
         start_time = datetime.now()
+        
+        # 设置图执行上下文
+        if '_graph_name' in state:
+            self.set_graph_context(state['_graph_name'], state)
         
         try:
             result = await self.execute(state)
@@ -165,6 +223,10 @@ class BaseNode(ABC):
                 state_update = result if isinstance(result, dict) else {}
                 metadata = {}
             
+            # 记录成功执行
+            if self.enable_recording:
+                self._record_execution(state_update, success=True)
+            
             return NodeResult(
                 node_name=self.name,
                 node_type=self.node_type,
@@ -177,6 +239,11 @@ class BaseNode(ABC):
             
         except Exception as e:
             end_time = datetime.now()
+            
+            # 记录失败执行
+            if self.enable_recording:
+                self._record_execution({}, success=False, error_message=str(e))
+            
             return NodeResult(
                 node_name=self.name,
                 node_type=self.node_type,
@@ -200,6 +267,10 @@ class BaseNode(ABC):
         """流式运行节点并返回NodeResult"""
         start_time = datetime.now()
         
+        # 设置图执行上下文
+        if '_graph_name' in state:
+            self.set_graph_context(state['_graph_name'], state)
+        
         try:
             final_result = None
             async for result in self.execute_stream(state):
@@ -222,8 +293,18 @@ class BaseNode(ABC):
                     metadata=metadata
                 )
             
+            # 记录最终成功执行
+            if self.enable_recording and final_result:
+                final_state = final_result if isinstance(final_result, dict) else {}
+                self._record_execution(final_state, success=True)
+            
         except Exception as e:
             end_time = datetime.now()
+            
+            # 记录失败执行
+            if self.enable_recording:
+                self._record_execution({}, success=False, error_message=str(e))
+            
             yield NodeResult(
                 node_name=self.name,
                 node_type=self.node_type,
@@ -477,3 +558,114 @@ class BaseLLM(ABC):
                             **kwargs) -> AsyncIterator[str]:
         """流式生成回复"""
         pass
+
+
+class GraphExecutionRecorder:
+    """Graph执行记录器 - SQLite实现"""
+    
+    def __init__(self, db_path: str = "workspace/graph_executions.db"):
+        self.db_path = db_path
+        self._ensure_dir()
+        self._init_db()
+    
+    def _ensure_dir(self):
+        """确保数据库目录存在"""
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+    
+    def _init_db(self):
+        """初始化数据库表"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS graph_executions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    graph_name TEXT NOT NULL,
+                    input_data TEXT NOT NULL,
+                    output_result TEXT NOT NULL,
+                    node_results TEXT NOT NULL,
+                    start_time TEXT NOT NULL,
+                    end_time TEXT,
+                    duration_seconds REAL,
+                    success BOOLEAN NOT NULL,
+                    error_message TEXT,
+                    created_at TEXT NOT NULL
+                )
+            """)
+            
+            # 创建索引
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_graph_name ON graph_executions(graph_name)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_start_time ON graph_executions(start_time)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_success ON graph_executions(success)")
+            conn.commit()
+    
+    def record_execution(self, 
+                        graph_name: str,
+                        input_data: Dict[str, Any],
+                        output_result: Dict[str, Any],
+                        node_results: List[Dict[str, Any]],
+                        start_time: datetime,
+                        end_time: datetime = None,
+                        success: bool = True,
+                        error_message: str = None) -> int:
+        """记录graph执行结果"""
+        end_time = end_time or datetime.now()
+        duration = (end_time - start_time).total_seconds()
+        
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.execute("""
+                    INSERT INTO graph_executions 
+                    (graph_name, input_data, output_result, node_results, 
+                     start_time, end_time, duration_seconds, success, error_message, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    graph_name,
+                    json.dumps(input_data, ensure_ascii=False, default=str),
+                    json.dumps(output_result, ensure_ascii=False, default=str),
+                    json.dumps(node_results, ensure_ascii=False, default=str),
+                    start_time.isoformat(),
+                    end_time.isoformat(),
+                    duration,
+                    success,
+                    error_message,
+                    datetime.now().isoformat()
+                ))
+                conn.commit()
+                return cursor.lastrowid
+        except Exception as e:
+            print(f"[GraphExecutionRecorder] 记录执行失败: {e}")
+            return -1
+    
+    def get_recent_executions(self, graph_name: str = None, limit: int = 10) -> List[Dict[str, Any]]:
+        """获取最近的执行记录"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                if graph_name:
+                    cursor = conn.execute("""
+                        SELECT * FROM graph_executions 
+                        WHERE graph_name = ? 
+                        ORDER BY start_time DESC 
+                        LIMIT ?
+                    """, (graph_name, limit))
+                else:
+                    cursor = conn.execute("""
+                        SELECT * FROM graph_executions 
+                        ORDER BY start_time DESC 
+                        LIMIT ?
+                    """, (limit,))
+                
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            print(f"[GraphExecutionRecorder] 获取记录失败: {e}")
+            return []
+
+
+# 全局记录器实例
+_global_recorder = None
+
+def get_graph_recorder() -> GraphExecutionRecorder:
+    """获取全局graph记录器实例"""
+    global _global_recorder
+    if _global_recorder is None:
+        _global_recorder = GraphExecutionRecorder()
+    return _global_recorder

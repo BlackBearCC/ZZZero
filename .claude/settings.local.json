@@ -20,7 +20,11 @@
       "Bash(powershell.exe:*)",
       "Bash(rm:*)",
       "Bash(mv:*)",
-      "Bash(sqlite3:*)"
+      "Bash(sqlite3:*)",
+      "Bash(rg:*)",
+      "Bash(xdg-open:*)",
+      "Bash(pkill:*)",
+      "Bash(true)"
     ],
     "deny": []
   }

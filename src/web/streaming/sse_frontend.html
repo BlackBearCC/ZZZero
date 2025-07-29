@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>工作流执行过程</title>
+    <style>
+        .workflow-chat {
+            width: 100%;
+            height: 500px;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            background: #f9f9f9;
+            display: flex;
+            flex-direction: column;
+            font-family: 'Arial', sans-serif;
+        }
+
+        .chat-header {
+            padding: 12px 16px;
+            background: #4CAF50;
+            color: white;
+            border-radius: 8px 8px 0 0;
+            font-weight: bold;
+            text-align: center;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .message {
+            max-width: 85%;
+            padding: 10px 14px;
+            border-radius: 18px;
+            margin-bottom: 8px;
+            word-wrap: break-word;
+            animation: fadeIn 0.3s ease-in;
+        }
+
+        .message.system {
+            background: #e3f2fd;
+            color: #1976d2;
+            align-self: flex-start;
+            border-left: 4px solid #2196f3;
+        }
+
+        .message.agent {
+            background: #f3e5f5;
+            color: #7b1fa2;
+            align-self: flex-end;
+            border-left: 4px solid #9c27b0;
+        }
+
+        .message.error {
+            background: #ffebee;
+            color: #c62828;
+            align-self: flex-start;
+            border-left: 4px solid #f44336;
+        }
+
+        .message.success {
+            background: #e8f5e8;
+            color: #2e7d32;
+            align-self: flex-start;
+            border-left: 4px solid #4caf50;
+        }
+
+        .message.streaming {
+            background: #fff3e0;
+            color: #ef6c00;
+            align-self: flex-start;
+            border-left: 4px solid #ff9800;
+            position: relative;
+        }
+
+        .message-sender {
+            font-weight: bold;
+            font-size: 0.9em;
+            margin-bottom: 4px;
+        }
+
+        .message-content {
+            line-height: 1.4;
+            white-space: pre-wrap;
+        }
+
+        .message-time {
+            font-size: 0.8em;
+            opacity: 0.7;
+            margin-top: 4px;
+        }
+
+        .typing-indicator {
+            display: none;
+            padding: 8px 16px;
+            background: #f0f0f0;
+            border-radius: 18px;
+            align-self: flex-start;
+            max-width: 100px;
+        }
+
+        .typing-indicator.active {
+            display: block;
+            animation: pulse 1.5s infinite;
+        }
+
+        .typing-dots {
+            display: flex;
+            gap: 4px;
+        }
+
+        .typing-dot {
+            width: 8px;
+            height: 8px;
+            background: #999;
+            border-radius: 50%;
+            animation: typingAnimation 1.4s infinite;
+        }
+
+        .typing-dot:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .typing-dot:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        .status-bar {
+            padding: 8px 16px;
+            background: #f5f5f5;
+            border-top: 1px solid #e0e0e0;
+            border-radius: 0 0 8px 8px;
+            font-size: 0.9em;
+            color: #666;
+        }
+
+        .controls {
+            padding: 8px 16px;
+            background: #f8f9fa;
+            border-top: 1px solid #e0e0e0;
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+
+        .control-btn {
+            padding: 4px 12px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.8em;
+        }
+
+        .control-btn:hover {
+            background: #0056b3;
+        }
+
+        .control-btn.danger {
+            background: #dc3545;
+        }
+
+        .control-btn.danger:hover {
+            background: #c82333;
+        }
+
+        /* 滚动条样式 */
+        .chat-messages::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .chat-messages::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 3px;
+        }
+
+        .chat-messages::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 3px;
+        }
+
+        .chat-messages::-webkit-scrollbar-thumb:hover {
+            background: #a8a8a8;
+        }
+
+        /* 动画效果 */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        @keyframes typingAnimation {
+            0%, 80%, 100% { 
+                transform: scale(0);
+                opacity: 0.5;
+            }
+            40% { 
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+
+        /* 折叠式思考过程样式 */
+        details {
+            margin: 8px 0;
+            padding: 8px;
+            background: rgba(0,0,0,0.05);
+            border-radius: 6px;
+            border-left: 3px solid #ffc107;
+        }
+
+        details summary {
+            cursor: pointer;
+            font-weight: bold;
+            padding: 4px 0;
+            color: #856404;
+        }
+
+        details[open] summary {
+            margin-bottom: 8px;
+        }
+
+        details p {
+            margin: 4px 0;
+            padding-left: 12px;
+            color: #6c757d;
+            font-size: 0.9em;
+        }
+
+        /* 响应式设计 */
+        @media (max-width: 768px) {
+            .message {
+                max-width: 95%;
+            }
+            
+            .chat-messages {
+                padding: 12px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="workflow-chat" id="workflowChat">
+        <div class="chat-header">
+            💬 工作流执行过程
+        </div>
+        
+        <div class="chat-messages" id="chatMessages">
+            <!-- 消息将通过JavaScript动态添加 -->
+        </div>
+        
+        <div class="typing-indicator" id="typingIndicator">
+            <div class="typing-dots">
+                <div class="typing-dot"></div>
+                <div class="typing-dot"></div>
+                <div class="typing-dot"></div>
+            </div>
+        </div>
+        
+        <div class="status-bar" id="statusBar">
+            状态：等待开始...
+        </div>
+        
+        <div class="controls">
+            <button class="control-btn" onclick="clearMessages()">清空对话</button>
+            <button class="control-btn" onclick="toggleAutoScroll()">自动滚动</button>
+            <button class="control-btn danger" onclick="stopWorkflow()">停止工作流</button>
+        </div>
+    </div>
+
+    <script>
+        class WorkflowChat {
+            constructor() {
+                this.chatMessages = document.getElementById('chatMessages');
+                this.statusBar = document.getElementById('statusBar');
+                this.typingIndicator = document.getElementById('typingIndicator');
+                this.sessionId = null;
+                this.eventSource = null;
+                this.autoScroll = true;
+                this.streamingMessages = new Map(); // 存储流式消息的引用
+                this.messageQueue = []; // 消息队列，用于处理高频更新
+                this.isProcessingQueue = false;
+                
+                // 初始化消息处理队列
+                this.startMessageProcessor();
+            }
+
+            // 启动SSE连接
+            async startSSE(workflowParams) {
+                try {
+                    // 创建SSE会话 - 使用Flask服务器端口
+                    const createResponse = await fetch('http://127.0.0.1:5001/api/workflow/character_profile_stream', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(workflowParams)
+                    });
+                    
+                    if (!createResponse.ok) {
+                        throw new Error(`HTTP error! status: ${createResponse.status}`);
+                    }
+                    
+                    const sessionData = await createResponse.json();
+                    this.sessionId = sessionData.session_id;
+                    
+                    // 创建SSE连接
+                    this.eventSource = new EventSource(`http://127.0.0.1:5001/api/sse/stream/${this.sessionId}`);
+                    
+                    this.eventSource.onopen = () => {
+                        console.log('SSE连接已建立');
+                        this.updateStatus('已连接到服务器...');
+                    };
+                    
+                    this.eventSource.onmessage = (event) => {
+                        try {
+                            const data = JSON.parse(event.data);
+                            this.handleSSEEvent(data);
+                        } catch (error) {
+                            console.error('解析SSE数据失败:', error);
+                        }
+                    };
+                    
+                    this.eventSource.onerror = (error) => {
+                        console.error('SSE连接错误:', error);
+                        this.updateStatus('连接中断，尝试重连...');
+                        // 自动重连逻辑可以在这里实现
+                    };
+                    
+                } catch (error) {
+                    console.error('启动SSE失败:', error);
+                    this.addMessage('系统', `连接失败：${error.message}`, 'error');
+                }
+            }
+
+            // 处理SSE事件
+            handleSSEEvent(data) {
+                const { type } = data;
+                
+                switch (type) {
+                    case 'message':
+                        const messageData = data.data;
+                        this.addMessage(
+                            messageData.sender, 
+                            messageData.content, 
+                            messageData.type || 'normal'
+                        );
+                        break;
+                        
+                    case 'streaming_content':
+                        this.updateStreamingMessage(data.node, data.content);
+                        break;
+                        
+                    case 'status':
+                        this.updateStatus(data.status);
+                        break;
+                        
+                    case 'complete':
+                        this.handleWorkflowComplete();
+                        break;
+                        
+                    default:
+                        console.log('未知SSE事件类型:', type);
+                }
+            }
+
+            // 消息队列处理器
+            startMessageProcessor() {
+                setInterval(() => {
+                    if (!this.isProcessingQueue && this.messageQueue.length > 0) {
+                        this.isProcessingQueue = true;
+                        const batch = this.messageQueue.splice(0, 5); // 每次处理5条消息
+                        
+                        batch.forEach(messageData => {
+                            this.processMessage(messageData);
+                        });
+                        
+                        this.isProcessingQueue = false;
+                        
+                        if (this.autoScroll) {
+                            this.scrollToBottom();
+                        }
+                    }
+                }, 100); // 每100ms处理一次队列
+            }
+
+            // 添加消息到队列
+            addMessage(sender, content, type = 'normal') {
+                this.messageQueue.push({ sender, content, type, timestamp: new Date() });
+            }
+
+            // 处理单条消息
+            processMessage(messageData) {
+                const { sender, content, type, timestamp } = messageData;
+                
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${this.getMessageClass(sender, type)}`;
+                
+                const senderSpan = document.createElement('div');
+                senderSpan.className = 'message-sender';
+                senderSpan.textContent = sender;
+                
+                const contentDiv = document.createElement('div');
+                contentDiv.className = 'message-content';
+                
+                // 处理markdown和HTML内容
+                if (content.includes('<details>') || content.includes('**')) {
+                    contentDiv.innerHTML = this.formatMessageContent(content);
+                } else {
+                    contentDiv.textContent = content;
+                }
+                
+                const timeSpan = document.createElement('div');
+                timeSpan.className = 'message-time';
+                timeSpan.textContent = this.formatTime(timestamp);
+                
+                messageDiv.appendChild(senderSpan);
+                messageDiv.appendChild(contentDiv);
+                messageDiv.appendChild(timeSpan);
+                
+                this.chatMessages.appendChild(messageDiv);
+            }
+
+            // 更新流式消息（打字机效果）
+            updateStreamingMessage(nodeKey, content) {
+                let messageDiv = this.streamingMessages.get(nodeKey);
+                
+                if (!messageDiv) {
+                    // 创建新的流式消息
+                    messageDiv = document.createElement('div');
+                    messageDiv.className = 'message streaming';
+                    
+                    const senderSpan = document.createElement('div');
+                    senderSpan.className = 'message-sender';
+                    senderSpan.textContent = nodeKey;
+                    
+                    const contentDiv = document.createElement('div');
+                    contentDiv.className = 'message-content';
+                    
+                    const timeSpan = document.createElement('div');
+                    timeSpan.className = 'message-time';
+                    timeSpan.textContent = this.formatTime(new Date());
+                    
+                    messageDiv.appendChild(senderSpan);
+                    messageDiv.appendChild(contentDiv);
+                    messageDiv.appendChild(timeSpan);
+                    
+                    this.chatMessages.appendChild(messageDiv);
+                    this.streamingMessages.set(nodeKey, messageDiv);
+                }
+                
+                // 更新内容（打字机效果）
+                const contentDiv = messageDiv.querySelector('.message-content');
+                this.typewriterEffect(contentDiv, content);
+                
+                if (this.autoScroll) {
+                    this.scrollToBottom();
+                }
+            }
+
+            // 打字机效果
+            typewriterEffect(element, targetText) {
+                const currentText = element.textContent || '';
+                
+                if (targetText.length > currentText.length) {
+                    // 文本增加 - 逐字符添加
+                    const newChar = targetText[currentText.length];
+                    element.textContent = currentText + newChar;
+                    
+                    // 如果还有更多字符，继续添加
+                    if (currentText.length + 1 < targetText.length) {
+                        setTimeout(() => {
+                            this.typewriterEffect(element, targetText);
+                        }, 20); // 20ms间隔，创造打字机效果
+                    }
+                } else if (targetText !== currentText) {
+                    // 内容完全不同 - 直接替换
+                    if (targetText.includes('<details>') || targetText.includes('**')) {
+                        element.innerHTML = this.formatMessageContent(targetText);
+                    } else {
+                        element.textContent = targetText;
+                    }
+                }
+            }
+
+            // 格式化消息内容
+            formatMessageContent(content) {
+                // 处理markdown粗体
+                content = content.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+                
+                // 处理换行
+                content = content.replace(/\\n/g, '\n').replace(/\n/g, '<br>');
+                
+                // 保持HTML标签（如details）
+                return content;
+            }
+
+            // 获取消息样式类
+            getMessageClass(sender, type) {
+                if (type === 'error') return 'error';
+                if (type === 'success') return 'success';
+                if (type === 'streaming') return 'streaming';
+                if (sender === '系统' || sender.startsWith('[')) return 'system';
+                return 'agent';
+            }
+
+            // 格式化时间
+            formatTime(date) {
+                return date.toLocaleTimeString('zh-CN', { 
+                    hour12: false, 
+                    hour: '2-digit', 
+                    minute: '2-digit', 
+                    second: '2-digit' 
+                });
+            }
+
+            // 更新状态栏
+            updateStatus(status) {
+                this.statusBar.textContent = `状态：${status}`;
+            }
+
+            // 显示打字指示器
+            showTypingIndicator() {
+                this.typingIndicator.classList.add('active');
+                if (this.autoScroll) {
+                    this.scrollToBottom();
+                }
+            }
+
+            // 隐藏打字指示器
+            hideTypingIndicator() {
+                this.typingIndicator.classList.remove('active');
+            }
+
+            // 滚动到底部
+            scrollToBottom() {
+                this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+            }
+
+            // 处理工作流完成
+            handleWorkflowComplete() {
+                this.hideTypingIndicator();
+                this.updateStatus('工作流执行完成');
+                
+                if (this.eventSource) {
+                    this.eventSource.close();
+                    this.eventSource = null;
+                }
+                
+                // 清理流式消息映射
+                this.streamingMessages.clear();
+            }
+
+            // 停止工作流
+            stopWorkflow() {
+                if (this.eventSource) {
+                    this.eventSource.close();
+                    this.eventSource = null;
+                }
+                this.updateStatus('工作流已停止');
+                this.hideTypingIndicator();
+            }
+
+            // 清空消息
+            clearMessages() {
+                this.chatMessages.innerHTML = '';
+                this.streamingMessages.clear();
+                this.messageQueue = [];
+            }
+
+            // 切换自动滚动
+            toggleAutoScroll() {
+                this.autoScroll = !this.autoScroll;
+                const button = event.target;
+                button.textContent = this.autoScroll ? '自动滚动' : '手动滚动';
+                
+                if (this.autoScroll) {
+                    this.scrollToBottom();
+                }
+            }
+        }
+
+        // 全局实例
+        let workflowChat = null;
+
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            workflowChat = new WorkflowChat();
+        });
+
+        // 全局函数，供外部调用
+        function startWorkflowSSE(params) {
+            if (workflowChat) {
+                workflowChat.startSSE(params);
+            }
+        }
+
+        function clearMessages() {
+            if (workflowChat) {
+                workflowChat.clearMessages();
+            }
+        }
+
+        function toggleAutoScroll() {
+            if (workflowChat) {
+                workflowChat.toggleAutoScroll();
+            }
+        }
+
+        function stopWorkflow() {
+            if (workflowChat) {
+                workflowChat.stopWorkflow();
+            }
+        }
+
+        // 为Gradio提供接口
+        window.workflowChatAPI = {
+            start: startWorkflowSSE,
+            clear: clearMessages,
+            stop: stopWorkflow,
+            getInstance: () => workflowChat
+        };
+    </script>
+</body>
+</html>

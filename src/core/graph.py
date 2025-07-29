@@ -642,8 +642,10 @@ class StateGraphExecutor(BaseExecutor):
             checkpoint_storage=checkpoint_storage
         )
         
-        # 初始化状态
+        # 初始化状态并添加图名字
         current_state = initial_state.copy()
+        current_state["_graph_name"] = graph.name  # 添加图名字到状态中
+        current_state["_graph_execution_start"] = datetime.now().isoformat()
         
         # 执行统计
         iteration = 0
@@ -975,23 +977,53 @@ class StateGraphExecutor(BaseExecutor):
                            graph: StateGraph,
                            initial_state: Dict[str, Any], 
                            config: Dict[str, Any]) -> AsyncIterator[Dict[str, Any]]:
-        """流式执行状态图 - 真实实现"""
-        from .executor import StateManager, add_reducer
+        """流式执行状态图 - LangGraph风格自动节点包装和事件发射"""
+        try:
+            from .executor import StateManager, add_reducer
+        except ImportError:
+            # 简化版StateManager
+            class StateManager:
+                def __init__(self, reducers=None):
+                    self.reducers = reducers or {}
+                
+                def merge_state(self, current_state, update, node_name=None):
+                    result = current_state.copy()
+                    result.update(update)
+                    return result
+            
+            def add_reducer(current, new):
+                if isinstance(current, list) and isinstance(new, list):
+                    return current + new
+                return new
         
         # 设置默认状态合并器
         state_manager = StateManager({
-            "messages": add_reducer,  # 消息列表使用追加合并
+            "messages": add_reducer,
         })
         
-        # 初始化状态
+        # 获取NodeInfoStream实例用于自动事件发射
+        from .base import NodeInfoStream
+        info_stream = NodeInfoStream()
+        
+        # 初始化状态并添加图名字
         current_state = initial_state.copy()
+        current_state["_graph_name"] = graph.name
+        current_state["_graph_execution_start"] = datetime.now().isoformat()
         
         # 执行统计
         iteration = 0
         current_nodes = [graph.entry_point] if graph.entry_point else []
         visited_nodes = []
         
-        print(f"[StreamExecutor] 开始流式执行图: {graph.name}")
+        print(f"[StreamExecutor] 开始LangGraph风格流式执行图: {graph.name}")
+        
+        # 自动发射图开始事件
+        info_stream.emit("graph_start", graph.name, f"开始执行工作流: {graph.name}", {
+            "initial_state_keys": list(initial_state.keys()),
+            "entry_point": graph.entry_point,
+            "node_count": len(graph.nodes)
+        })
+        
         yield {"type": "start", "message": f"开始执行工作流: {graph.name}", "state": current_state}
         
         while current_nodes and iteration < self.max_iterations:
@@ -999,92 +1031,163 @@ class StateGraphExecutor(BaseExecutor):
             print(f"\n[StreamExecutor] === 迭代 {iteration} ===")
             print(f"[StreamExecutor] 当前节点: {current_nodes}")
             
-            # 逐个执行节点（流式） - 改为串行执行，确保状态正确传递
-            node_results = {}  # 存储本轮所有节点的执行结果
+            # 逐个执行节点（流式）
+            node_results = {}
             
             for node_name in current_nodes:
-                if node_name in graph.nodes:
-                    node = graph.nodes[node_name]
-                    print(f"[StreamExecutor] 开始执行节点: {node_name}")
+                if node_name not in graph.nodes:
+                    continue
                     
-                    # 发送节点开始信号
-                    yield {
-                        "type": "node_start", 
-                        "node": node_name, 
-                        "state": current_state,
-                        "iteration": iteration
-                    }
-                    
-                    try:
-                        # 检查节点是否支持流式执行
-                        if hasattr(node, 'stream') and node.stream:
-                            # 流式执行节点
-                            final_result = None
-                            async for intermediate_result in node.run_stream(current_state):
-                                final_result = intermediate_result
-                                
-                                # 发送中间结果信号
-                                yield {
-                                    "type": "node_streaming",
-                                    "node": node_name,
-                                    "intermediate_result": intermediate_result,
-                                    "state": current_state
-                                }
-                                
-                                # 注意：不在这里合并中间状态，避免状态污染
-                                # 只有最终结果才合并到状态中
+                node = graph.nodes[node_name]
+                print(f"[StreamExecutor] 开始执行节点: {node_name}")
+                
+                # ===== 框架级自动节点包装开始 =====
+                
+                # 1. 自动发射节点开始事件
+                info_stream.emit("node_start", node_name, f"开始执行节点: {node_name}", {
+                    "iteration": iteration,
+                    "node_type": str(getattr(node, 'node_type', 'unknown')),
+                    "supports_streaming": getattr(node, 'stream', False)
+                })
+                
+                # 发送标准化节点开始信号
+                yield {
+                    "type": "node_start", 
+                    "node": node_name, 
+                    "state": current_state,
+                    "iteration": iteration
+                }
+                
+                try:
+                    # 2. 自动包装节点执行 - 检测流式支持
+                    if hasattr(node, 'stream') and node.stream:
+                        # 流式执行节点 - 自动包装每个中间结果
+                        final_result = None
+                        chunk_count = 0
+                        
+                        async for intermediate_result in node.run_stream(current_state):
+                            chunk_count += 1
+                            final_result = intermediate_result
                             
-                            result = final_result
-                        else:
-                            # 非流式执行节点
-                            result = await node.run(current_state)
-                        
-                        node_results[node_name] = result
-                        visited_nodes.append(node_name)
-                        
-                        print(f"[StreamExecutor] 节点 {node_name} 执行完成")
-                        
-                        # 发送节点完成信号
-                        yield {
-                            "type": "node_complete", 
-                            "node": node_name, 
-                            "result": result,
-                            "state": current_state
-                        }
-                        
-                        # 立即合并状态更新，确保后续节点能获取到更新
-                        if result and result.is_success and result.state_update:
-                            print(f"[StreamExecutor] 合并节点 {node_name} 的状态更新: {list(result.state_update.keys())}")
-                            current_state = state_manager.merge_state(
-                                current_state, 
-                                result.state_update
-                            )
+                            # 自动发射流式进度事件
+                            info_stream.emit("node_streaming", node_name, f"节点流式执行中", {
+                                "chunk_count": chunk_count,
+                                "has_state_update": bool(intermediate_result and 
+                                                        hasattr(intermediate_result, 'state_update') and 
+                                                        intermediate_result.state_update)
+                            })
                             
-                            # 发送状态更新信号
+                            # 发送标准化流式信号
                             yield {
-                                "type": "state_update",
+                                "type": "node_streaming",
                                 "node": node_name,
-                                "update": result.state_update,
-                                "new_state": current_state
+                                "intermediate_result": intermediate_result,
+                                "chunk_count": chunk_count,
+                                "state": current_state
                             }
                         
-                    except Exception as e:
-                        print(f"[StreamExecutor] 节点 {node_name} 执行失败: {e}")
+                        result = final_result
                         
-                        # 发送错误信号
+                        # 自动发射流式完成事件
+                        info_stream.emit("node_stream_complete", node_name, f"节点流式执行完成", {
+                            "total_chunks": chunk_count,
+                            "final_result_type": type(result).__name__
+                        })
+                        
+                    else:
+                        # 非流式执行节点 - 自动包装单次执行
+                        info_stream.emit("node_executing", node_name, f"执行非流式节点", {})
+                        result = await node.run(current_state)
+                    
+                    # 3. 自动处理执行结果
+                    node_results[node_name] = result
+                    visited_nodes.append(node_name)
+                    
+                    print(f"[StreamExecutor] 节点 {node_name} 执行完成")
+                    
+                    # 4. 自动发射节点完成事件
+                    success = result and getattr(result, 'is_success', True)
+                    state_update_size = 0
+                    if result and hasattr(result, 'state_update') and result.state_update:
+                        state_update_size = len(result.state_update)
+                    
+                    info_stream.emit("node_complete", node_name, f"节点执行完成", {
+                        "success": success,
+                        "state_update_size": state_update_size,
+                        "result_type": type(result).__name__,
+                        "execution_time": getattr(result, 'duration', None)
+                    })
+                    
+                    # 发送标准化节点完成信号
+                    yield {
+                        "type": "node_complete", 
+                        "node": node_name, 
+                        "result": result,
+                        "success": success,
+                        "state": current_state
+                    }
+                    
+                    # 5. 自动合并状态更新
+                    if result and hasattr(result, 'is_success') and result.is_success and hasattr(result, 'state_update') and result.state_update:
+                        print(f"[StreamExecutor] 合并节点 {node_name} 的状态更新: {list(result.state_update.keys())}")
+                        
+                        # 自动发射状态更新开始事件
+                        info_stream.emit("state_merge_start", node_name, f"开始合并状态更新", {
+                            "update_keys": list(result.state_update.keys()),
+                            "current_state_keys": list(current_state.keys())
+                        })
+                        
+                        current_state = state_manager.merge_state(
+                            current_state, 
+                            result.state_update,
+                            node_name
+                        )
+                        
+                        # 自动发射状态更新完成事件
+                        info_stream.emit("state_merge_complete", node_name, f"状态更新合并完成", {
+                            "new_state_keys": list(current_state.keys())
+                        })
+                        
+                        # 发送标准化状态更新信号
                         yield {
-                            "type": "node_error",
+                            "type": "state_update",
                             "node": node_name,
-                            "error": str(e),
-                            "state": current_state
+                            "update": result.state_update,
+                            "new_state": current_state
                         }
-                        # 继续执行其他节点
-                        continue
+                    
+                    # ===== 框架级自动节点包装结束 =====
+                    
+                except Exception as e:
+                    print(f"[StreamExecutor] 节点 {node_name} 执行失败: {e}")
+                    
+                    # 自动发射节点错误事件
+                    info_stream.emit("node_error", node_name, f"节点执行失败: {str(e)}", {
+                        "error_type": type(e).__name__,
+                        "error_message": str(e)
+                    })
+                    
+                    # 发送标准化错误信号
+                    yield {
+                        "type": "node_error",
+                        "node": node_name,
+                        "error": str(e),
+                        "state": current_state
+                    }
+                    
+                    # 继续执行其他节点
+                    continue
             
-            # 确定下一步执行的节点
+            # 6. 自动处理路由逻辑
             next_nodes = []
             commands = []
             sends = []
+            
+            # 自动发射路由开始事件
+            info_stream.emit("routing_start", "executor", f"开始路由计算", {
+                "current_nodes": current_nodes,
+                "iteration": iteration
+            })
             
             for node_name in current_nodes:
                 # 使用图的路由逻辑，基于最新的状态
@@ -1114,7 +1217,14 @@ class StateGraphExecutor(BaseExecutor):
             
             print(f"[StreamExecutor] 下一轮节点: {current_nodes}")
             
-            # 发送迭代完成信号
+            # 自动发射路由完成事件
+            info_stream.emit("routing_complete", "executor", f"路由计算完成", {
+                "next_nodes": current_nodes,
+                "has_commands": len(commands) > 0,
+                "has_sends": len(sends) > 0
+            })
+            
+            # 发送标准化迭代完成信号
             yield {
                 "type": "iteration_complete",
                 "iteration": iteration,
@@ -1126,6 +1236,13 @@ class StateGraphExecutor(BaseExecutor):
             if not current_nodes:
                 print(f"[StreamExecutor] 没有更多节点，执行结束")
                 break
+        
+        # 7. 自动发射图完成事件
+        info_stream.emit("graph_complete", graph.name, f"工作流执行完成", {
+            "total_iterations": iteration,
+            "visited_nodes": visited_nodes,
+            "final_state_keys": list(current_state.keys())
+        })
         
         # 发送最终完成信号
         yield {

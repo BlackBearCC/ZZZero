@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>SSE功能测试页面</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        .form-group { margin: 15px 0; }
+        label { display: block; font-weight: bold; margin-bottom: 5px; }
+        input, textarea, select { width: 100%; padding: 8px; margin-bottom: 10px; }
+        button { background: #007bff; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        .checkbox-group { border: 1px solid #ddd; padding: 15px; border-radius: 4px; }
+        .checkbox-item { margin: 5px 0; }
+        #output { margin-top: 20px; padding: 15px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; min-height: 200px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎭 角色资料生成 SSE 测试</h1>
+        
+        <form id="characterForm">
+            <div class="form-group">
+                <label for="character_name">角色名称:</label>
+                <input type="text" id="character_name" value="测试角色" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="basic_info">基础人设:</label>
+                <textarea id="basic_info" rows="4" required>一个用于测试的角色，性格开朗活泼，喜欢探险和学习新事物。</textarea>
+            </div>
+            
+            <div class="form-group">
+                <label>选择生成类别:</label>
+                <div class="checkbox-group">
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="cat1" value="基本信息" checked>
+                        <label for="cat1">基本信息</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="cat2" value="性格特征" checked>
+                        <label for="cat2">性格特征</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="cat3" value="外貌特征">
+                        <label for="cat3">外貌特征</label>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label for="llm_provider">LLM提供商:</label>
+                <select id="llm_provider">
+                    <option value="doubao" selected>豆包</option>
+                    <option value="openai">OpenAI</option>
+                </select>
+            </div>
+            
+            <button type="button" onclick="startSSEWorkflow()">🚀 开始生成</button>
+            <button type="button" onclick="clearOutput()">🧹 清空输出</button>
+        </form>
+        
+        <div id="output">
+            <h3>执行日志:</h3>
+            <div id="messages"></div>
+        </div>
+    </div>
+
+    <script>
+        let eventSource = null;
+        let sessionId = null;
+
+        function addMessage(sender, content, type = 'normal') {
+            const messagesDiv = document.getElementById('messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.style.margin = '8px 0';
+            messageDiv.style.padding = '8px';
+            messageDiv.style.borderRadius = '4px';
+            
+            // 根据类型设置样式
+            switch(type) {
+                case 'error':
+                    messageDiv.style.background = '#ffebee';
+                    messageDiv.style.color = '#c62828';
+                    break;
+                case 'success':
+                    messageDiv.style.background = '#e8f5e8';
+                    messageDiv.style.color = '#2e7d32';
+                    break;
+                case 'streaming':
+                    messageDiv.style.background = '#fff3e0';
+                    messageDiv.style.color = '#ef6c00';
+                    break;
+                default:
+                    messageDiv.style.background = '#e3f2fd';
+                    messageDiv.style.color = '#1976d2';
+            }
+            
+            messageDiv.innerHTML = `<strong>[${sender}]</strong> ${content}`;
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        async function startSSEWorkflow() {
+            try {
+                // 获取表单数据
+                const characterName = document.getElementById('character_name').value;
+                const basicInfo = document.getElementById('basic_info').value;
+                const llmProvider = document.getElementById('llm_provider').value;
+                
+                // 获取选中的类别
+                const selectedCategories = [];
+                document.querySelectorAll('input[type="checkbox"]:checked').forEach(cb => {
+                    selectedCategories.push(cb.value);
+                });
+                
+                // 输入验证
+                if (!characterName.trim()) {
+                    alert('请输入角色名称');
+                    return;
+                }
+                
+                if (!basicInfo.trim()) {
+                    alert('请输入基础人设');
+                    return;
+                }
+                
+                if (selectedCategories.length === 0) {
+                    alert('请至少选择一个生成类别');
+                    return;
+                }
+                
+                addMessage('系统', '正在启动工作流...', 'normal');
+                
+                // 构建参数
+                const params = {
+                    character_name: characterName,
+                    basic_info: basicInfo,
+                    selected_categories: selectedCategories,
+                    selected_collections: [],
+                    llm_provider: llmProvider,
+                    model_name: 'ep-20250221154410-vh78x',
+                    temperature: 0.7
+                };
+                
+                console.log('启动参数:', params);
+                
+                // 启动工作流
+                const response = await fetch('http://127.0.0.1:5001/api/workflow/character_profile_stream', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(params)
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const sessionData = await response.json();
+                sessionId = sessionData.session_id;
+                
+                addMessage('系统', `会话创建成功: ${sessionId}`, 'success');
+                
+                // 创建SSE连接
+                eventSource = new EventSource(`http://127.0.0.1:5001/api/sse/stream/${sessionId}`);
+                
+                eventSource.onopen = () => {
+                    addMessage('SSE', '连接已建立', 'success');
+                };
+                
+                eventSource.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        handleSSEEvent(data);
+                    } catch (error) {
+                        console.error('解析SSE数据失败:', error);
+                    }
+                };
+                
+                eventSource.onerror = (error) => {
+                    console.error('SSE连接错误:', error);
+                    addMessage('SSE', '连接出现错误', 'error');
+                };
+                
+            } catch (error) {
+                console.error('启动工作流失败:', error);
+                addMessage('系统', `启动失败: ${error.message}`, 'error');
+            }
+        }
+
+        function handleSSEEvent(data) {
+            const { type } = data;
+            
+            switch (type) {
+                case 'message':
+                    const messageData = data.data;
+                    addMessage(messageData.sender, messageData.content, messageData.type || 'normal');
+                    break;
+                    
+                case 'streaming_content':
+                    addMessage(data.node, data.content, 'streaming');
+                    break;
+                    
+                case 'status':
+                    addMessage('状态', data.status, 'normal');
+                    break;
+                    
+                case 'complete':
+                    addMessage('系统', '工作流执行完成！', 'success');
+                    if (eventSource) {
+                        eventSource.close();
+                        eventSource = null;
+                    }
+                    break;
+                    
+                default:
+                    console.log('未知SSE事件类型:', type, data);
+            }
+        }
+
+        function clearOutput() {
+            document.getElementById('messages').innerHTML = '';
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+                addMessage('系统', 'SSE连接已关闭', 'normal');
+            }
+        }
+
+        // 页面加载时显示状态
+        window.addEventListener('load', () => {
+            addMessage('系统', 'SSE测试页面加载完成', 'success');
+            addMessage('提示', '请填写角色信息后点击"开始生成"测试SSE功能', 'normal');
+        });
+    </script>
+</body>
+</html>

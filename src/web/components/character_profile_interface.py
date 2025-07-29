@@ -1,5 +1,5 @@
 """
-角色资料生成工作流界面组件
+角色资料生成工作流界面组件 - 简化版，使用框架级自动流式显示
 """
 
 import gradio as gr
@@ -14,33 +14,81 @@ import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
 
-from workflow.character_profile_workflow import CharacterProfileWorkflow
+from workflow.character_profile_workflow import ProfileWorkflow
 from tools.knowledge_base_manager import GlobalKnowledgeBase
 from core.types import LLMConfig
+from web.components.workflow_chat import WorkflowChat
 
 logger = logging.getLogger(__name__)
 
 class CharacterProfileInterface:
-    """角色资料生成工作流界面"""
+    """角色资料生成工作流界面 - 简化版，使用框架级自动流式显示"""
     
-    def __init__(self):
-        self.workflow = CharacterProfileWorkflow()
+    def __init__(self, llm_factory=None):
+        self.llm_factory = llm_factory
+        self.workflow = ProfileWorkflow()
         self.knowledge_base = GlobalKnowledgeBase("./workspace")
         
         # 缓存数据
         self.available_categories = []
         self.available_collections = []
+        self.category_details = {}
         self._load_categories()
         self._load_collections()
+        
+        # 初始化聊天消息存储
+        self.chat_messages = []
+        self.node_status = {}
+        
+        # 初始化框架级NodeInfoStream监听
+        self._setup_info_stream_listener()
     
     def _load_categories(self):
         """加载可用的资料类别"""
         try:
-            self.available_categories = self.workflow.get_available_categories()
-            logger.info(f"已加载{len(self.available_categories)}个资料类别")
+            import csv
+            from pathlib import Path
+            
+            template_file = Path("workspace/input/主角人物资料需求表格.csv")
+            if template_file.exists():
+                categories = {}
+                with open(template_file, 'r', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        category = row.get('类别', '').strip()
+                        if category:
+                            if category not in categories:
+                                categories[category] = []
+                            
+                            item_info = {
+                                '条目': row.get('条目', '').strip(),
+                                '内容': row.get('内容', '').strip(),
+                                '关键词': row.get('关键词', '').strip(),
+                                '备注': row.get('备注', '').strip()
+                            }
+                            categories[category].append(item_info)
+                
+                self.category_details = categories
+                self.available_categories = list(categories.keys())
+                
+                logger.info(f"已加载{len(self.available_categories)}个资料类别：{self.available_categories}")
+            else:
+                # 使用默认类别
+                self.available_categories = [
+                    "基本信息", "外貌特征", "性格特征", "兴趣爱好", "生活经历", 
+                    "喜好厌恶", "个人物品", "成长经历", "家庭情况", "社交关系",
+                    "行为偏好", "健康状况", "心理状态", "技能能力", "语言能力",
+                    "数字足迹", "生活节奏", "财务状况", "观点立场", "法律状况", "梦想与目标"
+                ]
+                self.category_details = {cat: [] for cat in self.available_categories}
+                logger.warning(f"CSV模板文件不存在，使用默认类别: {len(self.available_categories)}个")
+                
         except Exception as e:
             logger.error(f"加载资料类别失败: {e}")
-            self.available_categories = []
+            self.available_categories = [
+                "基本信息", "外貌特征", "性格特征", "成长经历", "家庭情况", "社交关系"
+            ]
+            self.category_details = {cat: [] for cat in self.available_categories}
     
     def _load_collections(self):
         """加载可用的知识集合"""
@@ -57,23 +105,19 @@ class CharacterProfileInterface:
         
         with gr.Column():
             # 标题和描述
-            gr.Markdown("## 🎭 角色资料生成工作流")
+            gr.Markdown("## 👤 角色资料生成工作流")
             gr.Markdown("基于人物资料需求表格，结合向量知识库，生成详细的角色背景资料")
             
-            with gr.Row(equal_height=True):
-                # 左侧配置面板
-                with gr.Column(scale=1, min_width=400):
+            with gr.Row(equal_height=True, variant="panel"):
+                # 左侧：参数配置面板 (30%)
+                with gr.Column(scale=3, min_width=350):
                     config_components = self._create_config_panel()
                     components.update(config_components)
                 
-                # 右侧生成结果面板
-                with gr.Column(scale=2, min_width=600):
-                    result_components = self._create_result_panel()
-                    components.update(result_components)
-            
-            # 底部批量处理面板
-            batch_components = self._create_batch_panel()
-            components.update(batch_components)
+                # 右侧：对话显示区域 (70%)
+                with gr.Column(scale=7, min_width=500):
+                    chat_components = self._create_chat_display()
+                    components.update(chat_components)
         
         # 绑定事件
         self._bind_events(components)
@@ -81,39 +125,15 @@ class CharacterProfileInterface:
         return components
     
     def _create_config_panel(self) -> Dict[str, Any]:
-        """创建配置面板"""
+        """创建左侧参数配置面板"""
         components = {}
         
-        with gr.Column():
-            gr.Markdown("### ⚙️ 生成配置")
-            
-            # 历史记录选择
-            with gr.Group():
-                gr.Markdown("#### 📚 历史记录")
-                components['history_dropdown'] = gr.Dropdown(
-                    label="选择历史记录",
-                    choices=self._get_history_choices(),
-                    value=None,
-                    interactive=True,
-                    info="选择之前的角色配置"
-                )
-                
-                with gr.Row():
-                    components['load_history'] = gr.Button(
-                        "载入选中记录",
-                        size="sm",
-                        variant="secondary"
-                    )
-                    
-                    components['refresh_history'] = gr.Button(
-                        "刷新历史",
-                        size="sm",
-                        variant="secondary"
-                    )
+        with gr.Column(variant="panel"):
+            gr.Markdown("### ⚙️ 参数配置")
             
             # 角色基本信息
             with gr.Group():
-                gr.Markdown("#### 角色信息")
+                gr.Markdown("#### 👤 角色信息")
                 components['character_name'] = gr.Textbox(
                     label="角色名称",
                     placeholder="请输入角色名称...",
@@ -123,46 +143,52 @@ class CharacterProfileInterface:
                 components['basic_info'] = gr.Textbox(
                     label="基础人设",
                     placeholder="请输入角色的基础人设信息...",
-                    lines=6,
+                    lines=4,
                     value=""
                 )
             
             # 类别选择
             with gr.Group():
-                gr.Markdown("#### 生成类别")
+                gr.Markdown("#### 📋 生成类别")
+                category_choices = []
+                for category in self.available_categories:
+                    item_count = len(self.category_details.get(category, []))
+                    choice_label = f"{category} ({item_count}项)"
+                    category_choices.append((choice_label, category))
+                
                 components['category_selector'] = gr.CheckboxGroup(
                     label="选择要生成的资料类别",
-                    choices=self.available_categories,
+                    choices=category_choices,
                     value=self.available_categories[:3] if self.available_categories else [],
-                    interactive=True
+                    interactive=True,
+                    info=f"共{len(self.available_categories)}个类别可选"
                 )
                 
-                components['select_all_categories'] = gr.Button(
-                    "全选类别",
-                    size="sm",
-                    variant="secondary"
-                )
+                with gr.Row():
+                    components['select_all_categories'] = gr.Button(
+                        "全选", size="sm", variant="secondary"
+                    )
+                    components['clear_all_categories'] = gr.Button(
+                        "清空", size="sm", variant="secondary"
+                    )
             
             # 知识库选择
             with gr.Group():
-                gr.Markdown("#### 知识库选择")
+                gr.Markdown("#### 🗂️ 知识库选择")
                 components['knowledge_selector'] = gr.CheckboxGroup(
                     label="选择启用的知识集合",
-                    choices=self.available_collections,
+                    choices=self.available_collections if self.available_collections else [],
                     value=[],
                     interactive=True,
-                    info="选中的知识库将在生成时提供参考信息"
+                    info="选中的知识库将提供参考信息"
                 )
                 
                 components['refresh_collections'] = gr.Button(
-                    "刷新知识库",
-                    size="sm",
-                    variant="secondary"
+                    "刷新知识库", size="sm", variant="secondary"
                 )
             
-            # LLM配置
-            with gr.Group():
-                gr.Markdown("#### LLM配置")
+            # LLM配置（折叠）
+            with gr.Accordion("🤖 LLM配置", open=False):
                 components['llm_provider'] = gr.Dropdown(
                     label="LLM提供商",
                     choices=["doubao", "openai"],
@@ -172,7 +198,7 @@ class CharacterProfileInterface:
                 
                 components['model_name'] = gr.Textbox(
                     label="模型名称",
-                    value="ep-20250221154410-vh78x",
+                    value="ep-20250312153153-npj4s",
                     interactive=True
                 )
                 
@@ -184,195 +210,403 @@ class CharacterProfileInterface:
                     step=0.1,
                     interactive=True
                 )
-                
-                components['max_tokens'] = gr.Number(
-                    label="最大Token数",
-                    value=2000,
-                    minimum=100,
-                    maximum=8000,
+            
+            # 历史记录（折叠）
+            with gr.Accordion("📚 历史记录", open=False):
+                components['history_dropdown'] = gr.Dropdown(
+                    label="选择历史记录",
+                    choices=self._get_history_choices(),
+                    value=None,
                     interactive=True
                 )
+                
+                with gr.Row():
+                    components['load_history'] = gr.Button(
+                        "载入", size="sm", variant="secondary"
+                    )
+                    components['refresh_history'] = gr.Button(
+                        "刷新", size="sm", variant="secondary"
+                    )
             
             # 生成按钮
             components['generate_button'] = gr.Button(
-                "🚀 开始生成",
+                "🚀 开始生成角色资料",
                 variant="primary",
                 size="lg"
             )
         
         return components
     
-    def _create_result_panel(self) -> Dict[str, Any]:
-        """创建结果展示面板"""
+    def _create_chat_display(self) -> Dict[str, Any]:
+        """创建右侧对话显示区域 - 简化版，使用统一的Stream API"""
         components = {}
         
         with gr.Column():
-            gr.Markdown("### 📋 生成结果")
+            gr.Markdown("### 💬 工作流执行过程")
             
-            # 状态显示
-            components['status_display'] = gr.Markdown(
-                "**状态:** 等待生成...",
-                visible=True
+            # 使用标准Gradio聊天组件
+            components['chat_display'] = gr.Chatbot(
+                label="执行日志",
+                height=500,
+                show_label=False,
+                bubble_full_width=False,
+                avatar_images=None,
+                type="tuples"
             )
             
-            # 进度条（将在需要时使用）
-            # components['progress_bar'] = gr.Progress()  # Progress组件不支持visible参数
+            # 工作流状态面板
+            with gr.Row():
+                components['workflow_status'] = gr.Markdown(
+                    "**状态：** 等待开始...",
+                    visible=True
+                )
             
-            # 结果展示区域
-            with gr.Tabs() as tabs:
-                with gr.Tab("📊 结果概览"):
-                    components['result_summary'] = gr.Markdown(
-                        "暂无生成结果",
-                        visible=True
-                    )
-                
-                with gr.Tab("📄 详细内容"):
-                    components['result_detail'] = gr.JSON(
-                        label="生成的角色资料",
-                        value={},
-                        visible=True
-                    )
-                
-                with gr.Tab("💾 文件下载"):
-                    components['download_file'] = gr.File(
-                        label="下载生成的角色资料文件",
-                        visible=False
-                    )
-                    
-                    components['file_path_display'] = gr.Textbox(
-                        label="文件保存路径",
-                        interactive=False,
-                        visible=False
-                    )
+            # 控制按钮
+            with gr.Row():
+                components['clear_chat'] = gr.Button(
+                    "清空对话", size="sm", variant="secondary"
+                )
+                components['export_log'] = gr.Button(
+                    "导出日志", size="sm", variant="secondary"
+                )
         
         return components
     
-    def _create_batch_panel(self) -> Dict[str, Any]:
-        """创建批量处理面板"""
-        components = {}
+    def _setup_info_stream_listener(self):
+        """设置框架级自动信息流监听器 - 用于收集事件但不直接更新界面"""
+        from core.base import NodeInfoStream
         
-        with gr.Accordion("🔄 批量处理", open=False):
-            gr.Markdown("批量生成多个角色的资料")
-            
-            with gr.Row():
-                with gr.Column(scale=2):
-                    components['batch_input'] = gr.Textbox(
-                        label="批量角色信息 (JSON格式)",
-                        placeholder="""示例格式：
-[
-    {
-        "character_name": "角色1",
-        "basic_info": "角色1的基础信息...",
-        "selected_categories": ["基本信息", "外貌特征"]
-    },
-    {
-        "character_name": "角色2", 
-        "basic_info": "角色2的基础信息..."
-    }
-]""",
-                        lines=8,
-                        interactive=True
-                    )
-                
-                with gr.Column(scale=1):
-                    components['batch_example'] = gr.Button(
-                        "加载示例",
-                        variant="secondary"
-                    )
-                    
-                    components['batch_generate'] = gr.Button(
-                        "🚀 批量生成",
-                        variant="primary"
-                    )
-            
-            # 批量结果展示
-            components['batch_results'] = gr.Dataframe(
-                label="批量生成结果",
-                headers=["角色名称", "生成状态", "文件路径", "错误信息"],
-                datatype=["str", "str", "str", "str"],
-                interactive=False,
-                visible=False
-            )
+        self.info_stream = NodeInfoStream()
+        # 清空之前的事件回调，使用新的收集模式
+        self.info_stream.callbacks.clear()
+        self.collected_events = []  # 收集事件，由生成器函数处理
         
-        return components
+        # 添加事件收集回调
+        def collect_event(event):
+            self.collected_events.append(event)
+        
+        self.info_stream.add_callback(collect_event)
+    
+    def _format_event_for_display(self, event):
+        """格式化事件用于显示"""
+        try:
+            event_type = event.get("type", "")
+            node_name = event.get("node_name", "")
+            content = event.get("content", "")
+            metadata = event.get("metadata", {})
+            
+            # 格式化框架级事件消息
+            formatted_message = self._format_framework_event(event_type, node_name, content, metadata)
+            sender = self._get_event_sender(event_type, node_name)
+            
+            return sender, formatted_message
+            
+        except Exception as e:
+            logger.error(f"格式化事件失败: {e}")
+            return "系统", f"❌ 事件处理错误: {str(e)}"
+    
+    def _format_framework_event(self, event_type: str, node_name: str, content: str, metadata: Dict) -> str:
+        """格式化框架级事件消息 - 统一样式"""
+        icons = {
+            # 图级事件
+            "graph_start": "🚀",
+            "graph_complete": "🎉",
+            
+            # 节点生命周期事件
+            "node_start": "⚡",
+            "node_executing": "🔄",
+            "node_streaming": "📡",
+            "node_stream_complete": "✨",
+            "node_complete": "✅",
+            "node_error": "❌",
+            
+            # 状态管理事件
+            "state_merge_start": "🔀",
+            "state_merge_complete": "✅",
+            
+            # 路由事件
+            "routing_start": "🧭",
+            "routing_complete": "🎯",
+            
+            # 兼容旧版事件
+            "init": "🔧",
+            "start": "🚀",
+            "category_start": "📝",
+            "category_complete": "✅",
+            "llm_start": "🤖",
+            "llm_streaming": "⚡",
+            "llm_complete": "✨",
+            "complete": "🎉",
+            "error": "❌",
+            "fatal_error": "💥"
+        }
+        
+        icon = icons.get(event_type, "ℹ️")
+        message = f"{icon} **{content}**"
+        
+        # 添加关键元数据
+        if metadata:
+            important_keys = [
+                "iteration", "chunk_count", "node_type", "success", 
+                "next_nodes", "error_type", "update_keys", "total_chunks"
+            ]
+            meta_info = []
+            
+            for key in important_keys:
+                if key in metadata and metadata[key] is not None:
+                    meta_info.append(f"{key}: {metadata[key]}")
+            
+            if meta_info:
+                message += f"\n_{', '.join(meta_info)}_"
+        
+        return message
+    
+    def _get_event_sender(self, event_type: str, node_name: str) -> str:
+        """获取事件发送者标识"""
+        if event_type.startswith("graph_"):
+            return "🏗️ 图引擎"
+        elif event_type.startswith("node_"):
+            return f"📦 {node_name}"
+        elif event_type.startswith("state_"):
+            return "💾 状态管理"
+        elif event_type.startswith("routing_"):
+            return "🧭 路由器"
+        elif event_type == "llm_streaming":
+            category = node_name  # 对于LLM事件，node_name实际是category
+            return f"🤖 LLM-{category}"
+        else:
+            return f"[{node_name}]"
     
     def _bind_events(self, components: Dict[str, Any]):
-        """绑定界面事件"""
+        """绑定界面事件 - 简化版"""
         
         # 刷新历史记录按钮
-        components['refresh_history'].click(
-            fn=self._refresh_history,
-            outputs=components['history_dropdown']
-        )
+        if 'refresh_history' in components:
+            components['refresh_history'].click(
+                fn=self._refresh_history,
+                outputs=components['history_dropdown']
+            )
         
         # 载入历史记录按钮
-        components['load_history'].click(
-            fn=self._load_history_record,
-            inputs=components['history_dropdown'],
-            outputs=[
-                components['character_name'],
-                components['basic_info'],
-                components['category_selector'],
-                components['knowledge_selector']
-            ]
-        )
+        if 'load_history' in components:
+            components['load_history'].click(
+                fn=self._load_history_record,
+                inputs=components['history_dropdown'],
+                outputs=[
+                    components['character_name'],
+                    components['basic_info'],
+                    components['category_selector'],
+                    components['knowledge_selector']
+                ]
+            )
         
         # 全选类别按钮
-        components['select_all_categories'].click(
-            fn=lambda: gr.update(value=self.available_categories),
-            outputs=components['category_selector']
-        )
+        if 'select_all_categories' in components:
+            components['select_all_categories'].click(
+                fn=lambda: gr.update(value=self.available_categories),
+                outputs=components['category_selector']
+            )
+        
+        # 清空类别按钮
+        if 'clear_all_categories' in components:
+            components['clear_all_categories'].click(
+                fn=lambda: gr.update(value=[]),
+                outputs=components['category_selector']
+            )
         
         # 刷新知识库按钮
-        components['refresh_collections'].click(
-            fn=self._refresh_collections,
-            outputs=components['knowledge_selector']
-        )
+        if 'refresh_collections' in components:
+            components['refresh_collections'].click(
+                fn=self._refresh_collections,
+                outputs=components['knowledge_selector']
+            )
         
-        # 生成按钮
-        components['generate_button'].click(
-            fn=self._generate_character_profile,
-            inputs=[
-                components['character_name'],
-                components['basic_info'],
-                components['category_selector'],
-                components['knowledge_selector'],
-                components['llm_provider'],
-                components['model_name'],
-                components['temperature'],
-                components['max_tokens']
-            ],
-            outputs=[
-                components['status_display'],
-                components['result_summary'],
-                components['result_detail'],
-                components['download_file'],
-                components['file_path_display']
-            ]
-        )
+        # 生成按钮事件绑定 - 使用Gradio生成器模式实现真正的流式更新
+        if 'generate_button' in components:
+            components['generate_button'].click(
+                fn=self._start_unified_workflow,
+                inputs=[
+                    components['character_name'],
+                    components['basic_info'],
+                    components['category_selector'],
+                    components['knowledge_selector'],
+                    components['llm_provider'],
+                    components['model_name'],
+                    components['temperature']
+                ],
+                outputs=[
+                    components['chat_display'],
+                    components['workflow_status']
+                ],
+                # 关键：使用show_progress=True启用Gradio流式模式
+                show_progress=True
+            )
         
-        # 批量示例按钮
-        components['batch_example'].click(
-            fn=self._load_batch_example,
-            outputs=components['batch_input']
-        )
+        # 清空对话按钮
+        if 'clear_chat' in components:
+            components['clear_chat'].click(
+                fn=self._clear_chat,
+                outputs=[components['chat_display']]
+            )
+    
+    def _start_unified_workflow(self, 
+                               character_name: str, 
+                               basic_info: str, 
+                               selected_categories: List[str], 
+                               selected_collections: List[str],
+                               llm_provider: str,
+                               model_name: str,
+                               temperature: float):
+        """统一的工作流启动器 - 使用Gradio生成器模式实现真正的实时流式显示"""
+        import asyncio
         
-        # 批量生成按钮
-        components['batch_generate'].click(
-            fn=self._batch_generate_profiles,
-            inputs=[
-                components['batch_input'],
-                components['knowledge_selector'],
-                components['llm_provider'],
-                components['model_name'],
-                components['temperature'],
-                components['max_tokens']
-            ],
-            outputs=[
-                components['batch_results'],
-                components['status_display']
-            ]
+        # 输入验证
+        if not character_name or not character_name.strip():
+            return [["系统", "❌ 请输入角色名称"]], "状态：输入验证失败"
+        
+        if not basic_info or not basic_info.strip():
+            return [["系统", "❌ 请输入基础人设信息"]], "状态：输入验证失败"
+        
+        if not selected_categories:
+            return [["系统", "❌ 请至少选择一个生成类别"]], "状态：输入验证失败"
+        
+        # 创建LLM配置
+        if not self.llm_factory:
+            return [["系统", "❌ LLM工厂未配置"]], "状态：配置错误"
+        
+        try:
+            llm_config = LLMConfig(
+                provider=llm_provider,
+                api_key=os.getenv('DOUBAO_API_KEY', 'b633a622-b5d0-4f16-a8a9-616239cf15d1'),
+                model_name=model_name,
+                temperature=temperature,
+                max_tokens=16384
+            )
+            self.workflow.llm_config = llm_config
+        except Exception as e:
+            return [["系统", f"❌ LLM配置失败：{str(e)}"]], "状态：配置错误"
+        
+        # 使用生成器函数实现真正的流式更新
+        yield from self._stream_workflow_execution(
+            character_name=character_name,
+            basic_info=basic_info,
+            selected_categories=selected_categories,
+            selected_collections=selected_collections,
+            llm_provider=llm_provider,
+            model_name=model_name,
+            temperature=temperature
         )
+    
+    def _stream_workflow_execution(self, **kwargs):
+        """流式工作流执行生成器 - 实现真正的实时更新"""
+        import asyncio
+        
+        # 清空事件收集器
+        self.collected_events = []
+        current_messages = []
+        
+        # 添加开始消息
+        start_msg = f"🚀 启动实时流式工作流\n\n角色：**{kwargs['character_name']}**\n类别：{len(kwargs['selected_categories'])} 个"
+        current_messages.append(["🏗️ 图引擎", start_msg])
+        
+        config_msg = f"⚙️ LLM配置：{kwargs['llm_provider']} | {kwargs['model_name']} | temp={kwargs['temperature']}"
+        current_messages.append(["🏗️ 图引擎", config_msg])
+        
+        # 首次返回初始状态
+        yield current_messages, "状态：正在启动工作流..."
+        
+        try:
+            # 执行异步工作流
+            async def run_stream_workflow():
+                final_status = "状态：执行中..."
+                nonlocal current_messages
+                
+                async for result in self.workflow.generate_character_profile_stream(
+                    character_name=kwargs['character_name'],
+                    basic_info=kwargs['basic_info'],
+                    selected_categories=kwargs['selected_categories'],
+                    selected_collections=kwargs['selected_collections']
+                ):
+                    # 处理收集到的框架级事件
+                    while self.collected_events:
+                        event = self.collected_events.pop(0)
+                        sender, message = self._format_event_for_display(event)
+                        current_messages.append([sender, message])
+                        
+                        # 实时更新界面
+                        yield current_messages.copy(), "状态：正在处理..."
+                    
+                    # 处理工作流结果
+                    if result.get('success') is False and 'error' in result:
+                        error_msg = f"❌ 生成失败：{result['error']}"
+                        current_messages.append(["📦 ProfileGenerator", error_msg])
+                        final_status = "状态：执行失败"
+                        yield current_messages.copy(), final_status
+                        return
+                        
+                    elif result.get('success') is True:
+                        output_file = result.get('output_file', '')
+                        profile_data = result.get('profile', {})
+                        
+                        success_msg = f"✅ 角色资料生成完成！\n\n"
+                        success_msg += f"🎯 生成了 {len(profile_data)} 个类别的资料\n"
+                        if output_file:
+                            success_msg += f"📁 文件保存位置：{output_file}\n\n"
+                        
+                        for category, data in profile_data.items():
+                            if isinstance(data, dict):
+                                success_msg += f"📋 **{category}**：{len(data)} 个条目\n"
+                        
+                        current_messages.append(["🎉 最终结果", success_msg])
+                        
+                        if output_file:
+                            current_messages.append(["💾 文件系统", f"✅ 文件已保存：{output_file}"])
+                        
+                        final_status = f"状态：生成完成 - {len(profile_data)} 个类别"
+                        yield current_messages.copy(), final_status
+                        return
+                    
+                    # 处理进度更新
+                    elif 'progress' in result:
+                        progress_msg = result['progress']
+                        current_messages.append(["📊 进度", progress_msg])
+                        yield current_messages.copy(), f"状态：{progress_msg}"
+                
+                # 处理剩余的事件
+                while self.collected_events:
+                    event = self.collected_events.pop(0)
+                    sender, message = self._format_event_for_display(event)
+                    current_messages.append([sender, message])
+                
+                yield current_messages.copy(), final_status
+            
+            # 在新的事件循环中运行
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # 使用同步生成器包装异步生成器
+            async_gen = run_stream_workflow()
+            try:
+                while True:
+                    try:
+                        result = loop.run_until_complete(async_gen.__anext__())
+                        yield result
+                    except StopAsyncIteration:
+                        break
+            finally:
+                loop.close()
+                
+        except Exception as e:
+            logger.error(f"流式工作流执行失败: {e}")
+            error_msg = f"❌ 执行异常：{str(e)}"
+            current_messages.append(["系统", error_msg])
+            yield current_messages, f"状态：异常 - {str(e)}"
+    
+    def _clear_chat(self):
+        """清空聊天记录"""
+        self.chat_messages = []
+        self.node_status = {}
+        return []
     
     def _get_history_choices(self) -> List[str]:
         """获取历史记录选择项"""
@@ -456,229 +690,3 @@ class CharacterProfileInterface:
         except Exception as e:
             logger.error(f"刷新知识集合失败: {e}")
             return gr.update()
-    
-    def _generate_character_profile(self, 
-                                  character_name: str,
-                                  basic_info: str,
-                                  selected_categories: List[str],
-                                  selected_collections: List[str],
-                                  llm_provider: str,
-                                  model_name: str,
-                                  temperature: float,
-                                  max_tokens: int):
-        """生成角色资料"""
-        try:
-            # 验证输入
-            if not character_name or not basic_info:
-                return (
-                    "**状态:** ❌ 请输入角色名称和基础信息",
-                    "请先填写必要信息",
-                    {},
-                    None,
-                    ""
-                )
-            
-            # 更新状态
-            status_update = "**状态:** 🔄 正在生成角色资料..."
-            
-            # 创建LLM配置 - 添加API密钥
-            import os
-            api_key = os.getenv('ARK_API_KEY') or os.getenv('DOUBAO_API_KEY')
-            if not api_key:
-                return (
-                    "**状态:** ❌ 缺少API密钥配置，请检查.env文件中的DOUBAO_API_KEY或ARK_API_KEY",
-                    "请先配置API密钥",
-                    {},
-                    None,
-                    ""
-                )
-            
-            # 根据提供商设置API base URL
-            api_base = None
-            if llm_provider == "doubao":
-                api_base = os.getenv('DOUBAO_BASE_URL', 'https://ark.cn-beijing.volces.com/api/v3')
-            elif llm_provider == "openai":
-                api_base = os.getenv('OPENAI_BASE_URL', 'https://api.openai.com/v1')
-            
-            llm_config = LLMConfig(
-                provider=llm_provider,
-                model_name=model_name,
-                api_key=api_key,
-                api_base=api_base,
-                temperature=temperature,
-                max_tokens=int(max_tokens)
-            )
-            
-            # 创建工作流实例
-            workflow = CharacterProfileWorkflow(llm_config=llm_config)
-            
-            # 执行生成（同步方式，在实际使用中可能需要异步处理）
-            result = asyncio.run(workflow.generate_character_profile(
-                character_name=character_name,
-                basic_info=basic_info,
-                selected_categories=selected_categories,
-                selected_collections=selected_collections
-            ))
-            
-            if result.get('success'):
-                # 生成成功
-                profile_data = result.get('generated_profile', {})
-                output_file = result.get('output_file', '')
-                
-                # 构建概览信息
-                total_categories = len(profile_data)
-                total_fields = sum(len(category_data) for category_data in profile_data.values())
-                
-                summary = f"""
-### ✅ 生成成功！
-
-- **角色名称:** {character_name}
-- **生成类别:** {total_categories} 个
-- **总字段数:** {total_fields} 个
-- **使用知识库:** {len(selected_collections)} 个
-- **生成时间:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-                """
-                
-                return (
-                    "**状态:** ✅ 生成完成",
-                    summary,
-                    profile_data,
-                    output_file if Path(output_file).exists() else None,
-                    output_file
-                )
-            else:
-                # 生成失败
-                error_msg = result.get('error', '未知错误')
-                return (
-                    f"**状态:** ❌ 生成失败: {error_msg}",
-                    f"生成失败: {error_msg}",
-                    {},
-                    None,
-                    ""
-                )
-                
-        except Exception as e:
-            logger.error(f"生成角色资料失败: {e}")
-            return (
-                f"**状态:** ❌ 生成失败: {str(e)}",
-                f"发生错误: {str(e)}",
-                {},
-                None,
-                ""
-            )
-    
-    def _load_batch_example(self):
-        """加载批量处理示例"""
-        example = [
-            {
-                "character_name": "穆昭",
-                "basic_info": "22岁，神秘电竞高手，代号J，异端组织大阿卡那成员",
-                "selected_categories": ["基本信息", "外貌特征", "性格特征"]
-            },
-            {
-                "character_name": "测试角色A",
-                "basic_info": "勇敢的战士，擅长剑术，正义感强",
-                "selected_categories": ["基本信息", "性格特征", "技能能力"]
-            },
-            {
-                "character_name": "测试角色B",
-                "basic_info": "聪明的法师，精通魔法，性格内向",
-                "selected_categories": ["基本信息", "技能能力"]
-            }
-        ]
-        
-        return json.dumps(example, ensure_ascii=False, indent=2)
-    
-    def _batch_generate_profiles(self,
-                               batch_input: str,
-                               selected_collections: List[str],
-                               llm_provider: str,
-                               model_name: str,
-                               temperature: float,
-                               max_tokens: int):
-        """批量生成角色资料"""
-        try:
-            # 解析输入
-            try:
-                profiles_data = json.loads(batch_input)
-                if not isinstance(profiles_data, list):
-                    raise ValueError("输入必须是数组格式")
-            except json.JSONDecodeError as e:
-                return (
-                    gr.update(visible=False),
-                    f"**状态:** ❌ JSON格式错误: {str(e)}"
-                )
-            
-            # 创建LLM配置 - 添加API密钥
-            import os
-            api_key = os.getenv('ARK_API_KEY') or os.getenv('DOUBAO_API_KEY')
-            if not api_key:
-                return (
-                    gr.update(visible=False),
-                    "**状态:** ❌ 缺少API密钥配置，请检查.env文件中的DOUBAO_API_KEY或ARK_API_KEY"
-                )
-            
-            # 根据提供商设置API base URL
-            api_base = None
-            if llm_provider == "doubao":
-                api_base = os.getenv('DOUBAO_BASE_URL', 'https://ark.cn-beijing.volces.com/api/v3')
-            elif llm_provider == "openai":
-                api_base = os.getenv('OPENAI_BASE_URL', 'https://api.openai.com/v1')
-            
-            llm_config = LLMConfig(
-                provider=llm_provider,
-                model_name=model_name,
-                api_key=api_key,
-                api_base=api_base,
-                temperature=temperature,
-                max_tokens=int(max_tokens)
-            )
-            
-            # 创建工作流实例
-            workflow = CharacterProfileWorkflow(llm_config=llm_config)
-            
-            # 更新状态
-            status_update = f"**状态:** 🔄 正在批量生成 {len(profiles_data)} 个角色的资料..."
-            
-            # 执行批量生成
-            results = asyncio.run(workflow.batch_generate_profiles(
-                profiles_data=profiles_data,
-                selected_collections=selected_collections
-            ))
-            
-            # 构建结果表格
-            result_rows = []
-            success_count = 0
-            
-            for result in results:
-                character_name = result.get('character_name', '未知')
-                success = result.get('success', False)
-                output_file = result.get('output_file', '')
-                error = result.get('error', '')
-                
-                if success:
-                    success_count += 1
-                    status = "✅ 成功"
-                else:
-                    status = "❌ 失败"
-                
-                result_rows.append([
-                    character_name,
-                    status,
-                    output_file,
-                    error
-                ])
-            
-            final_status = f"**状态:** ✅ 批量生成完成！成功: {success_count}/{len(profiles_data)}"
-            
-            return (
-                gr.update(value=result_rows, visible=True),
-                final_status
-            )
-            
-        except Exception as e:
-            logger.error(f"批量生成失败: {e}")
-            return (
-                gr.update(visible=False),
-                f"**状态:** ❌ 批量生成失败: {str(e)}"
-            ) 
