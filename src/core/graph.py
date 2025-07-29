@@ -536,6 +536,13 @@ class CompiledStateGraph(Generic[T]):
             config or {}
         ):
             yield result
+    
+    async def astream(self,
+                     initial_state: Optional[Dict[str, Any]] = None,
+                     config: Optional[Dict[str, Any]] = None):
+        """流式执行图 - astream 别名方法"""
+        async for result in self.stream(initial_state, config):
+            yield result
 
 
 class GraphBuilder:

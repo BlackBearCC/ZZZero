@@ -1,14 +1,13 @@
 """
-核心基类定义 - 基于LangGraph设计理念重构
+简化的核心基类定义 - 基于钩子函数API设计
 """
 from abc import ABC, abstractmethod
-from typing import Dict, List, Any, Optional, Union, Type, TypeVar, Generic, AsyncIterator, Callable
+from typing import Dict, List, Any, Optional, Union, AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime
 import asyncio
 from enum import Enum
 
-from pydantic import BaseModel
 from .types import (
     NodeInput, NodeOutput, ExecutionContext, Message, 
     ToolCall, AgentType, NodeType, TaskResult, MessageRole
@@ -19,16 +18,11 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ..llm.base import ThinkResult, BaseLLMProvider
 else:
-    # 运行时动态导入
     try:
         from ..llm.base import ThinkResult, BaseLLMProvider
     except ImportError:
-        # 如果导入失败，定义临时类型
         ThinkResult = Any
         BaseLLMProvider = Any
-
-
-T = TypeVar('T')
 
 
 class ExecutionState(str, Enum):
@@ -104,7 +98,6 @@ class NodeInfoStream:
         }
         self.events.append(event)
         
-        # 通知所有回调（异步处理）
         for callback in self.callbacks:
             try:
                 if asyncio.iscoroutinefunction(callback):
@@ -118,30 +111,18 @@ class NodeInfoStream:
         """添加事件回调"""
         self.callbacks.append(callback)
         
-    def remove_callback(self, callback):
-        """移除事件回调"""
-        if callback in self.callbacks:
-            self.callbacks.remove(callback)
-        
-    def get_events(self) -> List[Dict[str, Any]]:
-        """获取所有事件"""
-        return self.events.copy()
-        
     def clear_events(self):
         """清空事件历史"""
         self.events.clear()
 
 
 class BaseNode(ABC):
-    """节点基类 - 集成常用功能的智能节点
+    """简化的节点基类 - 基于钩子函数API设计
     
-    集成功能：
-    1. LLM调用 (node.llm.generate)
-    2. 数据解析 (node.parse)
-    3. 提示构建 (node.build_prompt)
-    4. 向量搜索 (node.vector_search)
-    5. 状态管理 (基于LangGraph设计)
-    6. 信息流输出 (node.emit_info)
+    核心钩子函数：
+    1. node.prompt(template, **kwargs) - 构建提示词
+    2. node.astream(prompt, mode, ui_handler) - 异步流式LLM调用
+    3. node.parse(content, format_type) - 解析响应内容
     """
     
     def __init__(self, 
@@ -149,21 +130,14 @@ class BaseNode(ABC):
                  node_type: NodeType = NodeType.CUSTOM,
                  description: Optional[str] = None,
                  llm: Optional['BaseLLMProvider'] = None,
-                 stream: bool = True,  # 默认启用流式执行
+                 stream: bool = True,
                  **kwargs):
         self.name = name
         self.node_type = node_type
         self.description = description
-        self.stream = stream  # 是否支持流式执行
+        self.stream = stream
         self.config = kwargs
-        
-        # 集成的功能组件
         self.llm = llm
-        self._vector_client = None
-        self._parsers = {}
-        self._prompt_templates = {}
-        
-        # 信息流系统
         self.info_stream = NodeInfoStream()
         
     def emit_info(self, event_type: str, content: str, metadata: Dict[str, Any] = None):
@@ -172,389 +146,212 @@ class BaseNode(ABC):
         
     @abstractmethod
     async def execute(self, state: Dict[str, Any]) -> Union[Dict[str, Any], Command]:
-        """
-        执行节点逻辑 - 基于LangGraph设计
-        
-        Args:
-            state: 当前图状态字典
-            
-        Returns:
-            Union[Dict[str, Any], Command]: 
-            - Dict: 状态更新字典，会被合并到当前状态
-            - Command: 同时包含状态更新和流程控制的命令对象
-        """
+        """执行节点逻辑"""
         pass
     
-    async def execute_stream(self, state: Dict[str, Any]):
-        """
-        流式执行节点逻辑 - 支持实时更新
-        
-        Args:
-            state: 当前图状态字典
-            
-        Yields:
-            Dict[str, Any]: 中间状态更新，用于实时反馈
-        """
-        # 默认实现：如果节点不支持流式，直接调用execute
-        if not self.stream:
-            result = await self.execute(state)
-            yield result
-        else:
-            # 子类应该重写此方法来实现真正的流式执行
-            # 如果子类没有重写execute_stream但开启了stream，
-            # 则调用execute方法作为兜底
-            result = await self.execute(state)
-            yield result
-        
-    async def pre_execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """执行前钩子 - 可以修改状态"""
-        return state
-        
-    async def post_execute(self, state_update: Dict[str, Any]) -> Dict[str, Any]:
-        """执行后钩子 - 可以修改状态更新"""
-        return state_update
-    
     async def run(self, state: Dict[str, Any]) -> NodeResult:
-        """执行节点并返回结果"""
-        print(f"[BaseNode.run] 开始执行节点: {self.name}, stream={self.stream}")
-        result = NodeResult(
-            node_name=self.name,
-            node_type=self.node_type,
-            state_update={},
-            execution_state=ExecutionState.RUNNING
-        )
+        """运行节点并返回NodeResult"""
+        start_time = datetime.now()
         
         try:
-            # 执行前钩子
-            state = await self.pre_execute(state)
-            print(f"[BaseNode.run] 执行前钩子完成，节点: {self.name}")
+            result = await self.execute(state)
+            end_time = datetime.now()
             
-            # 如果支持流式执行，使用流式执行并取最后结果
-            if self.stream:
-                print(f"[BaseNode.run] 开始流式执行节点: {self.name}")
-                last_output = None
-                count = 0
-                try:
-                    async for output in self.execute_stream(state):
-                        print(f"[BaseNode.run] 流式输出 {count+1}: {type(output)}")
-                        last_output = output
-                        count += 1
-                    print(f"[BaseNode.run] 流式执行完成，节点: {self.name}, 总输出: {count}次")
-                except Exception as stream_error:
-                    print(f"[BaseNode.run] 流式执行异常，节点: {self.name}, 错误: {stream_error}")
-                    import traceback
-                    traceback.print_exc()
-                    # 重新抛出异常让外层处理
-                    raise stream_error
-                
-                if last_output is None:
-                    print(f"[BaseNode.run] 警告: 流式执行未产生任何输出，节点: {self.name}")
-                    output = {"success": False, "error": "节点执行未产生输出"}
-                else:
-                    output = last_output
+            # 如果返回的是Command，提取状态更新
+            if isinstance(result, Command):
+                state_update = result.update
+                metadata = {"command": result}
             else:
-                print(f"[BaseNode.run] 开始非流式执行节点: {self.name}")
-                # 执行核心逻辑
-                output = await self.execute(state)
-                print(f"[BaseNode.run] 非流式执行完成，节点: {self.name}")
+                state_update = result if isinstance(result, dict) else {}
+                metadata = {}
             
-            print(f"[BaseNode.run] 准备处理输出结果，节点: {self.name}, 输出类型: {type(output)}")
-            
-            # 处理返回结果
-            if isinstance(output, Command):
-                result.state_update = output.update
-                result.metadata["command"] = output
-            elif isinstance(output, dict):
-                result.state_update = output
-            else:
-                raise ValueError(f"节点 {self.name} 返回了无效的输出类型: {type(output)}")
-            
-            # 执行后钩子
-            result.state_update = await self.post_execute(result.state_update)
-            
-            result.execution_state = ExecutionState.SUCCESS
+            return NodeResult(
+                node_name=self.name,
+                node_type=self.node_type,
+                state_update=state_update,
+                execution_state=ExecutionState.SUCCESS,
+                start_time=start_time,
+                end_time=end_time,
+                metadata=metadata
+            )
             
         except Exception as e:
-            print(f"[BaseNode.run] 节点执行异常: {self.name}, 错误: {e}")
-            result.execution_state = ExecutionState.FAILED
-            result.error = str(e)
-            
-            # 添加详细错误日志
-            import logging
-            import traceback
-            logger = logging.getLogger(f"{__name__}.{self.name}")
-            logger.error(f"节点 {self.name} 执行失败: {e}")
-            logger.exception("节点执行异常详情:")
-            
-            # 控制台输出详细错误
-            print(f"=== 节点 {self.name} 执行失败 ===")
-            print(f"错误类型: {type(e).__name__}")
-            print(f"错误信息: {str(e)}")
-            print(f"错误堆栈:")
-            traceback.print_exc()
-            print(f"========================")
-            
-            # 重新抛出异常，让错误处理器可以捕获
-            raise e
-            
-        finally:
-            result.end_time = datetime.now()
-            print(f"[BaseNode.run] 节点执行结束: {self.name}, 状态: {result.execution_state}")
-            
-        return result
-    
-    async def run_stream(self, state: Dict[str, Any]):
-        """流式执行节点并逐步返回结果"""
-        try:
-            # 执行前钩子
-            state = await self.pre_execute(state)
-            
-            # 流式执行核心逻辑
-            async for output in self.execute_stream(state):
-                # 处理返回结果并yield中间状态
-                intermediate_result = NodeResult(
-                    node_name=self.name,
-                    node_type=self.node_type,
-                    state_update={},
-                    execution_state=ExecutionState.SUCCESS  # 设置为SUCCESS
-                )
-                
-                if isinstance(output, Command):
-                    intermediate_result.state_update = output.update
-                    intermediate_result.metadata["command"] = output
-                elif isinstance(output, dict):
-                    intermediate_result.state_update = output
-                else:
-                    # 对于无效输出，跳过此次yield
-                    continue
-                
-                # 执行后钩子
-                intermediate_result.state_update = await self.post_execute(intermediate_result.state_update)
-                
-                yield intermediate_result
-                
-        except Exception as e:
-            # 发送错误结果
-            error_result = NodeResult(
+            end_time = datetime.now()
+            return NodeResult(
                 node_name=self.name,
                 node_type=self.node_type,
                 state_update={},
                 execution_state=ExecutionState.FAILED,
+                start_time=start_time,
+                end_time=end_time,
                 error=str(e)
             )
-            error_result.end_time = datetime.now()
-            yield error_result
     
-    def get_state_value(self, state: Dict[str, Any], key: str, default: Any = None) -> Any:
-        """安全获取状态值"""
-        return state.get(key, default)
+    async def execute_stream(self, state: Dict[str, Any]):
+        """流式执行节点逻辑"""
+        if not self.stream:
+            result = await self.execute(state)
+            yield result
+        else:
+            result = await self.execute(state)
+            yield result
     
-    def get_messages(self, state: Dict[str, Any]) -> List[Message]:
-        """获取消息列表"""
-        return self.get_state_value(state, "messages", [])
-    
-    def add_message(self, state_update: Dict[str, Any], message: Message):
-        """添加消息到状态更新"""
-        if "messages" not in state_update:
-            state_update["messages"] = []
-        state_update["messages"].append(message)
-    
-    def create_ai_message(self, content: str) -> Message:
-        """创建AI消息"""
-        return Message(role=MessageRole.ASSISTANT, content=content)
-    
-    def create_user_message(self, content: str) -> Message:
-        """创建用户消息"""
-        return Message(role=MessageRole.USER, content=content)
-    
-    # ==================== 集成功能方法 ====================
-    
-    async def generate(self, 
-                      messages: List[Message], 
-                      system_prompt: Optional[str] = None,
-                      mode: str = "normal",
-                      **kwargs) -> Message:
-        """调用LLM生成回复
+    async def run_stream(self, state: Dict[str, Any]):
+        """流式运行节点并返回NodeResult"""
+        start_time = datetime.now()
         
-        Args:
-            messages: 消息历史
-            system_prompt: 系统提示（可选）
-            mode: 生成模式，'normal' 或 'think'
-            **kwargs: LLM参数
+        try:
+            final_result = None
+            async for result in self.execute_stream(state):
+                final_result = result
+                # 对于中间结果，也包装成NodeResult格式
+                if isinstance(result, Command):
+                    state_update = result.update
+                    metadata = {"command": result}
+                else:
+                    state_update = result if isinstance(result, dict) else {}
+                    metadata = {}
+                
+                yield NodeResult(
+                    node_name=self.name,
+                    node_type=self.node_type,
+                    state_update=state_update,
+                    execution_state=ExecutionState.SUCCESS,
+                    start_time=start_time,
+                    end_time=datetime.now(),
+                    metadata=metadata
+                )
             
-        Returns:
-            Message: AI回复
-        """
+        except Exception as e:
+            end_time = datetime.now()
+            yield NodeResult(
+                node_name=self.name,
+                node_type=self.node_type,
+                state_update={},
+                execution_state=ExecutionState.FAILED,
+                start_time=start_time,
+                end_time=end_time,
+                error=str(e)
+            )
+    
+    # ==================== 核心钩子函数API ====================
+    
+    def prompt(self, template: str, **kwargs) -> str:
+        """钩子函数 - 构建提示词"""
+        try:
+            if '{' in template and '}' in template:
+                return template.format(**kwargs)
+            else:
+                return template
+        except KeyError as e:
+            raise ValueError(f"提示词模板缺少变量: {e}")
+        except Exception as e:
+            raise ValueError(f"提示词构建失败: {e}")
+    
+    async def astream(self, 
+                     prompt: str,
+                     mode: str = "think",
+                     ui_handler=None,
+                     **kwargs):
+        """钩子函数 - 异步流式LLM调用"""
         if not self.llm:
             raise ValueError(f"节点 {self.name} 未配置LLM")
         
-        # 准备消息列表
-        llm_messages = messages.copy()
+        message = Message(role=MessageRole.USER, content=prompt)
+        messages = [message]
         
-        # 添加系统提示
-        if system_prompt and not any(msg.role == MessageRole.SYSTEM for msg in llm_messages):
-            llm_messages.insert(0, Message(
-                role=MessageRole.SYSTEM,
-                content=system_prompt
-            ))
+        chunk_count = 0
+        think_content = ""
+        final_content = ""
         
-        return await self.llm.generate(llm_messages, mode=mode, **kwargs)
+        try:
+            async for chunk_data in self.llm.stream_generate(
+                messages, 
+                mode=mode,
+                return_dict=True,
+                **kwargs
+            ):
+                chunk_count += 1
+                
+                think_part = chunk_data.get("think", "")
+                content_part = chunk_data.get("content", "")
+                
+                think_content += think_part
+                final_content += content_part
+                
+                # 实时UI更新
+                if ui_handler:
+                    await self._update_ui_streaming(ui_handler, think_content, final_content)
+                
+                yield {
+                    "think": think_content,
+                    "content": final_content,
+                    "chunk_count": chunk_count,
+                    "current_think": think_part,
+                    "current_content": content_part
+                }
+                
+        except Exception as e:
+            if ui_handler:
+                await ui_handler.add_node_message(
+                    self.name,
+                    f"❌ LLM调用失败: {str(e)}",
+                    "error"
+                )
+            raise Exception(f"LLM流式调用失败: {str(e)}")
     
-    async def stream_generate(self, 
-                             messages: List[Message], 
-                             system_prompt: Optional[str] = None,
-                             mode: str = "normal",
-                             **kwargs):
-        """流式调用LLM生成回复
-        
-        Args:
-            messages: 消息历史
-            system_prompt: 系统提示（可选）
-            mode: 生成模式，'normal' 或 'think'
-            **kwargs: LLM参数
-        """
-        if not self.llm:
-            raise ValueError(f"节点 {self.name} 未配置LLM")
-        
-        # 准备消息列表
-        llm_messages = messages.copy()
-        
-        # 添加系统提示
-        if system_prompt and not any(msg.role == MessageRole.SYSTEM for msg in llm_messages):
-            llm_messages.insert(0, Message(
-                role=MessageRole.SYSTEM,
-                content=system_prompt
-            ))
-        
-        async for chunk in self.llm.stream_generate(llm_messages, mode=mode, **kwargs):
-            yield chunk
-    
-
-    
-    def parse(self, text: str, format_type: str = "json", **kwargs) -> Any:
-        """解析文本数据
-        
-        Args:
-            text: 要解析的文本
-            format_type: 解析格式 (json, yaml, xml, regex, structured)
-            **kwargs: 解析参数
-            
-        Returns:
-            Any: 解析结果
-        """
+    def parse(self, content: str, format_type: str = "json", **kwargs) -> Any:
+        """钩子函数 - 解析响应内容"""
         if format_type == "json":
-            return self._parse_json(text, **kwargs)
+            return self._parse_json_enhanced(content, **kwargs)
         elif format_type == "yaml":
-            return self._parse_yaml(text, **kwargs)
-        elif format_type == "xml":
-            return self._parse_xml(text, **kwargs)
-        elif format_type == "regex":
-            return self._parse_regex(text, **kwargs)
+            return self._parse_yaml(content, **kwargs)
         elif format_type == "structured":
-            return self._parse_structured(text, **kwargs)
+            return self._parse_structured(content, **kwargs)
         else:
             raise ValueError(f"不支持的解析格式: {format_type}")
     
-    def build_prompt(self, 
-                    template_name: str, 
-                    **variables) -> str:
-        """构建提示词
-        
-        Args:
-            template_name: 模板名称
-            **variables: 模板变量
-            
-        Returns:
-            str: 格式化的提示词
-        """
-        if template_name not in self._prompt_templates:
-            # 如果没有找到模板，尝试从预设模板获取
-            template = self._get_default_template(template_name)
-            if not template:
-                raise ValueError(f"未找到提示模板: {template_name}")
-            self._prompt_templates[template_name] = template
-        
-        template = self._prompt_templates[template_name]
-        return template.format(**variables)
+    # ==================== 内部辅助方法 ====================
     
-    async def vector_search(self, 
-                           query: str, 
-                           collection_name: str = "default",
-                           top_k: int = 5,
-                           **kwargs) -> List[Dict[str, Any]]:
-        """向量搜索
-        
-        Args:
-            query: 查询文本
-            collection_name: 集合名称
-            top_k: 返回结果数量
-            **kwargs: 搜索参数
-            
-        Returns:
-            List[Dict]: 搜索结果
-        """
-        if not self._vector_client:
-            self._init_vector_client()
-        
-        if not self._vector_client:
-            raise ValueError(f"节点 {self.name} 未配置向量数据库")
-        
-        # 调用向量搜索
-        return await self._vector_client.search(
-            query=query,
-            collection_name=collection_name,
-            top_k=top_k,
-            **kwargs
-        )
-    
-    def set_llm(self, llm: 'BaseLLMProvider'):
-        """设置LLM提供者"""
-        self.llm = llm
-    
-    def set_vector_client(self, client):
-        """设置向量数据库客户端"""
-        self._vector_client = client
-    
-    def add_prompt_template(self, name: str, template: str):
-        """添加提示模板"""
-        self._prompt_templates[name] = template
-    
-    def add_parser(self, name: str, parser):
-        """添加自定义解析器"""
-        self._parsers[name] = parser
-    
-    # ==================== 内部解析方法 ====================
-    
-    def _parse_json(self, text: str, **kwargs) -> Dict[str, Any]:
-        """解析JSON"""
-        import json
-        import re
-        
-        # 尝试直接解析
+    async def _update_ui_streaming(self, ui_handler, think_content: str, final_content: str):
+        """内部方法 - 更新流式UI"""
         try:
-            return json.loads(text)
-        except json.JSONDecodeError:
+            display_content = ""
+            if think_content.strip():
+                display_content += f"""
+<div style="background: #f8f9fa; border-left: 4px solid #6c757d; padding: 10px; margin: 10px 0; border-radius: 4px;">
+🤔 思考过程：<br>
+{think_content}
+</div>"""
+            
+            if final_content.strip():
+                display_content += f"""
+<div style="background: #e8f5e9; border-left: 4px solid #28a745; padding: 10px; margin: 10px 0; border-radius: 4px;">
+✨ 生成内容：<br>
+{final_content}
+</div>"""
+            
+            await ui_handler.add_node_message(
+                self.name,
+                display_content,
+                "streaming"
+            )
+        except Exception:
             pass
+    
+    def _parse_json_enhanced(self, content: str, **kwargs) -> Dict[str, Any]:
+        """增强的JSON解析 - 使用专门的JSONParser工具类"""
+        from ..parsers.json_parser import JSONParser
         
-        # 尝试提取JSON块
-        json_pattern = r'```json\s*\n(.*?)\n```'
-        match = re.search(json_pattern, text, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(1))
-            except json.JSONDecodeError:
-                pass
+        # 创建JSON解析器实例，允许部分匹配和非严格模式
+        parser = JSONParser(strict=False, allow_partial=True)
         
-        # 尝试查找JSON对象
-        json_pattern = r'\{.*\}'
-        match = re.search(json_pattern, text, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(0))
-            except json.JSONDecodeError:
-                pass
-        
-        raise ValueError(f"无法解析JSON: {text[:100]}...")
+        try:
+            return parser.parse(content)
+        except ValueError as e:
+            # 如果解析失败，提供更详细的错误信息
+            raise ValueError(f"JSON解析失败: {str(e)} (内容: {content[:200]}...)")
+    
     
     def _parse_yaml(self, text: str, **kwargs) -> Dict[str, Any]:
         """解析YAML"""
@@ -563,25 +360,8 @@ class BaseNode(ABC):
             return yaml.safe_load(text)
         except ImportError:
             raise ValueError("需要安装yaml库: pip install pyyaml")
-        except yaml.YAMLError as e:
+        except Exception as e:
             raise ValueError(f"YAML解析失败: {e}")
-    
-    def _parse_xml(self, text: str, **kwargs) -> Dict[str, Any]:
-        """解析XML"""
-        try:
-            import xml.etree.ElementTree as ET
-            root = ET.fromstring(text)
-            return self._xml_to_dict(root)
-        except ET.ParseError as e:
-            raise ValueError(f"XML解析失败: {e}")
-    
-    def _parse_regex(self, text: str, pattern: str, **kwargs) -> Dict[str, Any]:
-        """正则表达式解析"""
-        import re
-        match = re.search(pattern, text, **kwargs)
-        if match:
-            return match.groupdict() if match.groupdict() else {"match": match.group(0)}
-        return {}
     
     def _parse_structured(self, text: str, **kwargs) -> Dict[str, Any]:
         """结构化文本解析"""
@@ -593,90 +373,23 @@ class BaseNode(ABC):
         for line in lines:
             line = line.strip()
             if ':' in line and not line.startswith(' '):
-                # 保存前一个键值对
                 if current_key:
                     result[current_key] = '\n'.join(current_value).strip()
                 
-                # 开始新的键值对
                 key, value = line.split(':', 1)
                 current_key = key.strip()
                 current_value = [value.strip()] if value.strip() else []
             elif current_key and line:
                 current_value.append(line)
         
-        # 保存最后一个键值对
         if current_key:
             result[current_key] = '\n'.join(current_value).strip()
         
         return result
     
-    def _xml_to_dict(self, element) -> Dict[str, Any]:
-        """XML元素转字典"""
-        result = {}
-        
-        # 处理属性
-        if element.attrib:
-            result.update(element.attrib)
-        
-        # 处理文本内容
-        if element.text and element.text.strip():
-            if len(element) == 0:
-                return element.text.strip()
-            result['text'] = element.text.strip()
-        
-        # 处理子元素
-        for child in element:
-            child_data = self._xml_to_dict(child)
-            if child.tag in result:
-                if not isinstance(result[child.tag], list):
-                    result[child.tag] = [result[child.tag]]
-                result[child.tag].append(child_data)
-            else:
-                result[child.tag] = child_data
-        
-        return result
-    
-    def _get_default_template(self, template_name: str) -> Optional[str]:
-        """获取默认模板"""
-        default_templates = {
-            "system": "你是一个专业的AI助手，请根据用户需求提供帮助。",
-            "thought": """请分析当前问题并制定解决方案：
-
-问题：{query}
-可用工具：{tools}
-历史信息：{context}
-
-请提供：
-1. 分析：对问题的理解
-2. 策略：解决方案
-3. 工具需求：是否需要使用工具
-4. 信心评估：1-10分""",
-            "action": """基于分析结果，请选择合适的工具并提供参数：
-
-分析结果：{thought}
-可用工具：{tools}
-
-请选择工具并提供参数。""",
-            "final_answer": """基于所有信息，请提供最终回答：
-
-问题：{query}
-分析过程：{thought}
-工具结果：{observations}
-
-请提供完整、准确的最终回答。"""
-        }
-        
-        return default_templates.get(template_name)
-    
-    def _init_vector_client(self):
-        """初始化向量数据库客户端"""
-        try:
-            # 尝试从工具管理器获取向量搜索功能
-            from tools.mcp_tools import MCPToolManager
-            # 这里可以根据实际情况初始化向量客户端
-            pass
-        except ImportError:
-            pass
+    def set_llm(self, llm: 'BaseLLMProvider'):
+        """设置LLM提供者"""
+        self.llm = llm
 
 
 class BaseAgent(ABC):
@@ -701,14 +414,6 @@ class BaseAgent(ABC):
     def build_graph(self) -> "StateGraph":
         """构建StateGraph"""
         pass
-        
-    async def initialize(self):
-        """初始化Agent"""
-        pass
-        
-    async def cleanup(self):
-        """清理资源"""
-        pass
 
 
 class BaseExecutor(ABC):
@@ -723,63 +428,37 @@ class BaseExecutor(ABC):
         pass
 
 
-class BaseParser(ABC, Generic[T]):
-    """解析器基类 - 解析LLM输出"""
+class BaseTool(ABC):
+    """工具基类 - 所有工具必须实现此接口"""
     
-    @abstractmethod
-    def parse(self, text: str) -> T:
-        """
-        解析文本
-        
-        Args:
-            text: 要解析的文本
-            
-        Returns:
-            T: 解析结果
-        """
-        pass
+    def __init__(self, 
+                 name: str,
+                 description: str,
+                 parameters: Optional[Dict[str, Any]] = None):
+        self.name = name
+        self.description = description
+        self.parameters = parameters or {}
         
     @abstractmethod
-    async def aparse(self, text: str) -> T:
-        """异步解析文本"""
+    async def execute(self, **kwargs) -> Any:
+        """执行工具"""
         pass
         
-    def validate(self, result: T) -> bool:
-        """验证解析结果"""
+    def validate_parameters(self, **kwargs) -> bool:
+        """验证参数"""
+        # 检查必需参数
+        for param_name, param_info in self.parameters.items():
+            if param_info.get("required", False) and param_name not in kwargs:
+                return False
         return True
-
-
-class BasePromptTemplate(ABC):
-    """提示模板基类"""
-    
-    def __init__(self, template: str, **kwargs):
-        self.template = template
-        self.variables = kwargs
         
-    @abstractmethod
-    def format(self, **kwargs) -> str:
-        """
-        格式化模板
-        
-        Args:
-            **kwargs: 模板变量
-            
-        Returns:
-            str: 格式化后的提示
-        """
-        pass
-        
-    @abstractmethod
-    def get_variables(self) -> List[str]:
-        """获取模板变量列表"""
-        pass
-        
-    def validate_variables(self, **kwargs) -> bool:
-        """验证变量是否完整"""
-        required_vars = self.get_variables()
-        provided_vars = set(kwargs.keys())
-        missing_vars = set(required_vars) - provided_vars
-        return len(missing_vars) == 0
+    def get_schema(self) -> Dict[str, Any]:
+        """获取工具的JSON Schema"""
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": self.parameters
+        }
 
 
 class BaseLLM(ABC):
@@ -789,16 +468,7 @@ class BaseLLM(ABC):
     async def generate(self, 
                       messages: List[Message],
                       **kwargs) -> Message:
-        """
-        生成回复
-        
-        Args:
-            messages: 消息历史
-            **kwargs: 额外参数
-            
-        Returns:
-            Message: AI回复消息
-        """
+        """生成回复"""
         pass
         
     @abstractmethod
@@ -807,38 +477,3 @@ class BaseLLM(ABC):
                             **kwargs) -> AsyncIterator[str]:
         """流式生成回复"""
         pass
-        
-    def count_tokens(self, text: str) -> int:
-        """计算token数量 - 默认实现"""
-        return len(text) // 4  # 粗略估算
-
-
-class BaseTool(ABC):
-    """工具基类"""
-    
-    def __init__(self, 
-                 name: str,
-                 description: str,
-                 parameters: Dict[str, Any]):
-        self.name = name
-        self.description = description
-        self.parameters = parameters
-        
-    @abstractmethod
-    async def execute(self, **kwargs) -> Any:
-        """执行工具"""
-        pass
-        
-    def validate_parameters(self, **kwargs) -> bool:
-        """验证参数"""
-        required_params = [
-            key for key, value in self.parameters.items()
-            if value.get("required", False)
-        ]
-        return all(param in kwargs for param in required_params)
-
-
-# 避免循环导入，这里只定义接口
-from typing import TYPE_CHECKING
-if TYPE_CHECKING:
-    from .graph import Graph 
