@@ -68,8 +68,19 @@ class ImageRecognitionWorkflow:
         # 新增条件边：如果尚未完成全部批次，则回到图片加载节点
         def loop_condition(state):
             """当尚未完成全部批次时继续循环，否则结束"""
+            # 检查是否已完成所有图片处理
             if state.get('recognition_complete', False):
                 return "__end__"
+            
+            # 检查是否有图片需要处理
+            images = state.get('images', [])
+            current_batch_index = state.get('current_batch_index', 0)
+            batch_size = state.get('config', {}).get('batch_size', 5)
+            
+            # 如果没有图片或所有图片已处理完，直接结束
+            if not images or current_batch_index * batch_size >= len(images):
+                return "__end__"
+            
             return "image_loading"
         
         self.graph.add_conditional_edges("story_generation", loop_condition)
@@ -316,6 +327,9 @@ class ImageLoadingNode(BaseNode):
                             # workspace/input目录
                             os.path.join('workspace', 'input', img_path),
                             os.path.join('workspace', 'input', img_path[1:]),
+                            # workspace/input/对话日常图片/动物修目录
+                            os.path.join('workspace', 'input', '对话日常图片', '动物修', img_path),
+                            os.path.join('workspace', 'input', '对话日常图片', '动物修', img_path[1:]),
                             # 其他可能的目录
                             os.path.join('.', img_path),
                             os.path.join('.', img_path[1:])
@@ -448,7 +462,7 @@ class ImageRecognitionNode(BaseNode):
 请根据提供的图片内容，完成以下任务：
 1. 生成一个简短而精确的标题（5-10个字）
 2. 提供详细的图片内容描述（100-200字）
-3. 识别图片中的关键物体、人物、场景等元素
+3. 识别图片中的关键物体、人物、动植物实体名词，不需要概念或形容词、壮语、动词、场景、风格、情感基调，5-20个
 
 输出格式要求：JSON格式，包含以下字段：
 - title: 图片标题
@@ -459,7 +473,7 @@ class ImageRecognitionNode(BaseNode):
 {
   "title": "公园灰猫",
   "description": "在秋日公园拍摄的照片，画面中一只银灰色短毛猫正蹲坐在人行道上，好奇地用爪子触碰一片枯黄的落叶。背景是公园入口处的绿色拱门和标识牌，周围环绕着多棵落叶树木，树叶呈现金黄色调。阳光透过树叶形成柔和的光影效果，整个场景充满宁静祥和的秋日氛围。猫咪的绿色眼睛和警觉的姿态与周围环境形成了鲜明对比。",
-  "elements": ["灰猫", "落叶", "公园", "拱门", "秋天景色", "树木", "城市风光", "宁静氛围"]
+  "elements": ["灰猫", "落叶", "公园", "拱门","树", "城市"]
 }
 
 """
@@ -751,10 +765,14 @@ class ResultSaveNode(BaseNode):
             }
 
 
-# 本地测试运行入口
-async def main():
-    """本地测试运行图片识别工作流"""
-    print("🎭 启动图片识别工作流本地测试...")
+if __name__ == "__main__":
+    """直接运行此文件处理图片"""
+    import asyncio
+    import sys
+    import glob
+    
+    print("🖼️ 图片识别工作流")
+    print("=" * 60)
     
     # 简单的模拟聊天界面
     class MockWorkflowChat:
@@ -767,120 +785,86 @@ async def main():
         def _create_workflow_progress(self):
             return "<div>工作流进度</div>"
     
-    try:
-        # 配置LLM
-        llm = None
+    async def main():
         try:
+            # 配置LLM
             from llm.doubao import DoubaoLLM
             from core.types import LLMConfig
             
             # 使用环境变量获取模型名称和API密钥
             vision_model = os.getenv('DOUBAO_MODEL_VISION_PRO', 'ep-20250704095927-j6t2g')
-            api_key = os.getenv('ARK_API_KEY') or os.getenv('DOUBAO_API_KEY')
+            api_key = os.getenv('ARK_API_KEY', "b633a622-b5d0-4f16-a8a9-616239cf15d1")
             
             # 创建LLM配置
             llm_config = LLMConfig(
                 provider="doubao",
-                model_name=vision_model,  # 使用环境变量中的多模态模型
-                api_key=api_key,  # 使用环境变量中的API密钥
+                model_name=vision_model,
+                api_key=api_key.strip(),
                 api_base="https://ark.cn-beijing.volces.com/api/v3"
             )
             llm = DoubaoLLM(config=llm_config)
             print(f"✅ LLM配置成功，使用模型: {vision_model}")
-        except Exception as e:
-            print(f"⚠️ LLM配置失败，将跳过实际识别: {e}")
-        
-        # 初始化工作流
-        workflow = ImageRecognitionWorkflow(llm=llm)
-        print("✅ 图片识别工作流初始化完成")
-        
-        # 测试配置
-        test_config = {
-            'batch_size': 2,  # 每批处理2张图片
-            'csv_output': {
-                'enabled': True,
-                'output_dir': 'workspace/image_recognition_output',
-                'filename': 'image_recognition_results.csv',
-                'encoding': 'utf-8-sig'
+            
+            # 初始化工作流
+            workflow = ImageRecognitionWorkflow(llm=llm)
+            print("✅ 图片识别工作流初始化完成")
+            
+            # 自动扫描所有图片目录
+            image_paths = []
+            image_dirs = [
+                "workspace/input/对话日常图片/动物修/*.png",
+                "workspace/input/对话日常图片/美食修/*.png", 
+                "workspace/input/对话日常图片/风景修/*.png"
+            ]
+            
+            for pattern in image_dirs:
+                image_paths.extend(glob.glob(pattern))
+            
+            print(f"🖼️ 发现图片数量: {len(image_paths)}")
+            
+            # 配置
+            config = {
+                'batch_size': 5,  # 每批处理5张图片
+                'csv_output': {
+                    'enabled': True,
+                    'output_dir': 'workspace/image_recognition_output',
+                    'filename': 'image_recognition_results.csv',
+                    'encoding': 'utf-8-sig'
+                }
             }
-        }
-        
-        print(f"📊 测试配置: {test_config}")
-        
-        # 模拟图片路径（根据你的实际环境修改）
-        test_images = [
-            "@25455127221_185539693045_路边可爱动物 (4)(1).png"  # 使用提供的图片路径
-        ]
-        
-        print(f"🖼️ 测试图片: {test_images}")
-        
-        # 创建模拟聊天界面
-        mock_chat = MockWorkflowChat()
-        
-        # 创建工作流图
-        graph = await workflow.create_image_recognition_graph()
-        compiled_graph = graph.compile()
-        print("✅ 工作流图创建完成")
-        
-        # 准备输入数据
-        input_data = {
-            'config': test_config,
-            'workflow_chat': mock_chat,
-            'llm': llm,
-            'images': test_images,
-            'current_batch_index': 0
-        }
-        
-        print("\n🚀 开始执行图片识别工作流...")
-        
-        # 执行工作流
-        final_result = None
-        async for result in compiled_graph.stream(input_data):
-            if result:
-                final_result = result
-        
-        # 显示结果
-        if final_result:
-            print("\n✅ 工作流执行完成!")
             
-            recognition_results = final_result.get('recognition_results', [])
-            print(f"📝 识别结果数量: {len(recognition_results)}")
+            # 创建模拟聊天界面
+            mock_chat = MockWorkflowChat()
             
-            if recognition_results:
-                print("\n🖼️ 识别结果示例:")
-                for i, result in enumerate(recognition_results[:2], 1):  # 显示前2条
-                    print(f"\n--- 结果 {i} ---")
-                    print(f"图片: {result.get('image_name', 'N/A')}")
-                    print(f"标题: {result.get('title', 'N/A')}")
-                    print(f"描述: {result.get('description', 'N/A')}")
-                    print(f"元素: {result.get('elements', [])}")
-                    print(f"风格: {result.get('style', 'N/A')}")
-                    print(f"情感: {result.get('mood', 'N/A')}")
-                    print("-" * 50)
-                
-                # 显示CSV保存结果
-                csv_result = final_result.get('csv_save_result', {})
-                if csv_result.get('success'):
-                    csv_file = csv_result.get('file_path', '未知')
-                    print(f"\n💾 CSV结果已保存到: {csv_file}")
-                else:
-                    print(f"\n⚠️ CSV保存失败: {csv_result.get('message', '未知错误')}")
+            # 创建工作流图
+            graph = await workflow.create_image_recognition_graph()
+            compiled_graph = graph.compile()
+            print("✅ 工作流图创建完成")
             
-            else:
-                print("⚠️ 没有识别结果（可能是API密钥无效或网络问题）")
-        
-        else:
-            print("❌ 工作流执行失败")
+            # 准备输入数据
+            input_data = {
+                'config': config,
+                'workflow_chat': mock_chat,
+                'llm': llm,
+                'images': image_paths,
+                'current_batch_index': 0
+            }
+            
+            print(f"\n🚀 开始处理{len(image_paths)}张图片...")
+            
+            # 执行工作流
+            final_result = None
+            async for result in compiled_graph.stream(input_data):
+                if result:
+                    final_result = result
+            
+            print("\n✅ 图片识别工作流执行完成!")
+            
+        except Exception as e:
+            print(f"❌ 执行失败: {e}")
+            import traceback
+            traceback.print_exc()
     
-    except Exception as e:
-        print(f"❌ 测试执行失败: {e}")
-        import traceback
-        traceback.print_exc()
-
-if __name__ == "__main__":
-    """直接运行此文件进行本地测试"""
-    print("🖼️ 图片识别工作流 - 本地测试模式")
-    print("=" * 60)
-    
-    # 运行异步主函数
+    # 运行主函数
     asyncio.run(main())
+
