@@ -251,7 +251,7 @@ class CharacterProfileInterface:
                 show_label=False,
                 bubble_full_width=False,
                 avatar_images=None,
-                type="tuples"
+                type="messages"
             )
             
             # 工作流状态面板
@@ -462,17 +462,17 @@ class CharacterProfileInterface:
         
         # 输入验证
         if not character_name or not character_name.strip():
-            return [["系统", "❌ 请输入角色名称"]], "状态：输入验证失败"
+            return [{"role": "assistant", "content": "❌ 请输入角色名称"}], "状态：输入验证失败"
         
         if not basic_info or not basic_info.strip():
-            return [["系统", "❌ 请输入基础人设信息"]], "状态：输入验证失败"
+            return [{"role": "assistant", "content": "❌ 请输入基础人设信息"}], "状态：输入验证失败"
         
         if not selected_categories:
-            return [["系统", "❌ 请至少选择一个生成类别"]], "状态：输入验证失败"
+            return [{"role": "assistant", "content": "❌ 请至少选择一个生成类别"}], "状态：输入验证失败"
         
         # 创建LLM配置
         if not self.llm_factory:
-            return [["系统", "❌ LLM工厂未配置"]], "状态：配置错误"
+            return [{"role": "assistant", "content": "❌ LLM工厂未配置"}], "状态：配置错误"
         
         try:
             llm_config = LLMConfig(
@@ -484,7 +484,7 @@ class CharacterProfileInterface:
             )
             self.workflow.llm_config = llm_config
         except Exception as e:
-            return [["系统", f"❌ LLM配置失败：{str(e)}"]], "状态：配置错误"
+            return [{"role": "assistant", "content": f"❌ LLM配置失败：{str(e)}"}], "状态：配置错误"
         
         # 使用生成器函数实现真正的流式更新
         yield from self._stream_workflow_execution(
@@ -498,19 +498,28 @@ class CharacterProfileInterface:
         )
     
     def _stream_workflow_execution(self, **kwargs):
-        """流式工作流执行生成器 - 实现真正的实时更新"""
+        """流式工作流执行生成器 - 优化LLM流式显示"""
         import asyncio
         
         # 清空事件收集器
         self.collected_events = []
         current_messages = []
         
+        # 用于跟踪当前正在进行的LLM生成
+        current_llm_session = {
+            'active': False,
+            'item_name': '',
+            'category': '',
+            'accumulated_content': '',
+            'message_index': -1
+        }
+        
         # 添加开始消息
         start_msg = f"🚀 启动实时流式工作流\n\n角色：**{kwargs['character_name']}**\n类别：{len(kwargs['selected_categories'])} 个"
-        current_messages.append(["🏗️ 图引擎", start_msg])
+        current_messages.append({"role": "assistant", "content": start_msg})
         
         config_msg = f"⚙️ LLM配置：{kwargs['llm_provider']} | {kwargs['model_name']} | temp={kwargs['temperature']}"
-        current_messages.append(["🏗️ 图引擎", config_msg])
+        current_messages.append({"role": "assistant", "content": config_msg})
         
         # 首次返回初始状态
         yield current_messages, "状态：正在启动工作流..."
@@ -519,7 +528,7 @@ class CharacterProfileInterface:
             # 执行异步工作流
             async def run_stream_workflow():
                 final_status = "状态：执行中..."
-                nonlocal current_messages
+                nonlocal current_messages, current_llm_session
                 
                 async for result in self.workflow.generate_character_profile_stream(
                     character_name=kwargs['character_name'],
@@ -528,18 +537,79 @@ class CharacterProfileInterface:
                     selected_collections=kwargs['selected_collections']
                 ):
                     # 处理收集到的框架级事件
+                    events_processed = False
                     while self.collected_events:
                         event = self.collected_events.pop(0)
-                        sender, message = self._format_event_for_display(event)
-                        current_messages.append([sender, message])
+                        events_processed = True
                         
-                        # 实时更新界面
+                        event_type = event.get("type", "")
+                        node_name = event.get("node_name", "")
+                        content = event.get("content", "")
+                        metadata = event.get("metadata", {})
+                        
+                        # 特殊处理LLM流式事件
+                        if event_type == "llm_streaming":
+                            item_name = metadata.get('item', '')
+                            category = metadata.get('category', '')
+                            current_content = metadata.get('current_content', '')
+                            accumulated_content = metadata.get('accumulated_content', '')
+                            
+                            # 如果是新的LLM会话或不同的条目
+                            if not current_llm_session['active'] or current_llm_session['item_name'] != item_name:
+                                # 开始新的LLM会话
+                                current_llm_session = {
+                                    'active': True,
+                                    'item_name': item_name,
+                                    'category': category,
+                                    'accumulated_content': accumulated_content,
+                                    'message_index': len(current_messages)
+                                }
+                                
+                                # 创建新的LLM生成消息
+                                llm_msg = f"🤖 **正在生成：{category} - {item_name}**\n\n{accumulated_content}"
+                                current_messages.append({"role": "assistant", "content": llm_msg})
+                            else:
+                                # 更新现有的LLM消息
+                                current_llm_session['accumulated_content'] = accumulated_content
+                                llm_msg = f"🤖 **正在生成：{category} - {item_name}**\n\n{accumulated_content}"
+                                current_messages[current_llm_session['message_index']] = {"role": "assistant", "content": llm_msg}
+                        
+                        elif event_type == "llm_complete":
+                            # LLM生成完成，结束当前会话
+                            if current_llm_session['active']:
+                                item_name = metadata.get('item', current_llm_session['item_name'])
+                                category = metadata.get('category', current_llm_session['category'])
+                                
+                                # 更新为完成状态
+                                final_content = current_llm_session['accumulated_content']
+                                completion_msg = f"✅ **已完成：{category} - {item_name}**\n\n{final_content}"
+                                current_messages[current_llm_session['message_index']] = {"role": "assistant", "content": completion_msg}
+                                
+                                # 重置LLM会话
+                                current_llm_session['active'] = False
+                        
+                        elif event_type == "llm_start":
+                            # LLM开始生成新条目
+                            item_name = metadata.get('item', '')
+                            category = metadata.get('category', '')
+                            start_msg = f"🚀 开始生成：{category} - {item_name}"
+                            current_messages.append({"role": "assistant", "content": start_msg})
+                        
+                        else:
+                            # 处理其他类型的事件
+                            sender, message = self._format_event_for_display(event)
+                            # 过滤掉无价值的重复事件
+                            if not (event_type in ["node_streaming", "chunk_count"] and "chunk_count" in str(message)):
+                                current_messages.append({"role": "assistant", "content": f"**{sender}**: {message}"})
+                    
+                    # 只有在处理了事件时才更新界面
+                    if events_processed:
                         yield current_messages.copy(), "状态：正在处理..."
                     
                     # 处理工作流结果
                     if result.get('success') is False and 'error' in result:
                         error_msg = f"❌ 生成失败：{result['error']}"
-                        current_messages.append(["📦 ProfileGenerator", error_msg])
+                        current_messages.append({"role": "assistant", "content": error_msg})
                         final_status = "状态：执行失败"
                         yield current_messages.copy(), final_status
                         return
@@ -548,7 +618,7 @@ class CharacterProfileInterface:
                         output_file = result.get('output_file', '')
                         profile_data = result.get('profile', {})
                         
-                        success_msg = f"✅ 角色资料生成完成！\n\n"
+                        success_msg = f"🎉 **角色资料生成完成！**\n\n"
                         success_msg += f"🎯 生成了 {len(profile_data)} 个类别的资料\n"
                         if output_file:
                             success_msg += f"📁 文件保存位置：{output_file}\n\n"
@@ -557,10 +627,11 @@ class CharacterProfileInterface:
                             if isinstance(data, dict):
                                 success_msg += f"📋 **{category}**：{len(data)} 个条目\n"
                         
-                        current_messages.append(["🎉 最终结果", success_msg])
+                        current_messages.append({"role": "assistant", "content": success_msg})
                         
                         if output_file:
-                            current_messages.append(["💾 文件系统", f"✅ 文件已保存：{output_file}"])
+                            file_msg = f"✅ 文件已保存：{output_file}"
+                            current_messages.append({"role": "assistant", "content": file_msg})
                         
                         final_status = f"状态：生成完成 - {len(profile_data)} 个类别"
                         yield current_messages.copy(), final_status
@@ -569,14 +640,18 @@ class CharacterProfileInterface:
                     # 处理进度更新
                     elif 'progress' in result:
                         progress_msg = result['progress']
-                        current_messages.append(["📊 进度", progress_msg])
+                        current_messages.append({"role": "assistant", "content": f"📊 {progress_msg}"})
                         yield current_messages.copy(), f"状态：{progress_msg}"
                 
                 # 处理剩余的事件
                 while self.collected_events:
                     event = self.collected_events.pop(0)
-                    sender, message = self._format_event_for_display(event)
-                    current_messages.append([sender, message])
+                    event_type = event.get("type", "")
+                    
+                    # 跳过无价值的事件
+                    if event_type not in ["node_streaming", "chunk_count"]:
+                        sender, message = self._format_event_for_display(event)
+                        current_messages.append({"role": "assistant", "content": f"**{sender}**: {message}"})
                 
                 yield current_messages.copy(), final_status
             
@@ -599,7 +674,7 @@ class CharacterProfileInterface:
         except Exception as e:
             logger.error(f"流式工作流执行失败: {e}")
             error_msg = f"❌ 执行异常：{str(e)}"
-            current_messages.append(["系统", error_msg])
+            current_messages.append({"role": "assistant", "content": error_msg})
             yield current_messages, f"状态：异常 - {str(e)}"
     
     def _clear_chat(self):

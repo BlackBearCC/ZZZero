@@ -2,7 +2,7 @@
 简化的核心基类定义 - 基于钩子函数API设计
 """
 from abc import ABC, abstractmethod
-from typing import Dict, List, Any, Optional, Union, AsyncIterator
+from typing import Dict, List, Any, Optional, Union, AsyncIterator, Generic, TypeVar
 from dataclasses import dataclass, field
 from datetime import datetime
 import asyncio
@@ -540,6 +540,28 @@ class BaseTool(ABC):
             "description": self.description,
             "parameters": self.parameters
         }
+
+
+T = TypeVar('T')
+
+class BaseParser(ABC, Generic[T]):
+    """解析器基类 - 为各类解析器提供统一接口
+
+    子类应实现 parse(text) 方法，可按需覆盖 aparse 与 validate。
+    """
+
+    @abstractmethod
+    def parse(self, text: str) -> T:
+        """同步解析文本，返回类型为泛型 T 的结果"""
+        pass
+
+    async def aparse(self, text: str) -> T:
+        """异步解析文本，默认调用同步实现"""
+        return self.parse(text)
+
+    def validate(self, result: T) -> bool:
+        """校验解析结果，默认始终通过"""
+        return True
 
 
 class BaseLLM(ABC):

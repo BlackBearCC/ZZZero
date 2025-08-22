@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 class BatchScheduleGenerator:
     """批量日程生成器"""
     
-    def __init__(self, start_date: str = "2025-07-18", batch_count: int = 100):
+    def __init__(self, start_date: str = "2025-07-18", batch_count: int = 365):
         """
         初始化批量生成器
         
@@ -82,8 +82,8 @@ class BatchScheduleGenerator:
             llm_config = LLMConfig(
                 provider="doubao",
                 api_key=os.getenv('DOUBAO_API_KEY', 'b633a622-b5d0-4f16-a8a9-616239cf15d1'),
-                model_name=os.getenv('DOUBAO_MODEL_DEEPSEEKR1', 'ep-20250221154107-c4qc7'),
-                temperature=0.7,
+                model_name=os.getenv('DOUBAO_MODEL_1.6_THINKING', 'ep-20250612123438-7fj94'),
+                temperature=0.5,
                 max_tokens=16384
             )
             
@@ -126,7 +126,7 @@ class BatchScheduleGenerator:
         
         # 生成配置
         config = {
-            'protagonist': '方知衡',
+            'protagonist': '穆昭',
             'schedule_type': 'mega_batch',  # 标记为大批次模式
             'start_date': self.current_date.strftime('%Y-%m-%d'),
             'end_date': end_date.strftime('%Y-%m-%d'),
@@ -553,7 +553,7 @@ class BatchScheduleGenerator:
             self.output_dir.mkdir(parents=True, exist_ok=True)
             
             # 使用固定CSV文件名，便于增量更新
-            csv_file_path = self.output_dir / "batch_schedules.csv"
+            csv_file_path = self.output_dir / "batch_schedules_muzhao.csv"
             
             # 定义CSV列头
             csv_headers = [
@@ -821,7 +821,7 @@ async def main():
     import argparse
     
     parser = argparse.ArgumentParser(description='批量日程生成器')
-    parser.add_argument('--start-date', default='2025-07-03', help='开始日期 (YYYY-MM-DD)')
+    parser.add_argument('--start-date', default='2025-08-11', help='开始日期 (YYYY-MM-DD)')
     parser.add_argument('--batch-count', type=int, default=30, help='批次数量')
     
     args = parser.parse_args()

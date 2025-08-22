@@ -30,7 +30,7 @@ class StoryGenerationNode(BaseNode):
     def _load_protagonist_data(self):
         """加载主角方知衡的详细人设"""
         try:
-            protagonist_path = os.path.join(os.path.dirname(__file__), '../../config/基础人设.txt')
+            protagonist_path = os.path.join(os.path.dirname(__file__), '../../config/基础人设_方知衡100.txt')
             if os.path.exists(protagonist_path):
                 with open(protagonist_path, 'r', encoding='utf-8') as f:
                     self.protagonist_data = f.read()
@@ -129,9 +129,6 @@ class StoryGenerationNode(BaseNode):
                 "progress"
             )
         
-        # 创建CSV文件并写入表头
-        story_csv_path = await self._prepare_csv_file(csv_file_path)
-        
         # 分批异步处理
         import asyncio
         batch_tasks = []
@@ -144,7 +141,7 @@ class StoryGenerationNode(BaseNode):
             # 创建批处理任务
             task = asyncio.create_task(
                 self._process_batch(
-                    batch_idx, batch_results, llm, story_csv_path, workflow_chat
+                    batch_idx, batch_results, llm, csv_file_path, workflow_chat
                 )
             )
             batch_tasks.append(task)
@@ -153,6 +150,9 @@ class StoryGenerationNode(BaseNode):
         for completed_task in asyncio.as_completed(batch_tasks):
             batch_story_results = await completed_task
             all_story_results.extend(batch_story_results)
+        
+        # 批量更新原始CSV文件中的关键词和故事内容
+        update_result = await self._update_csv_with_stories(all_story_results, csv_file_path, workflow_chat)
         
         if workflow_chat:
             await workflow_chat.add_node_message(
@@ -164,12 +164,7 @@ class StoryGenerationNode(BaseNode):
         # 输出结果
         output_data = input_data.copy()
         output_data['story_results'] = all_story_results
-        output_data['story_save_result'] = {
-            'success': True,
-            'message': f"成功生成并保存{len(all_story_results)}个故事",
-            'count': len(all_story_results),
-            'file_path': story_csv_path
-        }
+        output_data['story_save_result'] = update_result
         
         logger.info(f"✅ 故事生成完成，共 {len(all_story_results)} 个")
         yield output_data
@@ -192,20 +187,20 @@ class StoryGenerationNode(BaseNode):
                 # 不再需要准备云枢市地点信息，因为我们不希望故事中包含具体地点
                 
                 # 构建故事生成提示词
-                system_prompt = f"""你是一个专业的故事创作助手，擅长根据图片描述和角色人设生成有深度、情节丰富的故事。
+                system_prompt = """你是一个专业的故事创作助手，擅长根据图片描述和角色人设生成有深度、情节丰富的故事。
 
 请根据提供的图片描述和角色人设，创作一个短篇故事。故事应该围绕主角方知衡展开，并与图片描述中的场景、元素自然融合。
 注意这个故事是像亲密的人分享使用的，他应该能触发甜蜜美好的话题
+
 ## 角色人设
-{self.protagonist_data}  
+""" + self.protagonist_data + f"""
 
 ## 图片描述
 标题：{result.get('title', '')}
 详细描述：{result.get('description', '')}
 （这是角色拍下的照片的描述，但不需要交代相机或手机拍摄的过程）
 
-
-请创作一个200字的短篇故事，要求：
+请创作一个100-150字的短篇故事，要求：
 1. 故事必须以方知衡为主角，并与图片描述中的场景和元素自然融合
 2. 故事必须包含具体的事件和冲突，避免空洞的描述
 6. 不要提及任何具体的地点名称，保持场景描述通用化
@@ -214,11 +209,16 @@ class StoryGenerationNode(BaseNode):
 10. 故事最后不要改变任何人物状态，比如养动物
 11. 不要用xxx结束了一天的工作作为引子
 
-输出格式要求：JSON格式，只包含以下字段：
+输出格式要求：JSON格式，包含以下字段：
 - story: 故事内容（包含具体对话、内心活动和环境描写）
+- elements: 故事中出现的具体物品、人物、动物实体名词，5-20个（数组，如：猫、树、车、人、花、建筑等，不要概念、形容词、颜色）
 
-
-请确保输出为严格的JSON格式，禁止输出任何其他内容。"""
+请确保输出为严格的JSON格式，禁止输出任何其他内容。
+示例：
+{{
+  "story": "方知衡走在街道上...",
+  "elements": [ "街道", "猫", "树", "车"]
+}}"""
                 
                 # 构建用户消息
                 user_message = Message(
@@ -279,12 +279,14 @@ class StoryGenerationNode(BaseNode):
                 # 解析JSON
                 try:
                     story_data = json.loads(json_str.strip())
-                    # 确保只保留story字段
+                    # 确保包含必要字段
                     if 'story' not in story_data:
                         story_data = {"story": content}
+                    if 'elements' not in story_data:
+                        story_data['elements'] = []
                 except json.JSONDecodeError:
                     logger.warning(f"JSON解析失败，使用原始回复")
-                    story_data = {"story": content}
+                    story_data = {"story": content, "elements": []}
                 
                 # 添加图片信息和原始描述
                 story_data["image_name"] = result.get("image_name", "")
@@ -311,8 +313,8 @@ class StoryGenerationNode(BaseNode):
                     "error": str(e)
                 })
         
-        # 增量保存当前批次结果到CSV
-        await self._append_to_csv(story_results, csv_path, workflow_chat)
+        # 注释掉批次保存，改为在主方法中统一更新
+        # await self._append_to_csv(story_results, csv_path, workflow_chat)
         
         if workflow_chat:
             await workflow_chat.add_node_message(
@@ -346,6 +348,80 @@ class StoryGenerationNode(BaseNode):
         
         logger.info(f"已创建CSV文件: {story_csv_path}")
         return story_csv_path
+    
+    async def _update_csv_with_stories(self, story_results: List[Dict], csv_path: str, workflow_chat=None) -> Dict:
+        """更新原始CSV文件，填充关键词和故事内容"""
+        try:
+            if not story_results:
+                return {
+                    'success': False,
+                    'message': "没有故事结果需要保存"
+                }
+            
+            # 读取原始CSV文件
+            rows = []
+            fieldnames = []
+            
+            if os.path.exists(csv_path):
+                with open(csv_path, 'r', encoding='utf-8-sig', newline='') as f:
+                    reader = csv.DictReader(f)
+                    fieldnames = reader.fieldnames
+                    rows = list(reader)
+            else:
+                # 如果文件不存在，创建默认结构
+                fieldnames = ['序号ID', '图片名称', '图片路径', '图片标题', '图片描述', '关键词', '故事内容']
+            
+            # 创建故事结果的索引，以图片路径为键
+            story_dict = {}
+            for story in story_results:
+                image_path = story.get('image_path', '')
+                if image_path:
+                    story_dict[image_path] = story
+            
+            # 更新行数据
+            for row in rows:
+                image_path = row.get('图片路径', '')
+                if image_path in story_dict:
+                    story_data = story_dict[image_path]
+                    # 更新关键词字段（使用故事中的实体名词）
+                    elements = story_data.get('elements', [])
+                    if isinstance(elements, list):
+                        row['关键词'] = ' '.join(elements)
+                    else:
+                        row['关键词'] = elements
+                    
+                    # 更新故事内容
+                    row['故事内容'] = story_data.get('story', '')
+            
+            # 写回CSV文件
+            with open(csv_path, 'w', newline='', encoding='utf-8-sig') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(rows)
+            
+            logger.info(f"✅ 已更新CSV文件：{len(story_results)}个故事的关键词和内容已添加到 {os.path.basename(csv_path)}")
+            
+            return {
+                'success': True,
+                'message': f"成功更新{len(story_results)}条记录的故事和关键词",
+                'count': len(story_results),
+                'file_path': csv_path
+            }
+            
+        except Exception as e:
+            logger.error(f"CSV文件更新失败: {e}")
+            if workflow_chat:
+                await workflow_chat.add_node_message(
+                    "故事生成",
+                    f"❌ CSV文件更新失败: {str(e)}",
+                    "error"
+                )
+            
+            return {
+                'success': False,
+                'message': f"更新失败: {str(e)}",
+                'error': str(e)
+            }
     
     async def _append_to_csv(self, story_results: List[Dict], csv_path: str, workflow_chat=None) -> Dict:
         """增量追加故事结果到CSV文件"""

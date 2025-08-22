@@ -105,7 +105,7 @@ class TitleGenerator:
             print(f"生成标题时出错: {e}")
             return "标题生成失败"
     
-    async def batch_generate(self, input_file: str, output_file: str, content_column: str = "内容", batch_size: int = 20):
+    async def batch_generate(self, input_file: str, output_file: str, content_column: str = "内容", batch_size: int = 50):
         """
         批量生成标题
         
@@ -115,24 +115,33 @@ class TitleGenerator:
             content_column: 内容列的名称
             batch_size: 每批处理的数量
         """
-        # 读取CSV文件
-        df = pd.read_csv(input_file, encoding='utf-8')
+        # 读取原始CSV文件
+        original_df = pd.read_csv(input_file, encoding='utf-8')
         
         # 检查内容列是否存在
-        if content_column not in df.columns:
+        if content_column not in original_df.columns:
             raise ValueError(f"CSV文件中未找到'{content_column}'列")
         
         # 初始化LLM
         await self.initialize()
         
-        # 如果没有标题列，添加一个空的标题列
-        if '标题' not in df.columns:
-            df['标题'] = ""
+        # 创建新的DataFrame，包含所有原始列加上标题列
+        result_df = original_df.copy()
         
-        total_rows = len(df)
+        # 添加标题列（如果不存在）
+        if '标题' not in result_df.columns:
+            result_df['标题'] = ""
+            print("已添加新的'标题'列")
+        else:
+            existing_titles = result_df['标题'].notna() & (result_df['标题'] != '')
+            print(f"发现已存在标题列，其中有 {existing_titles.sum()} 个非空标题")
+        
+        total_rows = len(result_df)
         processed_count = 0
         
         print(f"开始批量生成标题，总共{total_rows}行，每批处理{batch_size}行")
+        print(f"原始列: {original_df.columns.tolist()}")
+        print(f"输出列: {result_df.columns.tolist()}")
         
         # 按批次处理
         for batch_start in range(0, total_rows, batch_size):
@@ -143,7 +152,7 @@ class TitleGenerator:
             
             # 处理当前批次 - 异步并发生成
             async def process_single_item(index):
-                row = df.iloc[index]
+                row = result_df.iloc[index]
                 content = row[content_column]
                 
                 if pd.isna(content) or content == "":
@@ -171,37 +180,89 @@ class TitleGenerator:
             
             # 将结果写入DataFrame
             for index, title in results:
-                df.iloc[index, df.columns.get_loc('标题')] = title
+                result_df.at[index, '标题'] = title
                 if title and not title.startswith("生成失败"):
                     processed_count += 1
             
-            # 批次完成后增量保存
-            df.to_csv(output_file, index=False, encoding='utf-8')
-            print(f"批次完成，已保存到: {output_file} (已处理 {processed_count}/{total_rows} 行)")
+            # 批次完成后增量保存（创建新文件）
+            try:
+                result_df.to_csv(output_file, index=False, encoding='utf-8')
+                print(f"批次完成，已保存到: {output_file} (已处理 {processed_count}/{total_rows} 行)")
+                
+                # 验证保存是否成功
+                saved_df = pd.read_csv(output_file, encoding='utf-8')
+                if '标题' in saved_df.columns:
+                    filled_titles = saved_df['标题'].notna() & (saved_df['标题'] != '')
+                    print(f"保存验证: 文件中有 {filled_titles.sum()} 个非空标题")
+                    print(f"保存验证: 文件包含 {len(saved_df.columns)} 列: {saved_df.columns.tolist()}")
+                else:
+                    print("警告: 保存的文件中未找到标题列！")
+            except Exception as e:
+                print(f"保存文件时出错: {e}")
+                raise
             
             # 批次间稍微长一点的延迟
             if batch_end < total_rows:
-                print("等待3秒后继续下一批次...")
-                await asyncio.sleep(3)
+                print("等待1秒后继续下一批次...")
+                await asyncio.sleep(1)
         
-        print(f"\n所有标题生成完成！")
+        # 处理完成，生成最终报告
+        print(f"\n{'='*50}")
+        print(f"所有标题生成完成！")
+        print(f"{'='*50}")
         print(f"总计处理: {processed_count}/{total_rows} 行")
+        print(f"成功率: {processed_count/total_rows*100:.1f}%")
         print(f"最终结果已保存到: {output_file}")
+        
+        # 最终验证和统计
+        try:
+            final_df = pd.read_csv(output_file, encoding='utf-8')
+            total_titles = len(final_df)
+            filled_titles = final_df['标题'].notna() & (final_df['标题'] != '')
+            success_count = filled_titles.sum()
+            
+            print(f"\n最终文件统计:")
+            print(f"  - 总行数: {total_titles}")
+            print(f"  - 成功生成标题: {success_count}")
+            print(f"  - 失败/空白: {total_titles - success_count}")
+            print(f"  - 包含列数: {len(final_df.columns)}")
+            print(f"  - 列名: {final_df.columns.tolist()}")
+            
+            print(f"\n任务已自动完成并退出。")
+            
+        except Exception as e:
+            print(f"最终验证时出错: {e}")
+            
+        return True  # 表示任务完成
 
 
 def main():
     # 输入和输出文件路径
-    input_file = r"C:\Users\admin\PycharmProjects\ZZZero\workspace\input\固化记忆标题更新.csv"
-    output_file = r"C:\Users\admin\PycharmProjects\ZZZero\workspace\output\固化记忆标题更新_带标题.csv"
+    input_file = r"C:\Users\admin\PycharmProjects\ZZZero\workspace\input\穆昭_固化记忆_v1.1.csv"
+    output_file = r"C:\Users\admin\PycharmProjects\ZZZero\workspace\output\穆昭_固化记忆_v1.2.csv"
     
     # 确保输出目录存在
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
     
-    # 创建标题生成器并执行批量生成
-    generator = TitleGenerator()
+    try:
+        # 创建标题生成器并执行批量生成
+        generator = TitleGenerator()
+        
+        # 运行异步任务 - 每批处理20个
+        result = asyncio.run(generator.batch_generate(input_file, output_file, batch_size=50))
+        
+        if result:
+            print("标题生成任务成功完成！")
+        else:
+            print("标题生成任务出现问题。")
+            
+    except Exception as e:
+        print(f"程序执行出错: {e}")
+        import traceback
+        traceback.print_exc()
     
-    # 运行异步任务 - 每批处理20个
-    asyncio.run(generator.batch_generate(input_file, output_file, batch_size=20))
+    finally:
+        print("程序退出。")
 
 
 if __name__ == "__main__":

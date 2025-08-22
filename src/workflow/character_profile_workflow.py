@@ -49,6 +49,17 @@ class ProfileRequest(BaseModel):
     categories: List[str] = Field(default_factory=list, description="选中的类别")
     collections: List[str] = Field(default_factory=list, description="选中的知识集合")
 
+class SearchQuery(BaseModel):
+    """搜索查询模型"""
+    query: str = Field(..., description="查询文本")
+    angle: str = Field(..., description="查询角度")
+    description: str = Field("", description="查询描述")
+
+class SearchExpansionResult(BaseModel):
+    """搜索扩充结果模型"""
+    queries: List[SearchQuery] = Field(default_factory=list, description="生成的查询列表")
+    context: str = Field("", description="扩充的上下文信息")
+
 class ProfileResult(BaseModel):
     """角色资料生成结果模型"""
     success: bool = Field(..., description="是否成功")
@@ -86,6 +97,459 @@ class LLMGenerationError(ProfileGenerationError):
 class FileSaveError(ProfileGenerationError):
     """文件保存异常"""
     pass
+
+class SearchExpansionNode(BaseNode):
+    """搜索扩充节点 - 根据当前处理内容生成多角度查询词"""
+    
+    def __init__(self, name: str = "search_expansion", llm_config: Optional[LLMConfig] = None):
+        super().__init__(name=name, node_type=NodeType.CUSTOM, stream=True)
+        self.llm_config = llm_config
+        
+        self.emit_info("init", "搜索扩充节点已初始化", {
+            "has_llm_config": bool(llm_config)
+        })
+    
+    async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """执行搜索扩充 - 调用流式方法获取最终结果"""
+        final_result = None
+        async for result in self.execute_stream(state):
+            final_result = result
+        return final_result or {"success": False, "error": "搜索扩充执行失败"}
+    
+    async def execute_stream(self, state: Dict[str, Any]):
+        """流式执行搜索扩充节点"""
+        try:
+            request = state.get("request", {})
+            current_item = state.get("current_item", {})
+            llm = state.get("llm")
+            
+            name = request.get("name", "")
+            info = request.get("info", "")
+            category = current_item.get("category", "")
+            item = current_item.get("item", {})
+            
+            # 处理item对象 - 可能是ProfileItem对象或字典
+            if hasattr(item, 'item'):  # 如果是ProfileItem对象
+                item_name = item.item
+                item_content = getattr(item, 'content', '')
+                item_keywords = getattr(item, 'keywords', '')
+                item_notes = getattr(item, 'notes', '')
+            else:  # 如果是字典
+                item_name = item.get('item', '')
+                item_content = item.get('content', '')
+                item_keywords = item.get('keywords', '')
+                item_notes = item.get('notes', '')
+            
+            self.emit_info("start", f"开始为条目 {item_name} 生成搜索查询", {
+                "name": name,
+                "category": category,
+                "item": item_name,
+                "has_llm": bool(llm)
+            })
+            
+            if not name or not item_name:
+                error_msg = "缺少必要参数：角色名称或条目信息"
+                self.emit_info("error", error_msg, {"missing_name": not name, "missing_item": not item_name})
+                yield {"success": False, "error": error_msg}
+                return
+            
+            # 设置LLM
+            if llm:
+                self.set_llm(llm)
+            
+            if not self.llm:
+                error_msg = "LLM未配置，无法生成搜索查询"
+                self.emit_info("error", error_msg, {})
+                yield {"success": False, "error": error_msg}
+                return
+            
+            # 生成搜索查询 - 传递实际的ProfileItem对象
+            queries = await self._generate_search_queries(name, info, category, item, llm)
+            
+            self.emit_info("complete", f"完成搜索查询生成", {
+                "queries_count": len(queries),
+                "queries": [q.dict() for q in queries]
+            })
+            
+            yield {
+                "success": True,
+                "search_queries": queries,
+                "current_item": current_item
+            }
+            
+        except Exception as e:
+            error_msg = f"搜索扩充失败: {str(e)}"
+            self.emit_info("fatal_error", error_msg, {"error": str(e)})
+            yield {"success": False, "error": error_msg}
+    
+    async def _generate_search_queries(self, 
+                                     name: str, 
+                                     info: str, 
+                                     category: str, 
+                                     item, 
+                                     llm=None) -> List[SearchQuery]:
+        """生成多角度搜索查询"""
+        
+        # 处理item参数 - 可能是ProfileItem对象或字典
+        if hasattr(item, 'item'):  # 如果是ProfileItem对象
+            item_name = item.item
+            item_content = getattr(item, 'content', '')
+            item_keywords = getattr(item, 'keywords', '')
+            item_notes = getattr(item, 'notes', '')
+        else:  # 如果是字典
+            item_name = item.get('item', '') if isinstance(item, dict) else str(item)
+            item_content = item.get('content', '') if isinstance(item, dict) else ''
+            item_keywords = item.get('keywords', '') if isinstance(item, dict) else ''
+            item_notes = item.get('notes', '') if isinstance(item, dict) else ''
+        
+        # 构建系统提示词
+        system_prompt = """你是一个专业的信息检索专家，擅长根据人物资料需求生成精准的搜索查询词。
+
+你的任务是：根据提供的角色信息和当前要生成的资料条目，生成3个不同角度的搜索查询词，用于在知识库中检索相关信息。
+
+## 生成规则
+1. 必须生成恰好3个不同角度的查询词
+2. 每个查询词要从不同维度切入，确保覆盖面广
+3. 查询词要具体、精准，避免过于宽泛
+4. 优先考虑与角色背景、设定相关的内容
+5. 确保查询词能够检索到有用的参考资料
+
+## 三个角度说明
+- 角度1：直接相关 - 与条目名称直接相关的查询
+- 角度2：背景关联 - 与角色背景、设定相关的查询  
+- 角度3：扩展延伸 - 与条目内容相关的扩展查询
+
+## 输出格式
+请以JSON格式输出，包含3个查询对象：
+```json
+{
+  "queries": [
+    {
+      "query": "查询文本1",
+      "angle": "直接相关",
+      "description": "查询描述1"
+    },
+    {
+      "query": "查询文本2", 
+      "angle": "背景关联",
+      "description": "查询描述2"
+    },
+    {
+      "query": "查询文本3",
+      "angle": "扩展延伸", 
+      "description": "查询描述3"
+    }
+  ]
+}
+```"""
+        
+        # 构建用户提示词
+        user_prompt = f"""请为以下角色资料条目生成3个不同角度的搜索查询词：
+
+## 角色信息
+- 角色名称：{name}
+- 基础信息：{info}
+
+## 当前条目
+- 所属类别：{category}
+- 条目名称：{item_name}"""
+
+        if item_content:
+            user_prompt += f"\n- 条目说明：{item_content}"
+        
+        if item_keywords:
+            user_prompt += f"\n- 关键词：{item_keywords}"
+        
+        if item_notes:
+            user_prompt += f"\n- 备注：{item_notes}"
+
+        user_prompt += """
+
+请根据以上信息，生成3个不同角度的搜索查询词，用于在知识库中检索相关参考资料。"""
+        
+        self.emit_info("llm_start", f"开始LLM生成搜索查询: {item_name}", {
+            "category": category,
+            "item": item_name,
+            "system_prompt_length": len(system_prompt),
+            "user_prompt_length": len(user_prompt)
+        })
+        
+        # 构建消息列表
+        messages = [
+            Message(role=MessageRole.SYSTEM, content=system_prompt),
+            Message(role=MessageRole.USER, content=user_prompt)
+        ]
+        
+        # 调用LLM生成
+        final_content = ""
+        try:
+            async for chunk_data in self.llm.stream_generate(
+                messages, 
+                mode="think",
+                return_dict=True
+            ):
+                content_part = chunk_data.get("content", "")
+                final_content += content_part
+                
+            # 发射LLM生成的原始内容用于调试
+            self.emit_info("llm_raw_response", f"LLM原始响应: {item_name}", {
+                "category": category,
+                "item": item_name,
+                "response_length": len(final_content),
+                "response_preview": final_content[:200] + "..." if len(final_content) > 200 else final_content
+            })
+                
+        except Exception as e:
+            self.emit_info("llm_error", f"LLM调用失败: {str(e)}", {
+                "category": category,
+                "item": item_name,
+                "error": str(e)
+            })
+            # 如果LLM调用失败，直接返回默认查询
+            return self._generate_default_queries(name, info, category, item)
+        
+        # 解析LLM响应
+        try:
+            # 提取JSON部分
+            import re
+            json_match = re.search(r'\{.*\}', final_content, re.DOTALL)
+            if json_match:
+                json_str = json_match.group()
+                response_data = json.loads(json_str)
+                
+                queries = []
+                for q_data in response_data.get("queries", []):
+                    if not q_data.get("query") or not q_data.get("angle"):
+                        continue  # 跳过无效查询
+                    
+                    query = SearchQuery(
+                        query=q_data.get("query", "").strip(),
+                        angle=q_data.get("angle", "").strip(),
+                        description=q_data.get("description", "").strip()
+                    )
+                    queries.append(query)
+                
+                # 验证查询数量
+                if len(queries) >= 3:
+                    queries = queries[:3]  # 只取前3个
+                    self.emit_info("llm_complete", f"搜索查询生成完成: {item_name}", {
+                        "category": category,
+                        "item": item_name,
+                        "queries_count": len(queries),
+                        "parsed_successfully": True
+                    })
+                    return queries
+                else:
+                    self.emit_info("llm_parse_warning", f"LLM生成的查询数量不足: {len(queries)}", {
+                        "category": category,
+                        "item": item_name,
+                        "queries_count": len(queries),
+                        "expected_count": 3
+                    })
+                    # 补充默认查询
+                    default_queries = self._generate_default_queries(name, info, category, item)
+                    queries.extend(default_queries[len(queries):])
+                    return queries[:3]
+            else:
+                raise ValueError("未找到有效的JSON响应")
+                
+        except Exception as e:
+            # 如果解析失败，生成默认查询
+            self.emit_info("llm_parse_error", f"解析LLM响应失败，使用默认查询: {str(e)}", {
+                "category": category,
+                "item": item_name,
+                "error": str(e),
+                "response_length": len(final_content)
+            })
+            
+            return self._generate_default_queries(name, info, category, item)
+    
+    def _generate_default_queries(self, 
+                                name: str, 
+                                info: str, 
+                                category: str, 
+                                item) -> List[SearchQuery]:
+        """生成默认的搜索查询（备用方案）"""
+        
+        # 处理item参数 - 可能是ProfileItem对象或字典
+        if hasattr(item, 'item'):  # 如果是ProfileItem对象
+            item_name = item.item
+            item_content = getattr(item, 'content', '')
+            item_keywords = getattr(item, 'keywords', '')
+            item_notes = getattr(item, 'notes', '')
+        else:  # 如果是字典
+            item_name = item.get('item', '') if isinstance(item, dict) else str(item)
+            item_content = item.get('content', '') if isinstance(item, dict) else ''
+            item_keywords = item.get('keywords', '') if isinstance(item, dict) else ''
+            item_notes = item.get('notes', '') if isinstance(item, dict) else ''
+        
+        # 基础查询
+        base_queries = [
+            SearchQuery(
+                query=f"{name} {item_name}",
+                angle="直接相关",
+                description=f"直接搜索{name}的{item_name}相关信息"
+            ),
+            SearchQuery(
+                query=f"{name} {category}",
+                angle="背景关联", 
+                description=f"搜索{name}在{category}方面的背景信息"
+            ),
+            SearchQuery(
+                query=f"{item_name} {category} 设定",
+                angle="扩展延伸",
+                description=f"搜索{item_name}相关的设定信息"
+            )
+        ]
+        
+        # 如果有关键词，使用关键词替换第三个查询
+        if item_keywords:
+            base_queries[2] = SearchQuery(
+                query=f"{name} {item_keywords}",
+                angle="扩展延伸",
+                description=f"基于关键词{item_keywords}搜索相关信息"
+            )
+        
+        # 如果有具体说明，使用说明替换第二个查询
+        if item_content and len(item_content) < 50:  # 只有在说明较短时才使用
+            base_queries[1] = SearchQuery(
+                query=f"{name} {item_content}",
+                angle="背景关联",
+                description=f"基于条目说明搜索相关信息"
+            )
+        
+        self.emit_info("default_queries_generated", f"生成默认查询: {item_name}", {
+            "category": category,
+            "item": item_name,
+            "queries_count": len(base_queries),
+            "fallback_reason": "LLM解析失败或生成数量不足"
+        })
+        
+        return base_queries
+
+class KnowledgeSearchNode(BaseNode):
+    """知识库搜索节点 - 使用多个查询词搜索知识库"""
+    
+    def __init__(self, 
+                 name: str = "knowledge_search",
+                 kb: Optional[GlobalKnowledgeBase] = None):
+        super().__init__(name=name, node_type=NodeType.CUSTOM, stream=True)
+        self.kb = kb
+        
+        self.emit_info("init", "知识库搜索节点已初始化", {
+            "has_kb": bool(kb)
+        })
+    
+    async def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """执行知识库搜索 - 调用流式方法获取最终结果"""
+        final_result = None
+        async for result in self.execute_stream(state):
+            final_result = result
+        return final_result or {"success": False, "error": "知识库搜索执行失败"}
+    
+    async def execute_stream(self, state: Dict[str, Any]):
+        """流式执行知识库搜索节点"""
+        try:
+            search_queries = state.get("search_queries", [])
+            current_item = state.get("current_item", {})
+            request = state.get("request", {})
+            collections = request.get("collections", [])
+            
+            self.emit_info("start", f"开始知识库搜索", {
+                "queries_count": len(search_queries),
+                "collections_count": len(collections),
+                "current_item": current_item.get("item", {}).get("item", "")
+            })
+            
+            if not self.kb:
+                error_msg = "知识库未配置，无法进行搜索"
+                self.emit_info("error", error_msg, {})
+                yield {"success": False, "error": error_msg}
+                return
+            
+            if not search_queries:
+                error_msg = "没有搜索查询，无法进行搜索"
+                self.emit_info("error", error_msg, {})
+                yield {"success": False, "error": error_msg}
+                return
+            
+            # 执行搜索
+            search_results = await self._search_knowledge_base(search_queries, collections)
+            
+            self.emit_info("complete", f"知识库搜索完成", {
+                "results_count": len(search_results),
+                "collections_searched": len(collections)
+            })
+            
+            yield {
+                "success": True,
+                "search_results": search_results,
+                "current_item": current_item
+            }
+            
+        except Exception as e:
+            error_msg = f"知识库搜索失败: {str(e)}"
+            self.emit_info("fatal_error", error_msg, {"error": str(e)})
+            yield {"success": False, "error": error_msg}
+    
+    async def _search_knowledge_base(self, 
+                                   search_queries: List[SearchQuery], 
+                                   collections: List[str]) -> List[Dict[str, Any]]:
+        """在知识库中搜索相关信息"""
+        all_results = []
+        
+        for collection in collections:
+            for query_obj in search_queries:
+                try:
+                    self.emit_info("search_start", f"搜索集合 {collection}，查询: {query_obj.query}", {
+                        "collection": collection,
+                        "query": query_obj.query,
+                        "angle": query_obj.angle
+                    })
+                    
+                    results = await self.kb.query_documents(
+                        collection_name=collection, 
+                        query_text=query_obj.query, 
+                        n_results=3  # 每个查询返回3个结果
+                    )
+                    
+                    for result in results:
+                        all_results.append({
+                            "collection": collection,
+                            "query": query_obj.query,
+                            "angle": query_obj.angle,
+                            "content": result['document'],
+                            "score": result.get('distance', 0)
+                        })
+                        
+                    self.emit_info("search_result", f"从 {collection} 获得 {len(results)} 个结果", {
+                        "collection": collection,
+                        "query": query_obj.query,
+                        "results_count": len(results)
+                    })
+                    
+                except Exception as e:
+                    self.emit_info("search_error", f"搜索 {collection} 失败: {str(e)}", {
+                        "collection": collection,
+                        "query": query_obj.query,
+                        "error": str(e)
+                    })
+                    continue
+        
+        # 去重和排序（基于相似度分数）
+        unique_results = []
+        seen_contents = set()
+        
+        for result in all_results:
+            content_hash = hash(result['content'][:100])  # 使用前100字符去重
+            if content_hash not in seen_contents:
+                seen_contents.add(content_hash)
+                unique_results.append(result)
+        
+        # 按分数排序（如果有分数）
+        unique_results.sort(key=lambda x: x.get('score', 0))
+        
+        return unique_results[:10]  # 最多返回10个结果
 
 class ProfileGeneratorNode(BaseNode):
     """角色资料生成节点 - 仅支持流式调用"""
@@ -219,8 +683,8 @@ class ProfileGeneratorNode(BaseNode):
                             "progress": f"条目 {completed_items+1}/{total_items}"
                         })
                         
-                        # 生成单个条目
-                        item_content = await self._generate_single_item(
+                        # 使用新的搜索和生成流程
+                        item_content = await self._generate_single_item_with_search(
                             name, info, category, item, collections, llm
                         )
                         
@@ -291,14 +755,14 @@ class ProfileGeneratorNode(BaseNode):
             self.emit_info("fatal_error", error_msg, {"error": str(e)})
             yield {"success": False, "error": error_msg}
     
-    async def _generate_single_item(self, 
-                                   name: str, 
-                                   info: str, 
-                                   category: str, 
-                                   item: ProfileItem, 
-                                   collections: List[str], 
-                                   llm=None) -> str:
-        """生成单个条目的内容 - 使用优化的提示词结构"""
+    async def _generate_single_item_with_search(self, 
+                                              name: str, 
+                                              info: str, 
+                                              category: str, 
+                                              item: ProfileItem, 
+                                              collections: List[str], 
+                                              llm=None) -> str:
+        """使用新的搜索流程生成单个条目的内容"""
         
         # 设置LLM
         if llm:
@@ -307,29 +771,101 @@ class ProfileGeneratorNode(BaseNode):
         if not self.llm:
             raise LLMGenerationError("LLM未配置，无法生成角色资料")
         
-        # 收集上下文
-        context = ""
-        if self.kb and collections:
+        # 1. 搜索扩充阶段 - 生成查询词
+        self.emit_info("search_expansion_start", f"开始搜索扩充: {item.item}", {
+            "category": category,
+            "item": item.item
+        })
+        
+        search_expansion_node = SearchExpansionNode(llm_config=self.llm_config)
+        search_expansion_node.set_llm(llm)
+        
+        search_state = {
+            "request": {"name": name, "info": info, "collections": collections},
+            "current_item": {"category": category, "item": item},
+            "llm": llm
+        }
+        
+        search_queries = []
+        async for expansion_result in search_expansion_node.execute_stream(search_state):
+            if expansion_result.get("success") and "search_queries" in expansion_result:
+                search_queries = expansion_result["search_queries"]
+                break
+        
+        if not search_queries:
+            # 如果搜索扩充失败，使用原来的简单搜索方法
+            self.emit_info("search_expansion_fallback", f"搜索扩充失败，使用简单搜索: {item.item}", {})
             context = await self._gather_item_context(name, info, category, item, collections)
+        else:
+            # 2. 知识库搜索阶段
+            self.emit_info("knowledge_search_start", f"开始知识库搜索: {item.item}", {
+                "queries_count": len(search_queries)
+            })
+            
+            knowledge_search_node = KnowledgeSearchNode(kb=self.kb)
+            
+            search_state.update({
+                "search_queries": search_queries
+            })
+            
+            search_results = []
+            async for search_result in knowledge_search_node.execute_stream(search_state):
+                if search_result.get("success") and "search_results" in search_result:
+                    search_results = search_result["search_results"]
+                    break
+            
+            # 3. 整理搜索结果为上下文
+            context = self._format_search_results(search_results)
+        
+        # 4. 生成内容
+        return await self._generate_content_with_context(name, info, category, item, context, llm)
+    
+    def _format_search_results(self, search_results: List[Dict[str, Any]]) -> str:
+        """将搜索结果格式化为上下文字符串"""
+        if not search_results:
+            return ""
+        
+        context_parts = []
+        for result in search_results:
+            context_part = f"""来源：{result['collection']}
+查询角度：{result['angle']}
+内容：{result['content']}"""
+            context_parts.append(context_part)
+        
+        return "\n---\n".join(context_parts)
+    
+    async def _generate_content_with_context(self, 
+                                           name: str, 
+                                           info: str, 
+                                           category: str, 
+                                           item: ProfileItem, 
+                                           context: str,
+                                           llm=None) -> str:
+        """基于上下文生成内容"""
         
         # 构建系统提示词（固定部分）
-        system_prompt = """你是一个专业的角色设定生成专家，专门负责为角色生成详细的背景资料。你的任务是根据提供的基础信息和参考资料，生成具体、详细、符合逻辑的角色资料。
-
-## 生成规则
-1. 生成的内容要具体、详细，不能为空或过于简略
-2. 内容要符合角色的整体设定和背景
-3. 充分利用参考资料中的信息，但要合理融合到角色设定中
-4. 保持内容的逻辑一致性和可信度
-5. 摈弃游戏化或特殊资料的参考，专注于现实化的角色塑造
-6. 只生成所要求的具体条目内容，不要添加额外的格式或字段
-7. 直接输出条目内容，不需要JSON格式包装
+        system_prompt = """
+        你是一位专业角色设定生成专家，负责创建详细、真实的角色资料。请根据提供的基础信息，生成符合以下标准的角色描述：
 
 ## 输出要求
-- 直接输出条目的详细内容
-- 内容应该是完整的描述性文本
-- 不要使用列表、表格等格式
-- 确保内容丰富且有深度"""
+- 格式为JSON，使用中文字段名
+- 每个条目限制300字以内
+- 内容为连贯流畅的描述性文本，不使用列表或表格
 
+## 内容标准
+1. 客观具体：提供精确数值和可视化细节，避免抽象修饰词，避免象征，暗示，代表这样的词语描述
+2. 现实导向：摒弃游戏化、超自然或特殊设定，塑造符合现实世界的人物
+3. 独立完整：不涉及或依赖其他角色（特别是女主角）的描述，不涉及异端组织，代号愚者的内容
+4. 逻辑一致：确保各要素之间相互支持，形成统一的人物形象
+5. 专业描述：使用专业文案式的客观描述，避免主观评价或分析
+
+请基于提供的资料生成一个立体、可信的角色形象，使读者能清晰想象这个人物在现实中的样子和特质。
+输出格式要求：
+{
+"条目名称": "条目内容"
+} 
+"""
+        
         # 构建用户提示词（动态部分）
         user_prompt = f"""请为角色"{name}"生成"{item.item}"这个条目的详细内容。
 
@@ -371,6 +907,7 @@ class ProfileGeneratorNode(BaseNode):
             "item": item.item,
             "system_prompt_length": len(system_prompt),
             "user_prompt_length": len(user_prompt),
+            "context_length": len(context),
             "llm_type": type(self.llm).__name__
         })
         
@@ -431,7 +968,7 @@ class ProfileGeneratorNode(BaseNode):
                                   category: str, 
                                   item: ProfileItem,
                                   collections: List[str]) -> str:
-        """为单个条目收集相关上下文信息"""
+        """为单个条目收集相关上下文信息（原始简单方法，作为备用）"""
         if not self.kb:
             return ""
         
@@ -465,250 +1002,7 @@ class ProfileGeneratorNode(BaseNode):
                     continue
         
         return "\n---\n".join(context_list) if context_list else ""
-
-    # 保留原有的方法但标记为已废弃
-    async def _generate_category_data(self, name: str, info: str, category: str, collections: List[str], llm=None) -> Dict[str, Any]:
-        """生成特定类别的角色数据 - 已废弃，请使用_generate_single_item"""
-        items = self.template.get(category, [])
-        if not items:
-            self.emit_info("category_empty", f"类别 {category} 没有定义条目", {"category": category})
-            return {}
-        
-        # 设置LLM
-        if llm:
-            self.set_llm(llm)
-        
-        if not self.llm:
-            raise LLMGenerationError("LLM未配置，无法生成角色资料")
-        
-        
-        context = ""
-        if self.kb and collections:
-            context = await self._gather_context(name, info, category, collections)
-            
-        # 使用钩子函数构建提示
-        prompt_template = """
-请为角色"{name}"生成详细的"{category}"类别资料。该资料将用于剧情设计时人物资料的补足。
-
-## 角色基础信息
-{info}
-
-## 需要生成的类别：{category}
-## 具体条目要求：
-{items_desc}
-
-## 参考资料
-{context}
-
-## 输出格式要求
-必须严格按照以下JSON格式输出：
-```json
-{{
-    "条目1": "详细内容...",
-    ...
-}}
-```
-
-请开始生成："""
-        
-        # 构建条目说明
-        items_desc = []
-        for item in items:
-            desc = f"- 条目：{item.item}"
-            if item.content:
-                desc += f"\n  内容：{item.content}"
-            if item.keywords:
-                desc += f"\n  关键词：{item.keywords}"
-            items_desc.append(desc)
-        
-        # 使用钩子函数构建提示
-        prompt = self.prompt(prompt_template, 
-                           name=name, 
-                           info=info, 
-                           category=category,
-                           items_desc="\n".join(items_desc),
-                           context=context if context else "无额外参考资料")
-        
-        self.emit_info("llm_start", f"开始LLM生成 {category} 类别数据", {
-            "prompt_length": len(prompt),
-            "llm_type": type(self.llm).__name__
-        })
-        
-        # 使用钩子函数调用LLM
-        final_content = ""
-        think_content = ""
-        async for chunk in self.astream(prompt, mode="think"):
-            think_content = chunk["think"]
-            final_content = chunk["content"]
-            
-            # 发射LLM流式输出信息 - 传递实际生成的内容
-            if chunk["current_content"]:
-                self.emit_info("llm_streaming", f"LLM生成中", {
-                    "category": category,
-                    "chunk_count": chunk["chunk_count"],
-                    "current_content": chunk["current_content"],  # 当前chunk的内容
-                    "accumulated_content": final_content,  # 累积的内容
-                    "think_content": think_content,  # 思考过程
-                    "content_length": len(final_content)
-                })
-        
-        self.emit_info("llm_complete", f"LLM生成完成", {
-            "category": category,
-            "response_length": len(final_content)
-        })
-        
-        # 使用钩子函数解析响应
-        result = self.parse(final_content, format_type="json")
-        
-        self.emit_info("parse_complete", f"响应解析完成", {
-            "category": category,
-            "parsed_keys": list(result.keys()) if isinstance(result, dict) else []
-        })
-        
-        return result
     
-    async def _gather_context(self, 
-                                      name: str, 
-                                      info: str, 
-                                      category: str,
-                                      collections: List[str]) -> str:
-        """从知识库收集相关上下文信息"""
-        if not self.kb:
-            return ""
-        
-        # 构建查询文本
-        queries = [
-            f"{name} {category}",
-            f"{name} 角色 {category}",
-            info
-        ]
-        
-        context_list = []
-        
-        for collection in collections:
-            for query in queries:
-                try:
-                    results = await self.kb.query_documents(
-                        collection_name=collection, query_text=query, n_results=3
-                    )
-                    for result in results:
-                        context_list.append(f"来源：{collection}\n内容：{result['document']}\n")
-                except Exception:
-                    continue
-        
-        return "\n---\n".join(context_list) if context_list else ""
-    
-    def _build_prompt(self, 
-                               name: str, 
-                               info: str, 
-                               category: str, 
-                               items: List[ProfileItem],
-                               context: str) -> tuple[str, str]:
-        """构建生成提示，返回(system_content, user_content)"""
-        
-        # 静态的system content
-        system_content = """你是一个专业的角色设定生成专家，专门负责为角色生成详细的背景资料。你的任务是根据提供的基础信息和参考资料，生成具体、详细、符合逻辑的角色资料。
-
-## 生成规则
-1. 每个条目都要有具体、详细的内容，不能为空，内容清晰明确，不需要抽象的无意义的词汇修饰
-2. 内容要符合角色的整体设定和背景
-3. 充分参考参考资料中的信息，但以当前任务为主，不需要强制融合
-4. 保持内容的逻辑一致性和可信度
-5. 摈弃游戏化或特殊资料的参考，过滤女主相关内容，专注于现实化的角色塑造，让他更像生活在现实世界的人
-6. 输出格式为JSON，字段名使用中文，内容不包含任何符号，不超过300字
-
-## 输出格式要求
-必须严格按照以下JSON格式输出：
-```json
-{
-    "条目名": "详细内容...",
-}
-```"""
-
-        # 构建条目说明
-        items_desc = []
-        for item in items:
-            desc = f"- 条目：{item.item}"
-            if item.content:
-                desc += f"\n  内容：{item.content}"
-            if item.keywords:
-                desc += f"\n  关键词：{item.keywords}"
-            items_desc.append(desc)
-        
-        # 动态的user content
-        user_content = f"""请为角色"{name}"生成详细的"{category}"类别资料。该资料将用于剧情设计时人物资料的补足。
-
-## 角色基础信息
-{info}
-
-## 需要生成的类别：{category}
-## 具体条目要求：
-{chr(10).join(items_desc)}
-
-## 参考资料
-{context if context else "无额外参考资料"}
-
-请开始生成："""
-        
-        return system_content, user_content
-    
-    def _parse_response(self, response: str, items: List[Dict]) -> Dict[str, Any]:
-        """解析LLM生成的响应"""
-        try:
-            # 尝试提取JSON
-            start = response.find('{')
-            end = response.rfind('}') + 1
-            
-            if start >= 0 and end > start:
-                content = response[start:end]
-                data = json.loads(content)
-                return data
-            else:
-                # 如果没有找到JSON，尝试按行解析
-                logger.warning("未找到JSON格式，尝试按行解析")
-                return self._parse_text(response, items)
-                
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON解析失败: {e}")
-            return self._parse_text(response, items)
-    
-    def _parse_text(self, response: str, items: List[ProfileItem]) -> Dict[str, Any]:
-        """解析文本格式的响应"""
-        result = {}
-        lines = response.split('\n')
-        
-        field = None
-        content = []
-        
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            
-            # 检查是否是字段开始
-            found = False
-            for item in items:
-                if item.item in line and ':' in line:
-                    # 保存前一个字段
-                    if field and content:
-                        result[field] = '\n'.join(content).strip()
-                    
-                    # 开始新字段
-                    field = item.item
-                    part = line.split(':', 1)[1].strip()
-                    content = [part] if part else []
-                    found = True
-                    break
-            
-            if not found and field:
-                # 继续添加内容到当前字段
-                content.append(line)
-        
-        # 保存最后一个字段
-        if field and content:
-            result[field] = '\n'.join(content).strip()
-        
-        return result
     
     async def _save_profile(self, name: str, data: Dict[str, Any]) -> str:
         """保存生成的角色资料"""
@@ -843,9 +1137,10 @@ class ProfileWorkflow:
         print("[ProfileWorkflow] 开始创建工作流图...")
         logger.info("开始创建工作流图...")
         
-        # 创建节点（不需要传递LLM配置）
+        # 创建节点
         node = ProfileGeneratorNode(
-            kb=self.kb
+            kb=self.kb,
+            llm_config=self.llm_config
         )
         
         print(f"[ProfileWorkflow] 角色资料生成节点创建完成: {node}")
@@ -985,7 +1280,7 @@ class ProfileWorkflow:
             if self.llm_config:
                 llm = LLMFactory.create(self.llm_config)
             
-            # 准备输入状态 - 使用新的request结构
+            # 准备输入状态
             initial_state = {
                 'request': {
                     'name': character_name,

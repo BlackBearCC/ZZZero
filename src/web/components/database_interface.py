@@ -67,6 +67,10 @@ class DatabaseInterface:
                 # 统计信息标签页
                 with gr.Tab("📈 统计信息"):
                     self._create_statistics_tab()
+                
+                # 执行记录标签页
+                with gr.Tab("🔍 执行记录"):
+                    self._create_execution_records_tab()
         
         return interface
     
@@ -1054,6 +1058,384 @@ class DatabaseInterface:
         except Exception as e:
             logger.error(f"导出日程失败: {e}")
             return None
+
+    def _create_execution_records_tab(self):
+        """创建执行记录管理标签页"""
+        with gr.Row():
+            with gr.Column(scale=1):
+                gr.Markdown("## 筛选条件")
+                
+                # 筛选条件
+                graph_name_filter = gr.Textbox(
+                    label="按图名称筛选",
+                    placeholder="输入图名称",
+                    info="显示包含该名称的执行记录"
+                )
+                
+                execution_status_filter = gr.Dropdown(
+                    label="执行状态",
+                    choices=["全部", "成功", "失败"],
+                    value="全部"
+                )
+                
+                time_range_filter = gr.Radio(
+                    label="时间范围",
+                    choices=["全部", "今天", "本周", "本月", "最近100条"],
+                    value="最近100条"
+                )
+                
+                # 操作按钮
+                search_execution_btn = gr.Button("🔍 搜索记录", variant="primary")
+                refresh_execution_btn = gr.Button("🔄 刷新列表")
+                export_execution_btn = gr.Button("📤 导出CSV")
+                
+            with gr.Column(scale=3):
+                gr.Markdown("## 执行记录列表")
+                
+                # 执行记录列表表格
+                execution_records_table = gr.Dataframe(
+                    headers=["记录ID", "图名称", "开始时间", "结束时间", "执行时长(秒)", "状态", "错误信息"],
+                    datatype=["str", "str", "str", "str", "number", "str", "str"],
+                    interactive=False,
+                    wrap=True
+                )
+                
+                # 选中记录的详细信息
+                with gr.Accordion("📖 执行详情", open=False):
+                    selected_execution_info = gr.Markdown("请先选择一个执行记录")
+                    
+                    # 输入数据显示
+                    with gr.Accordion("📥 输入数据", open=False):
+                        execution_input_display = gr.JSON(
+                            label="输入数据"
+                        )
+                    
+                    # 输出结果显示
+                    with gr.Accordion("📤 输出结果", open=False):
+                        execution_output_display = gr.JSON(
+                            label="输出结果"
+                        )
+                    
+                    # 节点执行结果显示
+                    with gr.Accordion("🔧 节点执行结果", open=False):
+                        execution_nodes_display = gr.JSON(
+                            label="节点执行结果"
+                        )
+                
+                # 操作区域
+                with gr.Row():
+                    selected_execution_id = gr.Textbox(
+                        label="选中的记录ID",
+                        placeholder="点击表格行选择记录",
+                        interactive=False
+                    )
+                    delete_execution_btn = gr.Button("🗑️ 删除记录", variant="stop")
+                    view_execution_details_btn = gr.Button("👁️ 查看详情", variant="secondary")
+        
+        # 事件绑定
+        search_execution_btn.click(
+            fn=self._search_execution_records,
+            inputs=[graph_name_filter, execution_status_filter, time_range_filter],
+            outputs=[execution_records_table]
+        )
+        
+        refresh_execution_btn.click(
+            fn=self._load_all_execution_records,
+            outputs=[execution_records_table]
+        )
+        
+        execution_records_table.select(
+            fn=self._on_execution_record_selected,
+            outputs=[
+                selected_execution_id, 
+                selected_execution_info, 
+                execution_input_display,
+                execution_output_display,
+                execution_nodes_display
+            ]
+        )
+        
+        view_execution_details_btn.click(
+            fn=self._load_execution_record_details,
+            inputs=[selected_execution_id],
+            outputs=[
+                execution_input_display,
+                execution_output_display,
+                execution_nodes_display
+            ]
+        )
+        
+        delete_execution_btn.click(
+            fn=self._delete_execution_record,
+            inputs=[selected_execution_id],
+            outputs=[execution_records_table, selected_execution_info]
+        )
+        
+        export_execution_btn.click(
+            fn=self._export_execution_records,
+            inputs=[graph_name_filter, execution_status_filter, time_range_filter],
+            outputs=[gr.File()]
+        )
+
+    # 执行记录管理方法
+    def _load_all_execution_records(self) -> pd.DataFrame:
+        """加载所有执行记录"""
+        try:
+            from src.core.base import get_graph_recorder
+            recorder = get_graph_recorder()
+            
+            # 获取最近的执行记录
+            records = recorder.get_recent_executions(limit=100)
+            
+            data = []
+            for record in records:
+                data.append([
+                    str(record['id']),
+                    record['graph_name'],
+                    record['start_time'][:19] if record['start_time'] else '',
+                    record['end_time'][:19] if record['end_time'] else '',
+                    record.get('duration_seconds', 0) or 0,
+                    "成功" if record['success'] else "失败",
+                    record.get('error_message', '') or ''
+                ])
+            
+            return pd.DataFrame(data, columns=["记录ID", "图名称", "开始时间", "结束时间", "执行时长(秒)", "状态", "错误信息"])
+            
+        except Exception as e:
+            logger.error(f"加载执行记录失败: {e}")
+            return pd.DataFrame(columns=["记录ID", "图名称", "开始时间", "结束时间", "执行时长(秒)", "状态", "错误信息"])
+
+    def _search_execution_records(self, graph_name_filter: str, status_filter: str, time_range_filter: str) -> pd.DataFrame:
+        """搜索执行记录"""
+        try:
+            from src.core.base import get_graph_recorder
+            import sqlite3
+            from datetime import datetime, timedelta
+            
+            recorder = get_graph_recorder()
+            
+            # 构建查询条件
+            where_conditions = []
+            params = []
+            
+            if graph_name_filter.strip():
+                where_conditions.append("graph_name LIKE ?")
+                params.append(f"%{graph_name_filter.strip()}%")
+            
+            if status_filter != "全部":
+                success_value = 1 if status_filter == "成功" else 0
+                where_conditions.append("success = ?")
+                params.append(success_value)
+            
+            # 时间范围处理
+            if time_range_filter != "全部":
+                now = datetime.now()
+                if time_range_filter == "今天":
+                    start_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                    where_conditions.append("start_time >= ?")
+                    params.append(start_time.isoformat())
+                elif time_range_filter == "本周":
+                    start_time = now - timedelta(days=now.weekday())
+                    start_time = start_time.replace(hour=0, minute=0, second=0, microsecond=0)
+                    where_conditions.append("start_time >= ?")
+                    params.append(start_time.isoformat())
+                elif time_range_filter == "本月":
+                    start_time = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                    where_conditions.append("start_time >= ?")
+                    params.append(start_time.isoformat())
+            
+            # 构建SQL查询
+            query = "SELECT * FROM graph_executions"
+            if where_conditions:
+                query += " WHERE " + " AND ".join(where_conditions)
+            query += " ORDER BY start_time DESC"
+            
+            # 限制结果数量
+            if time_range_filter == "最近100条":
+                query += " LIMIT 100"
+            else:
+                query += " LIMIT 500"  # 其他情况最多返回500条
+            
+            # 执行查询
+            with sqlite3.connect(recorder.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute(query, params)
+                records = [dict(row) for row in cursor.fetchall()]
+            
+            data = []
+            for record in records:
+                data.append([
+                    str(record['id']),
+                    record['graph_name'],
+                    record['start_time'][:19] if record['start_time'] else '',
+                    record['end_time'][:19] if record['end_time'] else '',
+                    record.get('duration_seconds', 0) or 0,
+                    "成功" if record['success'] else "失败",
+                    record.get('error_message', '') or ''
+                ])
+            
+            return pd.DataFrame(data, columns=["记录ID", "图名称", "开始时间", "结束时间", "执行时长(秒)", "状态", "错误信息"])
+            
+        except Exception as e:
+            logger.error(f"搜索执行记录失败: {e}")
+            return pd.DataFrame(columns=["记录ID", "图名称", "开始时间", "结束时间", "执行时长(秒)", "状态", "错误信息"])
+
+    def _on_execution_record_selected(self, evt: gr.SelectData) -> Tuple[str, str, Dict, Dict, List]:
+        """处理执行记录选择事件"""
+        try:
+            if evt is None or evt.index is None:
+                return "", "请先选择一个执行记录", {}, {}, []
+            
+            # 获取选中行的索引
+            row_index = evt.index[0] if isinstance(evt.index, (list, tuple)) else evt.index
+            
+            # 重新获取数据以确保索引对应正确
+            records_df = self._load_all_execution_records()
+            
+            if row_index >= len(records_df):
+                return "", "选择的行索引超出范围", {}, {}, []
+            
+            # 获取记录ID
+            record_id = records_df.iloc[row_index]['记录ID']
+            
+            # 从数据库获取完整记录信息
+            from src.core.base import get_graph_recorder
+            import sqlite3
+            import json
+            
+            recorder = get_graph_recorder()
+            
+            with sqlite3.connect(recorder.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute("SELECT * FROM graph_executions WHERE id = ?", (record_id,))
+                record = cursor.fetchone()
+            
+            if not record:
+                return "", "记录不存在", {}, {}, []
+            
+            # 构建详细信息显示
+            record_info = f"""### 📖 执行记录详情
+
+**记录ID**: {record['id']}
+**图名称**: {record['graph_name']}
+**开始时间**: {record['start_time']}
+**结束时间**: {record['end_time']}
+**执行时长**: {record.get('duration_seconds', 0):.2f} 秒
+**执行状态**: {"✅ 成功" if record['success'] else "❌ 失败"}
+**错误信息**: {record.get('error_message') or '无'}
+
+**创建时间**: {record['created_at']}
+"""
+            
+            # 解析JSON数据
+            try:
+                input_data = json.loads(record['input_data']) if record['input_data'] else {}
+                output_result = json.loads(record['output_result']) if record['output_result'] else {}
+                node_results = json.loads(record['node_results']) if record['node_results'] else []
+            except json.JSONDecodeError as e:
+                logger.error(f"解析JSON数据失败: {e}")
+                input_data = {"error": "JSON解析失败"}
+                output_result = {"error": "JSON解析失败"}
+                node_results = [{"error": "JSON解析失败"}]
+            
+            return str(record_id), record_info, input_data, output_result, node_results
+            
+        except Exception as e:
+            logger.error(f"选择执行记录失败: {e}")
+            return "", f"处理记录选择失败: {str(e)}", {}, {}, []
+
+    def _load_execution_record_details(self, record_id: str) -> Tuple[Dict, Dict, List]:
+        """加载执行记录详细信息"""
+        try:
+            if not record_id:
+                return {}, {}, []
+            
+            from src.core.base import get_graph_recorder
+            import sqlite3
+            import json
+            
+            recorder = get_graph_recorder()
+            
+            with sqlite3.connect(recorder.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute("SELECT * FROM graph_executions WHERE id = ?", (record_id,))
+                record = cursor.fetchone()
+            
+            if not record:
+                return {"error": "记录不存在"}, {"error": "记录不存在"}, [{"error": "记录不存在"}]
+            
+            # 解析JSON数据
+            try:
+                input_data = json.loads(record['input_data']) if record['input_data'] else {}
+                output_result = json.loads(record['output_result']) if record['output_result'] else {}
+                node_results = json.loads(record['node_results']) if record['node_results'] else []
+            except json.JSONDecodeError as e:
+                logger.error(f"解析JSON数据失败: {e}")
+                input_data = {"error": f"JSON解析失败: {str(e)}"}
+                output_result = {"error": f"JSON解析失败: {str(e)}"}
+                node_results = [{"error": f"JSON解析失败: {str(e)}"}]
+            
+            return input_data, output_result, node_results
+            
+        except Exception as e:
+            logger.error(f"加载执行记录详情失败: {e}")
+            return {"error": str(e)}, {"error": str(e)}, [{"error": str(e)}]
+
+    def _delete_execution_record(self, record_id: str) -> Tuple[pd.DataFrame, str]:
+        """删除执行记录"""
+        try:
+            if not record_id:
+                return self._load_all_execution_records(), "请先选择要删除的记录"
+            
+            from src.core.base import get_graph_recorder
+            import sqlite3
+            
+            recorder = get_graph_recorder()
+            
+            with sqlite3.connect(recorder.db_path) as conn:
+                cursor = conn.execute("DELETE FROM graph_executions WHERE id = ?", (record_id,))
+                conn.commit()
+                
+                if cursor.rowcount > 0:
+                    return self._load_all_execution_records(), f"✅ 成功删除记录: {record_id}"
+                else:
+                    return self._load_all_execution_records(), f"❌ 记录不存在: {record_id}"
+            
+        except Exception as e:
+            logger.error(f"删除执行记录失败: {e}")
+            return self._load_all_execution_records(), f"❌ 删除记录异常: {str(e)}"
+
+    def _export_execution_records(self, graph_name_filter: str, status_filter: str, time_range_filter: str) -> str:
+        """导出执行记录到CSV文件"""
+        try:
+            import tempfile
+            import os
+            from datetime import datetime
+            
+            # 获取筛选后的执行记录数据
+            records_df = self._search_execution_records(graph_name_filter, status_filter, time_range_filter)
+            
+            if records_df.empty:
+                return "没有可导出的数据"
+            
+            # 创建临时文件
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"execution_records_export_{timestamp}.csv"
+            
+            # 使用工作空间输出目录
+            output_dir = "./workspace/output"
+            os.makedirs(output_dir, exist_ok=True)
+            filepath = os.path.join(output_dir, filename)
+            
+            # 导出到CSV
+            records_df.to_csv(filepath, index=False, encoding='utf-8-sig')
+            
+            logger.info(f"执行记录数据导出成功: {filepath}")
+            return filepath
+            
+        except Exception as e:
+            logger.error(f"导出执行记录数据失败: {e}")
+            return f"导出失败: {str(e)}"
 
 
 # 全局数据库界面实例 - 延迟初始化

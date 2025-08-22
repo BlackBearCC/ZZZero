@@ -40,6 +40,8 @@ Thumbs.db
 # Project specific
 .env
 *.log
+*.sqlite3
+*.db
 data/
 cache/
 temp/
